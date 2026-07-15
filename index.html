@@ -942,8 +942,9 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
       <div class="form-row"><label>Тип ТИР *</label><select id="nt-type" onchange="updateTirBuyPreview()"></select>
         <div style="font-size:11px;color:var(--text3);margin-top:3px;">За один заход можно получить только один тип — 6-листовые ИЛИ 16-листовые (разные партии, разные счёт-фактуры)</div>
       </div>
-      <div class="form-row"><label>Номера книжек МДП * (каждый номер с новой строки — можно вставить сразу несколько)</label>
-        <textarea id="nt-nums" rows="4" placeholder="XX87000001&#10;XX87000002&#10;XX87000003" oninput="updateTirBuyPreview()" style="width:100%;padding:7px 9px;border:1px solid var(--border2);border-radius:var(--radius);font-size:12.5px;font-family:var(--mono);"></textarea>
+      <div class="form-row"><label>Номера книжек МДП *</label>
+        <div id="nt-nums-list"></div>
+        <button type="button" class="btn sm" onclick="addTirNumRow()">+ Добавить ещё номер</button>
       </div>
       <div class="form-grid-2">
         <div class="form-row"><label>Дата получения * (одна на всю партию)</label><input type="date" id="nt-rec" onchange="autoTirExpiry()"></div>
@@ -3256,7 +3257,7 @@ function populateModal(id) {
   if(id==='modal-mintrans-registry') populateMintransRegistry();
   if(id==='modal-asmaf-registry') populateAsmafRegistry();
   if(id==='modal-new-dozv') setTimeout(initDozModal,50);
-  if(id==='modal-new-tir') setTimeout(()=>{updateTirBuyPreview();autoTirExpiry();},50);
+  if(id==='modal-new-tir'){ resetTirNumRows(); setTimeout(()=>{updateTirBuyPreview();autoTirExpiry();},50); }
   if(id==='modal-transfer-tir') checkTirTransfer();
   if(id==='modal-settings') renderSettings();
 }
@@ -3395,6 +3396,39 @@ function confirmYes() { document.getElementById('confirm-overlay').classList.rem
 function confirmNo() { document.getElementById('confirm-overlay').classList.remove('open'); }
 
 // ============ SAVE OPERATIONS ============
+
+// Список номеров ТИР при пакетном приёме — одно поле на один номер, с кнопкой
+// добавить/убрать (как ОСАГО в Транспорте), а не текстовое поле в несколько строк —
+// пользователь попросил заменить, так понятнее.
+let _tirNumRowIdx=0;
+function addTirNumRow(){
+  const list=document.getElementById('nt-nums-list'); if(!list) return;
+  const idx=_tirNumRowIdx++;
+  const row=document.createElement('div');
+  row.id=`nt-num-row-${idx}`;
+  row.style.cssText='display:flex;gap:6px;margin-bottom:6px;';
+  row.innerHTML=`<input type="text" id="nt-num-${idx}" placeholder="XX87000000" oninput="updateTirBuyPreview()"
+      style="flex:1;padding:7px 9px;border:1px solid var(--border2);border-radius:var(--radius);font-family:var(--mono);font-size:12.5px;">
+    <button type="button" onclick="removeTirNumRow(${idx})" title="Убрать" style="background:none;border:1px solid var(--border2);border-radius:var(--radius);cursor:pointer;color:var(--red);font-size:14px;padding:0 12px;">✕</button>`;
+  list.appendChild(row);
+}
+function removeTirNumRow(idx){
+  const row=document.getElementById(`nt-num-row-${idx}`);
+  if(row) row.remove();
+  const list=document.getElementById('nt-nums-list');
+  if(list && !list.children.length) addTirNumRow(); // всегда хотя бы одна строка
+  updateTirBuyPreview();
+}
+function resetTirNumRows(){
+  const list=document.getElementById('nt-nums-list'); if(list) list.innerHTML='';
+  _tirNumRowIdx=0;
+  addTirNumRow();
+}
+function getTirNums(){
+  const list=document.getElementById('nt-nums-list'); if(!list) return [];
+  return [...list.querySelectorAll('input')].map(el=>el.value.trim()).filter(Boolean);
+}
+
 function toggleTirCustomPrice(checked){
   const block = document.getElementById('nt-custom-price-block');
   if(block) block.style.display = checked?'block':'none';
@@ -3411,8 +3445,7 @@ function toggleDozvCustomPrice(checked){
 // Тип — только один на партию (6-листовые ИЛИ 16-листовые), т.к. это разные партии
 // с отдельными счёт-фактурами — если нужно и то, и то, оформляются двумя заходами.
 async function saveTirNew() {
-  const numsRaw=document.getElementById('nt-nums').value;
-  const nums=[...new Set(numsRaw.split('\n').map(s=>s.trim()).filter(Boolean))];
+  const nums=[...new Set(getTirNums())];
   const type=document.getElementById('nt-type').value;
   const rec=document.getElementById('nt-rec').value;
   if(!nums.length||!rec){alert('Укажите хотя бы один номер книжки МДП и дату получения');return;}
@@ -3501,7 +3534,7 @@ function updateTirBuyPreview(){
   const settingsPrice=tirType&&BUY_PRICES.tir?BUY_PRICES.tir[tirType.id]||0:0;
   const useCustom=(document.getElementById('nt-custom-price-check')||{}).checked;
   const customPrice=parseFloat((document.getElementById('nt-buy-price')||{}).value)||0;
-  const count=Math.max(1, ((document.getElementById('nt-nums')||{}).value||'').split('\n').map(s=>s.trim()).filter(Boolean).length);
+  const count=Math.max(1, getTirNums().length);
   const countLabel=count>1?`${count} шт × `:'';
   const preview=document.getElementById('nt-buy-preview');
   if(!preview) return;
