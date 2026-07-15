@@ -3022,6 +3022,35 @@ function saveAll(){
   sv('mm_waybill_settings',WAYBILL_SETTINGS);
 }
 
+// ============ ЗАЩИТА ОТ ДВОЙНОЙ ОТПРАВКИ ============
+// Найдено пользователем 2026-07-15: если сайт на секунду "подвисает" во время
+// сохранения (плечо рейса, оплата от заказчика) и пользователь кликает ещё раз —
+// кнопка ничем не блокировалась, и каждый клик отправлял отдельный независимый
+// запрос, создавая дубли (два одинаковых плеча, тройная запись одной и той же оплаты
+// в кассу). Пока предыдущий вызов функции не завершился, повторные вызовы с тем же
+// ключом просто игнорируются.
+const _savingGuard = new Set();
+function guardDoubleSubmit(key, fn){
+  return async function(...args){
+    if(_savingGuard.has(key)) return;
+    _savingGuard.add(key);
+    try { return await fn.apply(this, args); }
+    finally { _savingGuard.delete(key); }
+  };
+}
+const saveTripLeg = guardDoubleSubmit('saveTripLeg', (...a)=>_saveTripLegImpl(...a));
+const saveTripPayment = guardDoubleSubmit('saveTripPayment', (...a)=>_saveTripPaymentImpl(...a));
+const saveTripExpense = guardDoubleSubmit('saveTripExpense', (...a)=>_saveTripExpenseImpl(...a));
+const saveTripSurcharge = guardDoubleSubmit('saveTripSurcharge', (...a)=>_saveTripSurchargeImpl(...a));
+const finishTrip = guardDoubleSubmit('finishTrip', (...a)=>_finishTripImpl(...a));
+const saveCharge = guardDoubleSubmit('saveCharge', (...a)=>_saveChargeImpl(...a));
+const savePayment = guardDoubleSubmit('savePayment', (...a)=>_savePaymentImpl(...a));
+const saveVacation = guardDoubleSubmit('saveVacation', (...a)=>_saveVacationImpl(...a));
+const saveKassaPayout = guardDoubleSubmit('saveKassaPayout', (...a)=>_saveKassaPayoutImpl(...a));
+const saveKassaTransfer = guardDoubleSubmit('saveKassaTransfer', (...a)=>_saveKassaTransferImpl(...a));
+const saveExpense = guardDoubleSubmit('saveExpense', (...a)=>_saveExpenseImpl(...a));
+const saveKassaIncomeModal = guardDoubleSubmit('saveKassaIncomeModal', (...a)=>_saveKassaIncomeModalImpl(...a));
+
 // Настройки компании (типы ТИР, цены, страны/дозволы, курсы валют, счётчик
 // рейсов, префиксы/ответственные путёвок, покупные цены, реестры АСМАП/Минтранс)
 // — общие для всей компании, а не только для текущего браузера (см. 0016).
@@ -3841,7 +3870,7 @@ function toggleDozReturnComp() {
   document.getElementById('rd-comp-block').style.display=v==='unused'?'block':'none';
 }
 
-async function saveCharge(){
+async function _saveChargeImpl(){
   const person=document.getElementById('ch-person').value;
   const amount=parseFloat(document.getElementById('ch-amount').value)||0;
   if(!person||!amount){alert('Заполните все поля');return;}
@@ -3870,7 +3899,7 @@ async function saveCharge(){
   renderFleet();
 }
 
-async function savePayment(){
+async function _savePaymentImpl(){
   const person=document.getElementById('pay-person').value;
   const amount=parseFloat(document.getElementById('pay-amount').value)||0;
   if(!person||!amount){alert('Заполните все поля');return;}
@@ -3906,7 +3935,7 @@ async function savePayment(){
   renderFleet(); renderKassa();
 }
 
-async function saveVacation(){
+async function _saveVacationImpl(){
   const person=document.getElementById('vac-person').value;
   const amount=parseFloat(document.getElementById('vac-amount').value)||0;
   if(!person||!amount){alert('Заполните все поля');return;}
@@ -5901,7 +5930,7 @@ function renderKassa(){
   </tr>`).join('')||'<tr><td colspan="8" style="text-align:center;padding:30px;color:var(--text3)">Нет операций</td></tr>';
 }
 
-async function saveExpense(){
+async function _saveExpenseImpl(){
   const amount=parseFloat(document.getElementById('exp-amount').value)||0;
   if(!amount){alert('Укажите сумму');return;}
   const { data, error } = await sbClient.from('kassa').insert({
@@ -5926,7 +5955,7 @@ function openKassaIncomeModal(){
   openModal('modal-kassa-income');
 }
 
-async function saveKassaIncomeModal(){
+async function _saveKassaIncomeModalImpl(){
   const amount=parseFloat(document.getElementById('ki-amount').value)||0;
   if(!amount){alert('Укажите сумму');return;}
   const { data, error } = await sbClient.from('kassa').insert({
@@ -6680,7 +6709,7 @@ async function generateMintransRegistry(){
 }
 
 // ============ KASSA TRANSFER ============
-async function saveKassaTransfer(){
+async function _saveKassaTransferImpl(){
   const from=document.getElementById('kt-from').value;
   const to=document.getElementById('kt-to').value;
   const amount=parseFloat(document.getElementById('kt-amount').value)||0;
@@ -7713,7 +7742,7 @@ function finishTripCheck(){
   }
   finishTrip();
 }
-async function saveTripExpense(){
+async function _saveTripExpenseImpl(){
   const amount=parseFloat(document.getElementById('te-amount').value)||0;
   if(!amount){alert('Укажите сумму');return;}
   const trip=TRIPS.find(t=>t.id===_expTripId);if(!trip)return;
@@ -7829,7 +7858,7 @@ function editTripLeg(tripId,legIdx){
   }
   openModal('modal-trip-leg');
 }
-async function saveTripLeg(){
+async function _saveTripLegImpl(){
   const from=document.getElementById('tl-from').value.trim();
   const to=document.getElementById('tl-to').value.trim();
   if(!from||!to){alert('Укажите откуда и куда');return;}
@@ -7940,7 +7969,7 @@ function openTripPayment(tripId){
   </div>`;
   openModal('modal-trip-payment');
 }
-async function saveTripPayment(){
+async function _saveTripPaymentImpl(){
   const amount=parseFloat(document.getElementById('tp-amount').value)||0;
   if(!amount){alert('Укажите сумму');return;}
   const trip=TRIPS.find(t=>t.id===_payTripId);if(!trip)return;
@@ -8066,7 +8095,7 @@ function openFinishTrip(tripId){
   setTimeout(calcTripFinish,150);
 }
 
-async function finishTrip(){
+async function _finishTripImpl(){
   const trip=TRIPS.find(t=>t.id===_finishTripId);if(!trip)return;
   const unloadDate=document.getElementById('tf-unload-date').value||todayStr;
   const kmEndVal=document.getElementById('tf-km-end').value;
@@ -8331,7 +8360,7 @@ function editTripSurcharge(tripId,surchId){
   legSel.value=s.legIdx;
   openModal('modal-trip-surcharge');
 }
-async function saveTripSurcharge(){
+async function _saveTripSurchargeImpl(){
   const amount=parseFloat(document.getElementById('ts-amount').value)||0;
   if(!amount){alert('Укажите сумму');return;}
   const trip=TRIPS.find(t=>t.id===_surchTripId);if(!trip)return;
@@ -8657,7 +8686,7 @@ function openKassaPayoutModal(){
     }).join('');
   openModal('modal-kassa-payout');
 }
-async function saveKassaPayout(){
+async function _saveKassaPayoutImpl(){
   const amount=parseFloat(document.getElementById('kp-amount').value)||0;
   if(!amount){alert('Укажите сумму');return;}
   const wallet=document.getElementById('kp-wallet').value;
