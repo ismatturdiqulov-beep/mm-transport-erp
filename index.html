@@ -939,12 +939,14 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
   <div class="modal">
     <div class="modal-head"><h3>📥 Получить новый ТИР Карнет</h3><span class="modal-close" onclick="closeModal('modal-new-tir')">×</span></div>
     <div class="modal-body">
-      <div class="form-grid-2">
-        <div class="form-row"><label>Номер книжки МДП *</label><input type="text" id="nt-num" placeholder="XX87000000"></div>
-        <div class="form-row"><label>Тип ТИР *</label><select id="nt-type" onchange="updateTirBuyPreview()"></select></div>
+      <div class="form-row"><label>Тип ТИР *</label><select id="nt-type" onchange="updateTirBuyPreview()"></select>
+        <div style="font-size:11px;color:var(--text3);margin-top:3px;">За один заход можно получить только один тип — 6-листовые ИЛИ 16-листовые (разные партии, разные счёт-фактуры)</div>
+      </div>
+      <div class="form-row"><label>Номера книжек МДП * (каждый номер с новой строки — можно вставить сразу несколько)</label>
+        <textarea id="nt-nums" rows="4" placeholder="XX87000001&#10;XX87000002&#10;XX87000003" oninput="updateTirBuyPreview()" style="width:100%;padding:7px 9px;border:1px solid var(--border2);border-radius:var(--radius);font-size:12.5px;font-family:var(--mono);"></textarea>
       </div>
       <div class="form-grid-2">
-        <div class="form-row"><label>Дата получения *</label><input type="date" id="nt-rec" onchange="autoTirExpiry()"></div>
+        <div class="form-row"><label>Дата получения * (одна на всю партию)</label><input type="date" id="nt-rec" onchange="autoTirExpiry()"></div>
         <div class="form-row"><label>Срок действия (авто +120 дн.)</label><input type="date" id="nt-exp"></div>
       </div>
       <div id="nt-buy-preview" class="info-box" style="margin-bottom:8px;"></div>
@@ -955,7 +957,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
         </label>
         <div id="nt-custom-price-block" style="display:none;">
           <div class="form-grid-2">
-            <div class="form-row"><label>Закупочная цена (сум)</label><input type="number" id="nt-buy-price" placeholder="0" oninput="updateTirBuyPreview()"></div>
+            <div class="form-row"><label>Закупочная цена за 1 шт (сум)</label><input type="number" id="nt-buy-price" placeholder="0" oninput="updateTirBuyPreview()"></div>
             <div class="form-row"><label>Списать из кассы</label>
               <select id="nt-buy-wallet">
                 <option value="cash">💵 Наличные</option>
@@ -1559,7 +1561,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
       </div>
       <div class="form-row">
         <label>Связать с контрагентом (если водитель = арендатор)</label>
-        <select id="ap-kontragent-link"><option value="">— Не связывать —</option></select>
+        <select id="ap-kontragent-link" onchange="onPersonKontragentLinkChange()"><option value="">— Не связывать —</option></select>
       </div>
       <!-- EXPANDED DOCS -->
       <div style="margin-top:10px;">
@@ -3136,7 +3138,24 @@ function closeModal(id) {
 function swop(id) { closeModal('modal-op-select'); openModal(id); }
 document.querySelectorAll('.overlay').forEach(o=>o.addEventListener('click',e=>{if(e.target===o)o.classList.remove('open');}));
 
+// Общая очистка полей формы "Добавить..." перед показом — иначе в полях остаются
+// данные предыдущей записи (телефон/паспорт прошлого контрагента и т.п., баг найден
+// пользователем 2026-07-15). Не трогает модалки, где то же окно переиспользуется для
+// редактирования (modal-add-transport, modal-add-person) — там сразу после открытия
+// отдельный код заново заполняет все поля данными редактируемой записи, так что
+// очистка непосредственно перед этим ничего не портит, а только убирает старый мусор.
+function resetModalTextFields(modalId){
+  const modal=document.getElementById(modalId); if(!modal) return;
+  modal.querySelectorAll('input[type="text"],input[type="number"],input[type="date"],input[type="email"],input[type="tel"],textarea')
+    .forEach(el=>{ el.value=''; });
+  modal.querySelectorAll('input[type="checkbox"]').forEach(el=>{ el.checked=false; });
+  modal.querySelectorAll('select').forEach(el=>{ if(el.options.length) el.selectedIndex=0; });
+}
+
 function populateModal(id) {
+  const modalsToReset=['modal-add-kontragent','modal-add-transport','modal-add-fleet','modal-new-dozv','modal-new-tir'];
+  if(modalsToReset.includes(id)) resetModalTextFields(id);
+
   // Default dates
   ['nt-rec','nt-exp','tt-date','td-date','rt-office-date','ra-date','ro-date','rc-date','rm-date','ch-date','pay-date','vac-start','vac-end','wb-date','lb-date','poa-date','poa-exp','poa-hired','nd-rec','nd-exp','exp-date','kop-date','ak-date','kt-date']
     .forEach(fid=>{const el=document.getElementById(fid);if(el&&!el.value)el.value=todayStr;});
@@ -3387,45 +3406,52 @@ function toggleDozvCustomPrice(checked){
   if(block) block.style.display = checked?'block':'none';
 }
 
+// Партия ТИР — на практике за один заход часто получают сразу несколько книжек МДП.
+// Дата получения и срок действия у всей партии одинаковые, номер у каждой свой.
+// Тип — только один на партию (6-листовые ИЛИ 16-листовые), т.к. это разные партии
+// с отдельными счёт-фактурами — если нужно и то, и то, оформляются двумя заходами.
 async function saveTirNew() {
-  const num=document.getElementById('nt-num').value.trim();
+  const numsRaw=document.getElementById('nt-nums').value;
+  const nums=[...new Set(numsRaw.split('\n').map(s=>s.trim()).filter(Boolean))];
   const type=document.getElementById('nt-type').value;
   const rec=document.getElementById('nt-rec').value;
-  if(!num||!rec){alert('Заполните обязательные поля');return;}
+  if(!nums.length||!rec){alert('Укажите хотя бы один номер книжки МДП и дату получения');return;}
   const expDate=new Date(rec); expDate.setDate(expDate.getDate()+120);
   const exp=document.getElementById('nt-exp').value||expDate.toISOString().split('T')[0];
-  // Цена: если галочка — ручная, иначе из настроек
+  // Цена: если галочка — ручная, иначе из настроек (за штуку)
   const useCustom = document.getElementById('nt-custom-price-check').checked;
   const tirType=TIR_TYPES.find(t=>t.name===type);
   const settingsPrice=BUY_PRICES.tir&&tirType?BUY_PRICES.tir[tirType.id]||0:0;
-  const buyPrice = useCustom
+  const unitPrice = useCustom
     ? (parseFloat(document.getElementById('nt-buy-price').value)||0)
     : settingsPrice;
   const buyWallet = useCustom
     ? (document.getElementById('nt-buy-wallet').value||'bank')
     : 'bank';
-  const record = {
+  const note=document.getElementById('nt-note').value;
+  const records = nums.map(num=>({
     company_id: CURRENT_PROFILE.company_id, num, type, received:rec, expires:exp,
     person_name:'', plate:'', transferred:null, returned_office:null, returned_asmap:null,
-    used:null, comp:0, buy_price:buyPrice, note:document.getElementById('nt-note').value,
-  };
-  const { data, error } = await sbClient.from('tirs').insert(record).select().single();
-  if (error) { alert('Не удалось сохранить ТИР: '+error.message); return; }
-  TIRS.push(mapTirFromDb(data));
-  if(buyPrice>0){
+    used:null, comp:0, buy_price:unitPrice, note,
+  }));
+  const { data, error } = await sbClient.from('tirs').insert(records).select();
+  if (error) {
+    if (error.code==='23505') alert('Один из номеров уже есть в системе — проверьте список, номера книжек МДП должны быть уникальными.');
+    else alert('Не удалось сохранить ТИР: '+error.message);
+    return;
+  }
+  data.forEach(d=>TIRS.push(mapTirFromDb(d)));
+  const totalPrice=unitPrice*nums.length;
+  if(totalPrice>0){
     const kassaRecord = { company_id:CURRENT_PROFILE.company_id, wallet:buyWallet, type:'expense', date:rec,
-      category:'tir_buy', to_name:'АСМАП', description:`Покупка ТИР ${num} (${type})`, amount:buyPrice };
+      category:'tir_buy', to_name:'АСМАП', description:`Покупка ${nums.length} ТИР (${type}): ${nums.join(', ')}`, amount:totalPrice };
     const { data:kData, error:kErr } = await sbClient.from('kassa').insert(kassaRecord).select().single();
     if (!kErr) KASSA.push(mapKassaFromDb(kData));
-    toast(`ТИР ${num} добавлен · Списано с ${({cash:'Нал.',card:'Карты',bank:'Р/С'})[buyWallet]}: ${fmtN(buyPrice)} сум`);
+    toast(`Добавлено ${nums.length} ТИР · Списано с ${({cash:'Нал.',card:'Карты',bank:'Р/С'})[buyWallet]}: ${fmtN(totalPrice)} сум`);
   } else {
-    toast(`ТИР ${num} (${type}) добавлен · срок до ${fmt(exp)}`);
+    toast(`Добавлено ${nums.length} ТИР (${type}) · срок до ${fmt(exp)}`);
   }
   closeModal('modal-new-tir');
-  document.getElementById('nt-num').value='';
-  document.getElementById('nt-buy-price').value='';
-  document.getElementById('nt-custom-price-check').checked=false;
-  toggleTirCustomPrice(false);
   renderTir();
 }
 
@@ -3475,13 +3501,15 @@ function updateTirBuyPreview(){
   const settingsPrice=tirType&&BUY_PRICES.tir?BUY_PRICES.tir[tirType.id]||0:0;
   const useCustom=(document.getElementById('nt-custom-price-check')||{}).checked;
   const customPrice=parseFloat((document.getElementById('nt-buy-price')||{}).value)||0;
+  const count=Math.max(1, ((document.getElementById('nt-nums')||{}).value||'').split('\n').map(s=>s.trim()).filter(Boolean).length);
+  const countLabel=count>1?`${count} шт × `:'';
   const preview=document.getElementById('nt-buy-preview');
   if(!preview) return;
   if(useCustom){
     if(customPrice>0){
       const wallet=(document.getElementById('nt-buy-wallet')||{}).value||'bank';
       const wName={cash:'Наличные',card:'Картага',bank:'Р/С'}[wallet]||wallet;
-      preview.textContent=`💳 Будет списано с ${wName}: ${fmtN(customPrice)} сум`;
+      preview.textContent=`💳 ${countLabel}${fmtN(customPrice)} — будет списано с ${wName}: ${fmtN(customPrice*count)} сум`;
       preview.style.background='var(--amber-bg)';
     } else {
       preview.textContent='Введите закупочную цену';
@@ -3489,7 +3517,7 @@ function updateTirBuyPreview(){
     }
   } else {
     if(settingsPrice>0){
-      preview.textContent=`💳 По цене из настроек — будет списано с Р/С: ${fmtN(settingsPrice)} сум`;
+      preview.textContent=`💳 ${countLabel}${fmtN(settingsPrice)} по цене из настроек — будет списано с Р/С: ${fmtN(settingsPrice*count)} сум`;
       preview.style.background='';
     } else {
       preview.textContent='⚠️ Закупочная цена не задана в настройках';
@@ -4919,7 +4947,6 @@ async function saveTransport(){
   if (error) { alert('Не удалось сохранить транспорт: '+error.message); return; }
   TRANSPORT.push(mapTransportFromDb(data, KONTRAGENTY));
   closeModal('modal-add-transport');
-  document.getElementById('at-callsign').value='';
   toast('Транспорт добавлен: '+callsign); renderTransport();
 }
 
@@ -5109,7 +5136,9 @@ async function saveKontragent(){
     name,
     short: document.getElementById('ak-short')?.value||name.split(' ')[0],
     type: mapKontragentTypeToDb(typeEl?typeEl.value:'other'),
-    phone:'', passport:'', pinfl:'', active:true,
+    phone: document.getElementById('ak-phone')?.value||'',
+    passport: document.getElementById('ak-passport')?.value||'',
+    pinfl:'', active:true,
     contract_num: document.getElementById('ak-num').value,
     contract_date: document.getElementById('ak-date').value || null,
     contract_end: document.getElementById('ak-end').value || null,
@@ -5119,7 +5148,6 @@ async function saveKontragent(){
   if (error) { alert('Не удалось сохранить контрагента: '+error.message); return; }
   KONTRAGENTY.push(mapKontragentFromDb(data));
   closeModal('modal-add-kontragent');
-  document.getElementById('ak-name').value='';
   toast('Контрагент добавлен: '+name); renderTenants();
 }
 
@@ -6775,6 +6803,25 @@ function resetPersonModal(){
   const h=document.querySelector('#modal-add-person .modal-head h3');if(h)h.textContent='👤 Добавить водителя';
   const btn=document.querySelector('#modal-add-person .modal-foot .btn.primary');
   if(btn){btn.textContent='Сохранить';btn.onclick=savePerson;}
+}
+
+// Водитель часто и есть тот же человек, что арендатор-контрагент — чтобы не вбивать
+// его данные дважды, при выборе контрагента подтягиваем то, что у него уже есть.
+// Заполняем только пустые поля — если что-то уже вписали вручную, не затираем.
+function onPersonKontragentLinkChange(){
+  const id=document.getElementById('ap-kontragent-link').value;
+  if(!id) return;
+  const k=KONTRAGENTY.find(x=>x.id===id); if(!k) return;
+  const fill=(fieldId,val)=>{ const el=document.getElementById(fieldId); if(el&&!el.value&&val) el.value=val; };
+  fill('ap-name', k.name);
+  fill('ap-short', k.short);
+  fill('ap-phone', k.phone);
+  fill('ap-pinfl', k.pinfl);
+  if(k.passport){
+    fill('ap-pass-num', k.passport);
+    const docsSection=document.getElementById('ap-docs');
+    if(docsSection) docsSection.style.display='block';
+  }
 }
 
 // ============ FIX saveFleetEdit ============
