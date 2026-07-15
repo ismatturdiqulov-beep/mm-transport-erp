@@ -2841,6 +2841,25 @@ async function loadAllData() {
     KASSA_WALLETS = byTable.kassa_wallets.map(mapWalletFromDb);
     KASSA_INIT = {};
     KASSA_WALLETS.forEach(w => { KASSA_INIT[w.id] = w.initialBalance||0; });
+  } else {
+    // Новая компания без единого кошелька в базе. Раньше здесь просто оставались
+    // жёстко заданные в JS "наличные/карта/р-с" — они выглядели рабочими, но не
+    // существовали как строки в kassa_wallets, поэтому переименование/деактивация
+    // кошелька (UPDATE по id, которого нет в базе — 0 строк, без ошибки) молча
+    // ничего не сохраняли. Создаём реальный набор по умолчанию сразу при первом входе.
+    const defaultWallets = [
+      {id:'cash', company_id:CURRENT_PROFILE.company_id, name:'Наличные', icon:'💵', active:true, sort_order:1, initial_balance:0},
+      {id:'card', company_id:CURRENT_PROFILE.company_id, name:'Картага',  icon:'💳', active:true, sort_order:2, initial_balance:0},
+      {id:'bank', company_id:CURRENT_PROFILE.company_id, name:'Р/С',      icon:'🏦', active:true, sort_order:3, initial_balance:0},
+    ];
+    const { data: createdWallets, error: cwErr } = await sbClient.from('kassa_wallets').insert(defaultWallets).select();
+    if (!cwErr && createdWallets) {
+      KASSA_WALLETS = createdWallets.map(mapWalletFromDb);
+      KASSA_INIT = {};
+      KASSA_WALLETS.forEach(w => { KASSA_INIT[w.id] = w.initialBalance||0; });
+    } else if (cwErr) {
+      console.error('Не удалось создать кошельки по умолчанию', cwErr);
+    }
   }
   MAINTENANCE = byTable.maintenance.map(mapMaintFromDb);
   WAYBILLS = byTable.waybills.map(mapWaybillFromDb);
