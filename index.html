@@ -555,6 +555,8 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
       <select onchange="renderTir()" id="tir-f-type">
         <option value="">Все типы</option>
       </select>
+      <select onchange="renderTir()" id="tir-f-year"><option value="">Все годы</option></select>
+      <button class="btn" onclick="printYearRegistry('tir')">🖨 Реестр за год</button>
     </div>
     <div class="section">
       <table class="tbl">
@@ -591,6 +593,8 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
         <option value="returned">Возвращён</option>
         <option value="expired">Просрочен ⚠️</option>
       </select>
+      <select onchange="renderDozv()" id="dozv-f-year"><option value="">Все годы</option></select>
+      <button class="btn" onclick="printYearRegistry('dozv')">🖨 Реестр за год</button>
     </div>
     <div class="section">
       <table class="tbl">
@@ -880,6 +884,8 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
           <option value="international">🌍 Международный</option>
           <option value="domestic">🏠 Внутренний</option>
         </select>
+        <select id="trips-f-year" onchange="renderTrips()" style="font-size:12px;"><option value="">Все годы</option></select>
+        <button class="btn" onclick="printYearRegistry('trips')">🖨 Реестр за год</button>
         <button class="btn primary" onclick="openNewTrip()">+ Новый рейс</button>
       </div>
     </div>
@@ -4199,11 +4205,24 @@ function renderDashboard(){
   document.getElementById('dash-debtors').innerHTML=debtors.map(k=>`<tr><td>${k.name.split(' ').slice(0,2).join(' ')}</td><td class="mono">${findFleetByKontragent(k.id).map(f=>f.label).join(', ')||'—'}</td><td class="amount-neg">${fmtN(Math.abs(getKontragentBalance(k.id)))}</td></tr>`).join('');
 }
 
+// Единый список годов для фильтров-реестров: считаем года по дате-якорю,
+// записи без даты-якоря (ещё не переданы/не завершены) в список годов не входят,
+// но и не прячутся при фильтрации — см. вызовы ниже.
+function populateYearFilter(selectId, dates){
+  const el=document.getElementById(selectId); if(!el) return;
+  const years=[...new Set(dates.filter(Boolean).map(d=>new Date(d).getFullYear()))].sort((a,b)=>b-a);
+  const current=el.value;
+  el.innerHTML='<option value="">Все годы</option>'+years.map(y=>`<option value="${y}">${y}</option>`).join('');
+  if(years.includes(parseInt(current))) el.value=current;
+}
+
 // TIR
 function renderTir(){
   const search=(document.getElementById('tir-search')||{}).value||'';
   const fSt=(document.getElementById('tir-f-status')||{}).value||'';
   const fTy=(document.getElementById('tir-f-type')||{}).value||'';
+  populateYearFilter('tir-f-year', TIRS.map(t=>t.transferred));
+  const fYear=(document.getElementById('tir-f-year')||{}).value||'';
   let data=TIRS;
   if(search) data=data.filter(t=>(t.num+t.person+t.plate).toLowerCase().includes(search.toLowerCase()));
   if(fSt==='active') data=data.filter(t=>tirGetState(t)==='issued');
@@ -4212,6 +4231,9 @@ function renderTir(){
   else if(fSt==='returned') data=data.filter(t=>tirGetState(t)==='asmaf');
   else if(fSt==='expired') data=data.filter(t=>isExp(t.expires)&&tirGetState(t)!=='asmaf');
   if(fTy) data=data.filter(t=>t.type===fTy);
+  // Отчётный период ТИР — дата передачи водителю (не дата получения от АСМАП).
+  // Ещё не переданные (свободные) — всегда в списке, независимо от выбранного года.
+  if(fYear) data=data.filter(t=>!t.transferred || new Date(t.transferred).getFullYear()===parseInt(fYear));
 
   const sub=document.getElementById('tir-sub');
   if(sub) sub.textContent=`Всего: ${TIRS.length} | На руках: ${TIRS.filter(t=>tirGetState(t)==='issued').length} | В офисе: ${TIRS.filter(t=>tirGetState(t)==='office').length} | В АСМАП: ${TIRS.filter(t=>tirGetState(t)==='asmaf').length}`;
@@ -4246,6 +4268,8 @@ function renderDozv(){
   const fC=(document.getElementById('dozv-f-country')||{}).value||'';
   const fT=(document.getElementById('dozv-f-type')||{}).value||'';
   const fS=(document.getElementById('dozv-f-status')||{}).value||'';
+  populateYearFilter('dozv-f-year', DOZV.map(d=>d.received));
+  const fYear=(document.getElementById('dozv-f-year')||{}).value||'';
   let data=DOZV;
   if(search) data=data.filter(d=>(d.num+d.person+d.plate+d.country).toLowerCase().includes(search.toLowerCase()));
   if(fC) data=data.filter(d=>d.country===fC);
@@ -4255,6 +4279,8 @@ function renderDozv(){
   else if(fS==='free') data=data.filter(d=>dozGetState(d)==='free');
   else if(fS==='returned') data=data.filter(d=>dozGetState(d)==='mintrans'||dozGetState(d)==='closed');
   else if(fS==='expired') data=data.filter(d=>!d.epermit&&isExp(d.expires)&&dozGetState(d)!=='mintrans');
+  // Отчётный период дозвола — дата получения от МИНТРАНСА (у дозвола она есть всегда).
+  if(fYear) data=data.filter(d=>d.received && new Date(d.received).getFullYear()===parseInt(fYear));
 
   const sub=document.getElementById('dozv-sub');
   if(sub) sub.textContent=`Всего: ${DOZV.length} | На руках: ${DOZV.filter(d=>dozGetState(d)==='issued').length} | В офисе: ${DOZV.filter(d=>dozGetState(d)==='office').length} | Закрыто: ${DOZV.filter(d=>dozGetState(d)==='mintrans'||dozGetState(d)==='closed').length} | Бумажных ⚠️: ${DOZV.filter(d=>!d.epermit&&isExp(d.expires)&&dozGetState(d)!=='mintrans').length}`;
@@ -5484,6 +5510,166 @@ function printAsmafRegistry(num, date, tirs){
     <div>Принял: _____________</div>
     <div>Дата: ${fmt(date)}</div>
   </div>
+  <div style="margin-top:16px;text-align:center">
+    <button onclick="window.print()" style="padding:8px 20px;font-size:12pt;cursor:pointer">🖨 Распечатать</button>
+  </div>
+  </body></html>`);
+  win.document.close();
+}
+
+// ============ ГОДОВЫЕ РЕЕСТРЫ (ТИР / Дозволы / Рейсы) ============
+// Печатает полный список за выбранный год — независимо от прочих фильтров на странице
+// (поиск/статус и т.п.), это отдельный отчётный документ. Данные при этом не меняются
+// и никуда не архивируются — см. обсуждение с пользователем 2026-07-15.
+function printYearRegistry(type){
+  if(type==='tir'){
+    const year=(document.getElementById('tir-f-year')||{}).value;
+    if(!year){ alert('Сначала выберите год в фильтре'); return; }
+    const rows=TIRS.filter(t=>t.transferred && new Date(t.transferred).getFullYear()===parseInt(year));
+    printTirYearRegistry(year, rows);
+  } else if(type==='dozv'){
+    const year=(document.getElementById('dozv-f-year')||{}).value;
+    if(!year){ alert('Сначала выберите год в фильтре'); return; }
+    const rows=DOZV.filter(d=>d.received && new Date(d.received).getFullYear()===parseInt(year));
+    printDozvYearRegistry(year, rows);
+  } else if(type==='trips'){
+    const year=(document.getElementById('trips-f-year')||{}).value;
+    if(!year){ alert('Сначала выберите год в фильтре'); return; }
+    const rows=TRIPS.filter(t=>t.loadDate && new Date(t.loadDate).getFullYear()===parseInt(year));
+    printTripsYearRegistry(year, rows);
+  }
+}
+
+function printTirYearRegistry(year, tirs){
+  const rows=tirs.map((t,i)=>`<tr>
+    <td style="text-align:center">${i+1}</td>
+    <td style="font-family:monospace;font-weight:bold">${t.num}</td>
+    <td>${t.type||'—'}</td>
+    <td>${fmt(t.received)}</td>
+    <td>${fmt(t.transferred)}</td>
+    <td>${t.person||'—'}</td>
+    <td>${t.plate||'—'}</td>
+    <td style="text-align:center">${t.used===true?'Использован':t.used===false?'Не использован':'—'}</td>
+  </tr>`).join('');
+  const win=window.open('','_blank','width=900,height=640');
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8">
+  <title>Реестр ТИР за ${year} год</title>
+  <style>
+    body{font-family:'Times New Roman',serif;margin:20mm 15mm;font-size:12pt;color:#000}
+    h2{text-align:center;font-size:14pt;margin-bottom:4px}
+    .meta{text-align:center;margin-bottom:16px;font-size:11pt}
+    table{width:100%;border-collapse:collapse;margin-top:16px}
+    th{border:1px solid #000;padding:6px 8px;text-align:left;font-size:9.5pt;background:#f5f5f5}
+    td{border:1px solid #000;padding:6px 8px;font-size:9.5pt}
+    @media print{button{display:none}}
+  </style></head><body>
+  <h2>РЕЕСТР ТИР-КАРНЕТОВ ЗА ${year} ГОД</h2>
+  <div class="meta">${COMPANY.name||'—'} · отчётный период — по дате передачи водителю</div>
+  <table>
+    <thead><tr>
+      <th style="width:35px;text-align:center">№</th>
+      <th>Серия и номер</th><th>Тип</th><th>Получен</th><th>Передан</th>
+      <th>Водитель</th><th>Гос. №</th><th style="width:110px;text-align:center">Использован</th>
+    </tr></thead>
+    <tbody>${rows||'<tr><td colspan="8" style="text-align:center">Нет данных за этот год</td></tr>'}</tbody>
+  </table>
+  <div style="margin-top:10px;font-size:10pt">Итого за ${year} год: <b>${tirs.length}</b></div>
+  <div style="margin-top:16px;text-align:center">
+    <button onclick="window.print()" style="padding:8px 20px;font-size:12pt;cursor:pointer">🖨 Распечатать</button>
+  </div>
+  </body></html>`);
+  win.document.close();
+}
+
+function printDozvYearRegistry(year, dozv){
+  const rows=dozv.map((d,i)=>`<tr>
+    <td style="text-align:center">${i+1}</td>
+    <td>${d.country||'—'}</td>
+    <td>${d.epermit?'Е-ПЕРМИТ':'Бумажный'}</td>
+    <td style="font-family:monospace">${d.num}</td>
+    <td>${fmt(d.received)}</td>
+    <td>${fmt(d.issued)}</td>
+    <td>${d.person||'—'}</td>
+    <td style="text-align:center">${d.used===true?'Использован':d.used===false?'Не использован':'—'}</td>
+  </tr>`).join('');
+  const win=window.open('','_blank','width=900,height=640');
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8">
+  <title>Реестр Дозволов за ${year} год</title>
+  <style>
+    body{font-family:'Times New Roman',serif;margin:20mm 15mm;font-size:12pt;color:#000}
+    h2{text-align:center;font-size:14pt;margin-bottom:4px}
+    .meta{text-align:center;margin-bottom:16px;font-size:11pt}
+    table{width:100%;border-collapse:collapse;margin-top:16px}
+    th{border:1px solid #000;padding:6px 8px;text-align:left;font-size:9.5pt;background:#f5f5f5}
+    td{border:1px solid #000;padding:6px 8px;font-size:9.5pt}
+    @media print{button{display:none}}
+  </style></head><body>
+  <h2>РЕЕСТР ДОЗВОЛОВ ЗА ${year} ГОД</h2>
+  <div class="meta">${COMPANY.name||'—'} · отчётный период — по дате получения от МИНТРАНСА</div>
+  <table>
+    <thead><tr>
+      <th style="width:35px;text-align:center">№</th>
+      <th>Страна</th><th>Тип</th><th>Документ</th><th>Получен</th><th>Выдан</th>
+      <th>Водитель</th><th style="width:110px;text-align:center">Использован</th>
+    </tr></thead>
+    <tbody>${rows||'<tr><td colspan="8" style="text-align:center">Нет данных за этот год</td></tr>'}</tbody>
+  </table>
+  <div style="margin-top:10px;font-size:10pt">Итого за ${year} год: <b>${dozv.length}</b></div>
+  <div style="margin-top:16px;text-align:center">
+    <button onclick="window.print()" style="padding:8px 20px;font-size:12pt;cursor:pointer">🖨 Распечатать</button>
+  </div>
+  </body></html>`);
+  win.document.close();
+}
+
+function printTripsYearRegistry(year, trips){
+  let totalIncome=0, totalExp=0, totalProfit=0;
+  const rows=trips.map((t,i)=>{
+    const income=tripTotalIncome(t), exp=tripTotalExpenses(t), profit=tripProfit(t);
+    totalIncome+=income; totalExp+=exp; totalProfit+=profit;
+    const st=TRIP_STATUSES[t.status]||TRIP_STATUSES.prep;
+    const legs=t.legs||[];
+    const route=legs.length?legs.map(l=>`${l.from}→${l.to}`).join(', '):'—';
+    return `<tr>
+      <td style="text-align:center">${i+1}</td>
+      <td style="font-family:monospace">${getTripLabel(t)}</td>
+      <td>${route}</td>
+      <td>${fmt(t.loadDate)}</td>
+      <td>${st.label}</td>
+      <td style="text-align:right">${fmtN(income)}</td>
+      <td style="text-align:right">${fmtN(exp)}</td>
+      <td style="text-align:right">${fmtN(profit)}</td>
+    </tr>`;
+  }).join('');
+  const win=window.open('','_blank','width=950,height=640');
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8">
+  <title>Реестр Рейсов за ${year} год</title>
+  <style>
+    body{font-family:'Times New Roman',serif;margin:20mm 15mm;font-size:12pt;color:#000}
+    h2{text-align:center;font-size:14pt;margin-bottom:4px}
+    .meta{text-align:center;margin-bottom:16px;font-size:11pt}
+    table{width:100%;border-collapse:collapse;margin-top:16px}
+    th{border:1px solid #000;padding:6px 8px;text-align:left;font-size:9.5pt;background:#f5f5f5}
+    td{border:1px solid #000;padding:6px 8px;font-size:9.5pt}
+    tfoot td{font-weight:bold;background:#f5f5f5}
+    @media print{button{display:none}}
+  </style></head><body>
+  <h2>РЕЕСТР РЕЙСОВ ЗА ${year} ГОД</h2>
+  <div class="meta">${COMPANY.name||'—'} · отчётный период — по дате начала рейса. Незавершённые рейсы в реестр не входят.</div>
+  <table>
+    <thead><tr>
+      <th style="width:35px;text-align:center">№</th>
+      <th>Рейс</th><th>Маршрут</th><th>Дата начала</th><th>Статус</th>
+      <th style="text-align:right">Доход</th><th style="text-align:right">Расход</th><th style="text-align:right">Прибыль</th>
+    </tr></thead>
+    <tbody>${rows||'<tr><td colspan="8" style="text-align:center">Нет данных за этот год</td></tr>'}</tbody>
+    <tfoot><tr>
+      <td colspan="5">Итого за ${year} год: ${trips.length} рейсов</td>
+      <td style="text-align:right">${fmtN(totalIncome)}</td>
+      <td style="text-align:right">${fmtN(totalExp)}</td>
+      <td style="text-align:right">${fmtN(totalProfit)}</td>
+    </tr></tfoot>
+  </table>
   <div style="margin-top:16px;text-align:center">
     <button onclick="window.print()" style="padding:8px 20px;font-size:12pt;cursor:pointer">🖨 Распечатать</button>
   </div>
@@ -7134,6 +7320,8 @@ function renderTrips(){
   const sf=(document.getElementById('trips-filter-status')||{}).value||'';
   const tf=(document.getElementById('trips-filter-type')||{}).value||'';
   const vf=(document.getElementById('trips-filter-vehicle')||{}).value||'';
+  populateYearFilter('trips-f-year', TRIPS.map(t=>t.loadDate));
+  const yf=(document.getElementById('trips-f-year')||{}).value||'';
 
   const archiveStatuses=['done'];
   const isArchive = _tripsTab==='archive';
@@ -7148,6 +7336,10 @@ function renderTrips(){
   // Tab filter
   if(isArchive) data=data.filter(t=>archiveStatuses.includes(t.status));
   else          data=data.filter(t=>!archiveStatuses.includes(t.status));
+
+  // Отчётный период рейса — дата начала (загрузки). Незавершённые рейсы всегда
+  // видны независимо от выбранного года — это активная работа, не архив.
+  if(yf) data=data.filter(t=>!archiveStatuses.includes(t.status) || (t.loadDate && new Date(t.loadDate).getFullYear()===parseInt(yf)));
 
   if(sf) data=data.filter(t=>t.status===sf);
   if(tf) data=data.filter(t=>t.type===tf);
