@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ММ Транспорт — Панель владельца</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
+:root {
+  --bg:#f5f4f0;--surface:#fff;--surface2:#f0efe9;--border:#e0ddd5;--border2:#ccc9be;
+  --text:#1a1916;--text2:#6b6860;--text3:#9b9890;
+  --accent:#1a3a5c;--accent2:#2559a0;
+  --green:#1a5c35;--green-bg:#e8f5ee;
+  --red:#8b1a1a;--red-bg:#fdf0f0;
+  --amber:#7a4a00;--amber-bg:#fff8e8;
+  --blue-bg:#e8f0fa;--purple:#5b21b6;--purple-bg:#f3eeff;
+  --font:'IBM Plex Sans',sans-serif;--mono:'IBM Plex Mono',monospace;
+  --radius:8px;--radius-lg:12px;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14px;min-height:100vh;}
+.topbar{background:var(--surface);border-bottom:1px solid var(--border);padding:14px 26px;display:flex;align-items:center;justify-content:space-between;}
+.topbar .co{font-size:15px;font-weight:600;}
+.topbar .sub{font-size:11px;color:var(--text3);font-family:var(--mono);}
+.wrap{padding:22px 26px;max-width:1200px;margin:0 auto;}
+.stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:18px;}
+.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:14px 16px;}
+.stat-card .sl{font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;}
+.stat-card .sv{font-size:26px;font-weight:600;font-family:var(--mono);line-height:1;}
+.section{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);margin-bottom:18px;overflow:hidden;}
+.section-head{padding:13px 16px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);}
+.section-head h3{font-size:13px;font-weight:600;}
+.tbl{width:100%;border-collapse:collapse;font-size:12.5px;}
+.tbl th{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--text3);padding:9px 12px;text-align:left;background:var(--surface2);border-bottom:1px solid var(--border);white-space:nowrap;}
+.tbl td{padding:9px 12px;border-bottom:1px solid var(--border);vertical-align:middle;}
+.tbl tr:last-child td{border-bottom:none;}
+.mono{font-family:var(--mono);font-size:11.5px;}
+.tag{display:inline-block;font-size:10.5px;font-weight:500;padding:2px 7px;border-radius:20px;white-space:nowrap;}
+.tag.green{background:var(--green-bg);color:var(--green);}
+.tag.red{background:var(--red-bg);color:var(--red);}
+.tag.amber{background:var(--amber-bg);color:var(--amber);}
+.tag.blue{background:var(--blue-bg);color:var(--accent2);}
+.tag.gray{background:var(--surface2);color:var(--text2);}
+.btn{display:inline-flex;align-items:center;gap:5px;padding:7px 13px;border-radius:var(--radius);border:1px solid var(--border2);background:var(--surface);color:var(--text);font-size:12.5px;font-family:var(--font);cursor:pointer;font-weight:500;white-space:nowrap;}
+.btn:hover{background:var(--surface2);}
+.btn.primary{background:var(--accent);color:#fff;border-color:var(--accent);}
+.btn.primary:hover{background:#0f2a47;}
+.btn.sm{padding:4px 9px;font-size:11.5px;}
+.btn.sm + .btn.sm{margin-left:5px;}
+.nowrap{white-space:nowrap;}
+.btn.red-btn{background:var(--red);color:#fff;border-color:var(--red);}
+.overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:1000;align-items:center;justify-content:center;padding:16px;}
+.overlay.open{display:flex;}
+.modal{background:var(--surface);border-radius:var(--radius-lg);width:100%;max-width:520px;max-height:92vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.2);}
+.modal-head{padding:16px 18px 13px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;}
+.modal-head h3{font-size:14px;font-weight:600;}
+.modal-close{cursor:pointer;font-size:18px;color:var(--text3);line-height:1;padding:4px;}
+.modal-body{padding:16px 18px;}
+.modal-foot{padding:12px 18px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end;}
+.form-row{margin-bottom:12px;}
+.form-row label{display:block;font-size:11.5px;font-weight:500;color:var(--text2);margin-bottom:4px;}
+.form-row input,.form-row select,.form-row textarea{width:100%;padding:7px 9px;border:1px solid var(--border2);border-radius:var(--radius);font-size:12.5px;font-family:var(--font);background:var(--surface);color:var(--text);}
+.form-row input:focus,.form-row select:focus,.form-row textarea:focus{outline:none;border-color:var(--accent2);}
+.form-grid-2{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+.info-box{background:var(--blue-bg);border:1px solid #b8d0f0;border-radius:var(--radius);padding:9px 13px;font-size:12px;color:var(--accent2);margin-bottom:12px;}
+.users-row td{background:var(--surface2);padding:10px 16px;}
+.users-list{font-size:12px;}
+.users-list div{padding:3px 0;}
+.modal.wide{max-width:720px;}
+.filter-bar{display:flex;gap:8px;align-items:flex-end;margin-bottom:12px;}
+.filter-bar .form-row{margin-bottom:0;flex:1;}
+.balance-summary{display:flex;gap:10px;margin-bottom:14px;}
+.bs-card{flex:1;background:var(--surface2);border-radius:var(--radius);padding:10px 14px;text-align:center;}
+.bs-card .bsl{font-size:10px;color:var(--text3);margin-bottom:3px;}
+.bs-card .bsv{font-size:16px;font-weight:600;font-family:var(--mono);}
+.bsv.red{color:var(--red);}.bsv.green{color:var(--green);}
+.add-entry-row{display:flex;gap:8px;align-items:flex-end;margin-bottom:14px;padding:12px;background:var(--surface2);border-radius:var(--radius);}
+.add-entry-row .form-row{margin-bottom:0;}
+.add-entry-row input,.add-entry-row select{width:auto;}
+.toast{position:fixed;bottom:20px;right:20px;background:var(--accent);color:#fff;padding:10px 18px;border-radius:var(--radius);font-size:13px;z-index:3000;display:none;box-shadow:0 6px 20px rgba(0,0,0,.2);}
+.login-overlay{position:fixed;inset:0;background:var(--bg);z-index:5000;display:flex;align-items:center;justify-content:center;}
+.login-box{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);width:100%;max-width:340px;padding:24px 22px;box-shadow:0 20px 60px rgba(0,0,0,.12);}
+.login-box .co{font-size:16px;font-weight:600;margin-bottom:2px;}
+.login-box .sub{font-size:11px;color:var(--text3);margin-bottom:18px;font-family:var(--mono);}
+.login-box .btn{width:100%;justify-content:center;margin-top:4px;}
+.login-box .li-error{display:none;background:var(--red-bg);border:1px solid #f0c0c0;color:var(--red);border-radius:var(--radius);padding:8px 11px;font-size:12px;margin-bottom:10px;}
+</style>
+</head>
+<body>
+
+<div class="login-overlay" id="login-screen">
+  <div class="login-box">
+    <div class="co">ММ Транспорт</div>
+    <div class="sub">Панель владельца</div>
+    <div class="li-error" id="login-error"></div>
+    <div class="form-row"><label>Email</label><input type="email" id="login-email"></div>
+    <div class="form-row"><label>Пароль</label><input type="password" id="login-password"></div>
+    <button class="btn primary" id="login-btn" onclick="doLogin()">Войти</button>
+  </div>
+</div>
+
+<div id="app-root" style="display:none">
+  <div class="topbar">
+    <div><div class="co">ММ Транспорт — Панель владельца</div><div class="sub" id="current-user-email"></div></div>
+    <button class="btn" onclick="doLogout()">Выйти</button>
+  </div>
+  <div class="wrap">
+    <div class="stat-grid">
+      <div class="stat-card"><div class="sl">Компаний</div><div class="sv" id="st-total">—</div></div>
+      <div class="stat-card"><div class="sl">Активных</div><div class="sv" id="st-active">—</div></div>
+      <div class="stat-card"><div class="sl">На демо</div><div class="sv" id="st-trial">—</div></div>
+      <div class="stat-card"><div class="sl">Заблокировано</div><div class="sv" id="st-suspended">—</div></div>
+    </div>
+    <div class="section">
+      <div class="section-head">
+        <h3>Компании</h3>
+        <button class="btn primary" onclick="openAddCompany()">+ Новая компания</button>
+      </div>
+      <table class="tbl">
+        <thead><tr>
+          <th>Название</th><th>Тип</th><th>Статус</th><th>Оплачено до</th><th>Демо до</th><th>Тариф</th><th>Контакт</th><th>Заметка</th><th>Баланс</th><th>Польз.</th><th></th>
+        </tr></thead>
+        <tbody id="companies-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="modal-add-company">
+  <div class="modal">
+    <div class="modal-head"><h3>Новая компания</h3><span class="modal-close" onclick="closeModal('modal-add-company')">×</span></div>
+    <div class="modal-body">
+      <div class="info-box">Это только создаёт запись о компании. Логин для первого пользователя компании нужно будет попросить создать отдельно (через администратора системы) — это разовая техническая операция.</div>
+      <div class="form-row"><label>Название компании</label><input type="text" id="ac-name"></div>
+      <div class="form-grid-2">
+        <div class="form-row"><label>Тип</label><select id="ac-account-type"><option value="subscriber">Подписчик</option><option value="volunteer">Волонтёр (тест)</option></select></div>
+        <div class="form-row"><label>Статус</label><select id="ac-status"><option value="trial">Демо</option><option value="active">Активна</option></select></div>
+      </div>
+      <div class="form-grid-2">
+        <div class="form-row"><label>Контактное лицо</label><input type="text" id="ac-contact-name"></div>
+        <div class="form-row"><label>Телефон</label><input type="text" id="ac-contact-phone"></div>
+      </div>
+      <div class="form-row"><label>Email</label><input type="email" id="ac-contact-email"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeModal('modal-add-company')">Отмена</button>
+      <button class="btn primary" onclick="saveNewCompany()">Создать</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="modal-edit-company">
+  <div class="modal">
+    <div class="modal-head"><h3 id="ec-title">Редактировать компанию</h3><span class="modal-close" onclick="closeModal('modal-edit-company')">×</span></div>
+    <div class="modal-body">
+      <div class="form-row"><label>Название компании</label><input type="text" id="ec-name"></div>
+      <div class="form-grid-2">
+        <div class="form-row"><label>Тип</label><select id="ec-account-type"><option value="subscriber">Подписчик</option><option value="volunteer">Волонтёр (тест)</option><option value="admin">Платформа (админ)</option></select></div>
+        <div class="form-row"><label>Статус</label><select id="ec-status"><option value="trial">Демо</option><option value="active">Активна</option><option value="suspended">Заблокирована</option><option value="cancelled">Отменена</option></select></div>
+      </div>
+      <div class="form-grid-2">
+        <div class="form-row"><label>Оплачено до</label><input type="date" id="ec-paid-until"></div>
+        <div class="form-row"><label>Тариф</label><input type="text" id="ec-plan"></div>
+      </div>
+      <div class="form-grid-2">
+        <div class="form-row"><label>Контактное лицо</label><input type="text" id="ec-contact-name"></div>
+        <div class="form-row"><label>Телефон</label><input type="text" id="ec-contact-phone"></div>
+      </div>
+      <div class="form-row"><label>Email</label><input type="email" id="ec-contact-email"></div>
+      <div class="form-row"><label>Заметка</label><textarea id="ec-note" rows="3"></textarea></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeModal('modal-edit-company')">Отмена</button>
+      <button class="btn primary" onclick="saveEditCompany()">Сохранить</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="modal-billing">
+  <div class="modal wide">
+    <div class="modal-head"><h3 id="bl-title">История оплат</h3><span class="modal-close" onclick="closeModal('modal-billing')">×</span></div>
+    <div class="modal-body">
+      <div class="filter-bar">
+        <div class="form-row"><label>С (месяц)</label><input type="month" id="bl-from" onchange="renderBilling()"></div>
+        <div class="form-row"><label>По (месяц)</label><input type="month" id="bl-to" onchange="renderBilling()"></div>
+        <button class="btn sm" onclick="printBillingAct()">🖨 Акт сверки</button>
+      </div>
+      <div class="balance-summary" id="bl-summary"></div>
+      <div class="add-entry-row">
+        <div class="form-row"><label>Дата</label><input type="date" id="bl-new-date"></div>
+        <div class="form-row"><label>Тип</label><select id="bl-new-type"><option value="payment">Оплата получена</option><option value="charge">Начислено</option></select></div>
+        <div class="form-row"><label>Сумма</label><input type="number" id="bl-new-amount" style="width:130px"></div>
+        <div class="form-row" style="flex:1"><label>Комментарий</label><input type="text" id="bl-new-note" style="width:100%"></div>
+        <button class="btn primary sm" onclick="addBillingEntry()">+ Добавить</button>
+      </div>
+      <table class="tbl">
+        <thead><tr><th>Дата</th><th>Тип</th><th style="text-align:right">Сумма</th><th>Комментарий</th><th></th></tr></thead>
+        <tbody id="bl-tbody"></tbody>
+      </table>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeModal('modal-billing')">Закрыть</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script>
+const SUPABASE_URL = 'https://otzerelogdbinclmalyp.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im90emVyZWxvZ2RiaW5jbG1hbHlwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQwNDMwMTYsImV4cCI6MjA5OTYxOTAxNn0.lpg3sKw2cLt1qzgDHKyn6Kon26-7sqUGtZeoTN6ZIB0';
+const sbClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+let CURRENT_USER = null;
+let COMPANIES = [];
+let PROFILES = [];
+let BILLING = [];
+let expandedCompanyId = null;
+let billingCompanyId = null;
+
+function showLoginError(msg){ const el=document.getElementById('login-error'); el.textContent=msg; el.style.display='block'; }
+function toast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.style.display='block'; setTimeout(()=>t.style.display='none',2500); }
+function closeModal(id){ document.getElementById(id).classList.remove('open'); }
+function openModal(id){ document.getElementById(id).classList.add('open'); }
+function fmt(d){ if(!d) return '—'; const dt=new Date(d); return isNaN(dt)?d:dt.toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit',year:'numeric'}); }
+function fmtN(n){ return Math.round(n||0).toLocaleString('ru-RU'); }
+
+async function doLogin(){
+  const email=document.getElementById('login-email').value.trim();
+  const password=document.getElementById('login-password').value;
+  const btn=document.getElementById('login-btn');
+  document.getElementById('login-error').style.display='none';
+  btn.disabled=true; btn.textContent='Входим…';
+  const { data, error } = await sbClient.auth.signInWithPassword({ email, password });
+  btn.disabled=false; btn.textContent='Войти';
+  if(error){ showLoginError('Неверный email или пароль.'); return; }
+  await enterApp(data.session);
+}
+
+async function doLogout(){ await sbClient.auth.signOut(); location.reload(); }
+
+async function enterApp(session){
+  CURRENT_USER = session.user;
+  const { data: profile, error } = await sbClient.from('profiles').select('*').eq('id', CURRENT_USER.id).maybeSingle();
+  if(error || !profile || profile.role !== 'owner'){
+    showLoginError('Эта панель доступна только владельцу продукта.');
+    await sbClient.auth.signOut();
+    return;
+  }
+  document.getElementById('login-screen').style.display='none';
+  document.getElementById('app-root').style.display='block';
+  document.getElementById('current-user-email').textContent = CURRENT_USER.email;
+  await loadData();
+}
+
+async function loadData(){
+  const [{data: companies, error: e1}, {data: profiles, error: e2}, {data: billing, error: e3}] = await Promise.all([
+    sbClient.from('companies').select('*').order('created_at', {ascending:false}),
+    sbClient.from('profiles').select('*'),
+    sbClient.from('company_billing').select('*').order('date', {ascending:true}),
+  ]);
+  if(e1){ toast('Ошибка загрузки компаний: '+e1.message); return; }
+  if(e2){ toast('Ошибка загрузки пользователей: '+e2.message); return; }
+  if(e3){ toast('Ошибка загрузки истории оплат: '+e3.message); return; }
+  COMPANIES = companies||[];
+  PROFILES = profiles||[];
+  BILLING = billing||[];
+  renderAll();
+}
+
+function companyBalance(companyId){
+  const rows = BILLING.filter(b=>b.company_id===companyId);
+  const charged = rows.filter(b=>b.type==='charge').reduce((s,b)=>s+Number(b.amount),0);
+  const paid = rows.filter(b=>b.type==='payment').reduce((s,b)=>s+Number(b.amount),0);
+  return paid - charged;
+}
+function balanceColor(companyId){ const b=companyBalance(companyId); return b<0?'var(--red)':'var(--green)'; }
+function fmtBalance(companyId){
+  const rows = BILLING.filter(b=>b.company_id===companyId);
+  if(!rows.length) return '—';
+  const b=companyBalance(companyId);
+  return (b<0?'−':'+')+fmtN(Math.abs(b));
+}
+
+function renderAll(){
+  document.getElementById('st-total').textContent = COMPANIES.length;
+  document.getElementById('st-active').textContent = COMPANIES.filter(c=>c.subscription_status==='active').length;
+  document.getElementById('st-trial').textContent = COMPANIES.filter(c=>c.subscription_status==='trial').length;
+  document.getElementById('st-suspended').textContent = COMPANIES.filter(c=>c.subscription_status==='suspended'||c.subscription_status==='cancelled').length;
+  renderCompanies();
+}
+
+const ACCOUNT_TYPE_LABEL = {admin:'Платформа', volunteer:'Волонтёр', subscriber:'Подписчик'};
+const STATUS_TAG = {trial:'blue', active:'green', suspended:'red', cancelled:'gray'};
+const STATUS_LABEL = {trial:'Демо', active:'Активна', suspended:'Заблокирована', cancelled:'Отменена'};
+
+function renderCompanies(){
+  const tbody = document.getElementById('companies-tbody');
+  tbody.innerHTML = COMPANIES.map(c=>{
+    const userCount = PROFILES.filter(p=>p.company_id===c.id).length;
+    const contact = [c.contact_name, c.contact_phone].filter(Boolean).join(' · ') || '—';
+    let rows = `<tr>
+      <td><b>${c.name}</b></td>
+      <td><span class="tag gray">${ACCOUNT_TYPE_LABEL[c.account_type]||c.account_type}</span></td>
+      <td><span class="tag ${STATUS_TAG[c.subscription_status]||'gray'}">${STATUS_LABEL[c.subscription_status]||c.subscription_status}</span></td>
+      <td class="mono">${fmt(c.paid_until)}</td>
+      <td class="mono">${fmt(c.trial_ends_at)}</td>
+      <td>${c.plan||'—'}</td>
+      <td>${contact}</td>
+      <td style="max-width:160px;white-space:normal">${c.admin_note||'—'}</td>
+      <td class="mono" style="color:${balanceColor(c.id)}">${fmtBalance(c.id)}</td>
+      <td><button class="btn sm" onclick="toggleUsers('${c.id}')">👥 ${userCount}</button></td>
+      <td class="nowrap">
+        <button class="btn sm" onclick="openEditCompany('${c.id}')">✏️</button>
+        <button class="btn sm" onclick="openBilling('${c.id}')">💳</button>
+      </td>
+    </tr>`;
+    if(expandedCompanyId===c.id){
+      const users = PROFILES.filter(p=>p.company_id===c.id);
+      rows += `<tr class="users-row"><td colspan="11"><div class="users-list">
+        ${users.length? users.map(u=>`<div>${u.full_name||'(без имени)'} · ${u.phone||'—'} · роль: ${u.role} · ${u.active===false?'<span class="tag red">неактивен</span>':'<span class="tag green">активен</span>'}</div>`).join('')
+        : '<div style="color:var(--text3)">Пока нет пользователей. Чтобы добавить первый логин для этой компании, обратитесь к разработчику.</div>'}
+      </div></td></tr>`;
+    }
+    return rows;
+  }).join('') || '<tr><td colspan="11" style="text-align:center;color:var(--text3)">Нет компаний</td></tr>';
+}
+
+function toggleUsers(id){ expandedCompanyId = expandedCompanyId===id ? null : id; renderCompanies(); }
+
+function openAddCompany(){
+  document.getElementById('ac-name').value='';
+  document.getElementById('ac-account-type').value='subscriber';
+  document.getElementById('ac-status').value='trial';
+  document.getElementById('ac-contact-name').value='';
+  document.getElementById('ac-contact-phone').value='';
+  document.getElementById('ac-contact-email').value='';
+  openModal('modal-add-company');
+}
+
+async function saveNewCompany(){
+  const name=document.getElementById('ac-name').value.trim();
+  if(!name){ alert('Укажите название компании'); return; }
+  const record={
+    name,
+    account_type: document.getElementById('ac-account-type').value,
+    subscription_status: document.getElementById('ac-status').value,
+    contact_name: document.getElementById('ac-contact-name').value.trim()||null,
+    contact_phone: document.getElementById('ac-contact-phone').value.trim()||null,
+    contact_email: document.getElementById('ac-contact-email').value.trim()||null,
+  };
+  const { data, error } = await sbClient.from('companies').insert(record).select().single();
+  if(error){ alert('Не удалось создать компанию: '+error.message); return; }
+  COMPANIES.unshift(data);
+  closeModal('modal-add-company');
+  renderAll();
+  toast('Компания создана: '+name);
+}
+
+function openEditCompany(id){
+  const c=COMPANIES.find(x=>x.id===id); if(!c) return;
+  document.getElementById('modal-edit-company').dataset.companyId=id;
+  document.getElementById('ec-title').textContent='Редактировать: '+c.name;
+  document.getElementById('ec-name').value=c.name||'';
+  document.getElementById('ec-account-type').value=c.account_type||'subscriber';
+  document.getElementById('ec-status').value=c.subscription_status||'trial';
+  document.getElementById('ec-paid-until').value=c.paid_until||'';
+  document.getElementById('ec-plan').value=c.plan||'';
+  document.getElementById('ec-contact-name').value=c.contact_name||'';
+  document.getElementById('ec-contact-phone').value=c.contact_phone||'';
+  document.getElementById('ec-contact-email').value=c.contact_email||'';
+  document.getElementById('ec-note').value=c.admin_note||'';
+  openModal('modal-edit-company');
+}
+
+async function saveEditCompany(){
+  const id=document.getElementById('modal-edit-company').dataset.companyId;
+  const name=document.getElementById('ec-name').value.trim();
+  if(!name){ alert('Укажите название компании'); return; }
+  const record={
+    name,
+    account_type: document.getElementById('ec-account-type').value,
+    subscription_status: document.getElementById('ec-status').value,
+    paid_until: document.getElementById('ec-paid-until').value||null,
+    plan: document.getElementById('ec-plan').value.trim()||null,
+    contact_name: document.getElementById('ec-contact-name').value.trim()||null,
+    contact_phone: document.getElementById('ec-contact-phone').value.trim()||null,
+    contact_email: document.getElementById('ec-contact-email').value.trim()||null,
+    admin_note: document.getElementById('ec-note').value.trim()||null,
+  };
+  const { data, error } = await sbClient.from('companies').update(record).eq('id', id).select().single();
+  if(error){ alert('Не удалось сохранить: '+error.message); return; }
+  const idx=COMPANIES.findIndex(x=>x.id===id);
+  if(idx>=0) COMPANIES[idx]=data;
+  closeModal('modal-edit-company');
+  renderAll();
+  toast('Сохранено: '+name);
+}
+
+function openBilling(id){
+  const c=COMPANIES.find(x=>x.id===id); if(!c) return;
+  billingCompanyId=id;
+  document.getElementById('bl-title').textContent='История оплат: '+c.name;
+  const now=new Date(), y=now.getFullYear();
+  document.getElementById('bl-from').value=`${y}-01`;
+  document.getElementById('bl-to').value=`${y}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  document.getElementById('bl-new-date').value=now.toISOString().split('T')[0];
+  document.getElementById('bl-new-type').value='payment';
+  document.getElementById('bl-new-amount').value='';
+  document.getElementById('bl-new-note').value='';
+  openModal('modal-billing');
+  renderBilling();
+}
+
+function billingFilteredRows(){
+  const fromM=(document.getElementById('bl-from')||{}).value||'';
+  const toM=(document.getElementById('bl-to')||{}).value||'';
+  const inPeriod=(d)=>{
+    if(!d) return true;
+    if(fromM && d<fromM+'-01') return false;
+    if(toM){ const e=new Date(toM); e.setMonth(e.getMonth()+1); e.setDate(0); if(d>e.toISOString().split('T')[0]) return false; }
+    return true;
+  };
+  return BILLING.filter(b=>b.company_id===billingCompanyId && inPeriod(b.date));
+}
+
+function renderBilling(){
+  const rows=billingFilteredRows();
+  const charged=rows.filter(b=>b.type==='charge').reduce((s,b)=>s+Number(b.amount),0);
+  const paid=rows.filter(b=>b.type==='payment').reduce((s,b)=>s+Number(b.amount),0);
+  const balance=paid-charged;
+  document.getElementById('bl-summary').innerHTML=`
+    <div class="bs-card"><div class="bsl">Начислено</div><div class="bsv red">${fmtN(charged)}</div></div>
+    <div class="bs-card"><div class="bsl">Оплачено</div><div class="bsv green">${fmtN(paid)}</div></div>
+    <div class="bs-card"><div class="bsl">Баланс</div><div class="bsv ${balance<0?'red':'green'}">${fmtN(Math.abs(balance))} ${balance<0?'(долг)':'(переплата)'}</div></div>`;
+  document.getElementById('bl-tbody').innerHTML = rows.map(b=>`<tr>
+    <td class="mono">${fmt(b.date)}</td>
+    <td><span class="tag ${b.type==='payment'?'green':'amber'}">${b.type==='payment'?'Оплата':'Начисление'}</span></td>
+    <td style="text-align:right;font-weight:600;color:${b.type==='payment'?'var(--green)':'var(--red)'}">${b.type==='payment'?'+':'-'}${fmtN(b.amount)}</td>
+    <td>${b.note||'—'}</td>
+    <td><button class="btn sm" onclick="deleteBillingEntry('${b.id}')">✕</button></td>
+  </tr>`).join('') || '<tr><td colspan="5" style="text-align:center;color:var(--text3)">Нет записей за период</td></tr>';
+}
+
+async function addBillingEntry(){
+  const date=document.getElementById('bl-new-date').value;
+  const type=document.getElementById('bl-new-type').value;
+  const amount=parseFloat(document.getElementById('bl-new-amount').value)||0;
+  const note=document.getElementById('bl-new-note').value.trim()||null;
+  if(!date||!amount){ alert('Укажите дату и сумму'); return; }
+  const record={ company_id: billingCompanyId, date, type, amount, note };
+  const { data, error } = await sbClient.from('company_billing').insert(record).select().single();
+  if(error){ alert('Не удалось сохранить запись: '+error.message); return; }
+  BILLING.push(data);
+  document.getElementById('bl-new-amount').value='';
+  document.getElementById('bl-new-note').value='';
+  renderBilling();
+  renderCompanies();
+  toast('Запись добавлена');
+}
+
+async function deleteBillingEntry(id){
+  if(!confirm('Удалить эту запись?')) return;
+  const { error } = await sbClient.from('company_billing').delete().eq('id', id);
+  if(error){ alert('Не удалось удалить: '+error.message); return; }
+  BILLING = BILLING.filter(b=>b.id!==id);
+  renderBilling();
+  renderCompanies();
+  toast('Запись удалена');
+}
+
+function printBillingAct(){
+  const c=COMPANIES.find(x=>x.id===billingCompanyId); if(!c) return;
+  const fromM=(document.getElementById('bl-from')||{}).value||'';
+  const toM=(document.getElementById('bl-to')||{}).value||'';
+  const period=(fromM||'начало')+(toM?' — '+toM:'');
+  const rows=billingFilteredRows();
+  const charged=rows.filter(b=>b.type==='charge').reduce((s,b)=>s+Number(b.amount),0);
+  const paid=rows.filter(b=>b.type==='payment').reduce((s,b)=>s+Number(b.amount),0);
+  const balance=paid-charged;
+  const tableRows=rows.map(b=>`<tr><td>${fmt(b.date)}</td><td>${b.type==='payment'?'Оплата':'Начисление'}</td><td>${b.note||'—'}</td><td style="text-align:right;color:${b.type==='payment'?'green':'red'}">${b.type==='payment'?'+':'-'}${fmtN(b.amount)}</td></tr>`).join('')
+    || '<tr><td colspan="4" style="text-align:center">Нет операций за период</td></tr>';
+
+  const win=window.open('','_blank','width=760,height=600');
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Акт сверки — ${c.name}</title>
+  <style>body{font-family:'Times New Roman',serif;margin:15mm;font-size:11pt}h2{text-align:center;font-size:13pt;margin-bottom:4px}
+  .meta{text-align:center;font-size:10pt;color:#333;margin-bottom:10px}
+  .summary{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:8px 0 14px}
+  .sc{border:1px solid #ccc;padding:7px;text-align:center}.sc .l{font-size:9pt;color:#666;margin-bottom:2px}.sc .v{font-size:12pt;font-weight:bold}
+  table{width:100%;border-collapse:collapse;font-size:10pt}th{border:1px solid #000;padding:5px 7px;background:#f5f5f5}td{border:1px solid #999;padding:5px 7px}
+  .sign{margin-top:28px;display:flex;justify-content:space-between}
+  .sign div{text-align:center;width:220px}.sign .line{border-top:1px solid #000;margin-top:26px;padding-top:3px;font-size:9pt;color:#555}
+  @media print{button{display:none}}</style></head><body>
+  <h2>АКТ СВЕРКИ ПО ПОДПИСКЕ</h2>
+  <div class="meta">ООО «ММ Транспорт» и <b>${c.name}</b> · Период: <b>${period}</b>${c.contact_phone?' · '+c.contact_phone:''}</div>
+  <div class="summary">
+    <div class="sc"><div class="l">Начислено</div><div class="v" style="color:red">${fmtN(charged)}</div></div>
+    <div class="sc"><div class="l">Оплачено</div><div class="v" style="color:green">${fmtN(paid)}</div></div>
+    <div class="sc"><div class="l">Баланс</div><div class="v" style="color:${balance<0?'red':'green'}">${fmtN(Math.abs(balance))} ${balance<0?'(долг)':'(переплата)'}</div></div>
+  </div>
+  <table><thead><tr><th>Дата</th><th>Тип</th><th>Комментарий</th><th style="text-align:right">Сумма</th></tr></thead><tbody>${tableRows}</tbody></table>
+  <div class="sign">
+    <div><div class="line">От ММ Транспорт: _____________</div></div>
+    <div><div class="line">От ${c.name}: _____________</div></div>
+  </div>
+  <div style="text-align:center;margin-top:14px"><button onclick="window.print()" style="padding:7px 18px;cursor:pointer">🖨 Распечатать</button></div>
+  </body></html>`);
+  win.document.close();
+}
+
+sbClient.auth.getSession().then(({data:{session}})=>{
+  if(session) enterApp(session);
+});
+</script>
+</body>
+</html>
