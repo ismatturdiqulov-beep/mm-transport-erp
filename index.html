@@ -3066,6 +3066,25 @@ const saveKassaPayout = guardDoubleSubmit('saveKassaPayout', (...a)=>_saveKassaP
 const saveKassaTransfer = guardDoubleSubmit('saveKassaTransfer', (...a)=>_saveKassaTransferImpl(...a));
 const saveExpense = guardDoubleSubmit('saveExpense', (...a)=>_saveExpenseImpl(...a));
 const saveKassaIncomeModal = guardDoubleSubmit('saveKassaIncomeModal', (...a)=>_saveKassaIncomeModalImpl(...a));
+// Расширено 2026-07-16 по итогам аудита: та же защита нужна везде, где клик создаёт
+// новую запись или начисление — не только в модуле рейсов/кассы, где баг обнаружился первым.
+const saveTirNew = guardDoubleSubmit('saveTirNew', (...a)=>_saveTirNewImpl(...a));
+const returnTirToOffice = guardDoubleSubmit('returnTirToOffice', (...a)=>_returnTirToOfficeImpl(...a));
+const saveDozNew = guardDoubleSubmit('saveDozNew', (...a)=>_saveDozNewImpl(...a));
+const returnDozToOffice = guardDoubleSubmit('returnDozToOffice', (...a)=>_returnDozToOfficeImpl(...a));
+const closeEpermit = guardDoubleSubmit('closeEpermit', (...a)=>_closeEpermitImpl(...a));
+const saveWaybill = guardDoubleSubmit('saveWaybill', (...a)=>_saveWaybillImpl(...a));
+const saveLabor = guardDoubleSubmit('saveLabor', (...a)=>_saveLaborImpl(...a));
+const savePoa = guardDoubleSubmit('savePoa', (...a)=>_savePoaImpl(...a));
+const saveTransport = guardDoubleSubmit('saveTransport', (...a)=>_saveTransportImpl(...a));
+const saveFleet = guardDoubleSubmit('saveFleet', (...a)=>_saveFleetImpl(...a));
+const saveKontragent = guardDoubleSubmit('saveKontragent', (...a)=>_saveKontragentImpl(...a));
+const saveKontragentOp = guardDoubleSubmit('saveKontragentOp', (...a)=>_saveKontragentOpImpl(...a));
+const generateAsmafRegistry = guardDoubleSubmit('generateAsmafRegistry', (...a)=>_generateAsmafRegistryImpl(...a));
+const generateMintransRegistry = guardDoubleSubmit('generateMintransRegistry', (...a)=>_generateMintransRegistryImpl(...a));
+const savePerson = guardDoubleSubmit('savePerson', (...a)=>_savePersonImpl(...a));
+const saveTrip = guardDoubleSubmit('saveTrip', (...a)=>_saveTripImpl(...a));
+const saveMaint = guardDoubleSubmit('saveMaint', (...a)=>_saveMaintImpl(...a));
 
 // Настройки компании (типы ТИР, цены, страны/дозволы, курсы валют, счётчик
 // рейсов, префиксы/ответственные путёвок, покупные цены, реестры АСМАП/Минтранс)
@@ -3199,7 +3218,7 @@ function resetModalTextFields(modalId){
 }
 
 function populateModal(id) {
-  const modalsToReset=['modal-add-kontragent','modal-add-transport','modal-add-fleet','modal-new-dozv','modal-new-tir'];
+  const modalsToReset=['modal-add-kontragent','modal-add-transport','modal-add-fleet','modal-new-dozv','modal-new-tir','modal-add-expense'];
   if(modalsToReset.includes(id)) resetModalTextFields(id);
 
   // Default dates
@@ -3489,7 +3508,7 @@ function toggleDozvCustomPrice(checked){
 // Дата получения и срок действия у всей партии одинаковые, номер у каждой свой.
 // Тип — только один на партию (6-листовые ИЛИ 16-листовые), т.к. это разные партии
 // с отдельными счёт-фактурами — если нужно и то, и то, оформляются двумя заходами.
-async function saveTirNew() {
+async function _saveTirNewImpl() {
   const nums=[...new Set(getTirNums())];
   const type=document.getElementById('nt-type').value;
   const rec=document.getElementById('nt-rec').value;
@@ -3625,7 +3644,7 @@ function transferTir() {
   const kg=getFleetKontragent(fl);
   const daysLeft=daysDiff(t.expires,todayStr);
   const tripId=document.getElementById('tt-trip')?.value||'';
-  const doTransfer=async ()=>{
+  const doTransfer=guardDoubleSubmit('transferTir', async ()=>{
     const date=document.getElementById('tt-date').value||todayStr;
     const { error } = await sbClient.from('tirs').update({
       person_name:kg.name, plate:fl.label, fleet_id:fl.id,
@@ -3667,14 +3686,14 @@ function transferTir() {
       } else { toast(`ТИР передан: ${t.num} → ${fl.label}`); }
     } else { toast(`ТИР передан: ${t.num} → ${fl.label}`); }
     closeModal('modal-transfer-tir'); renderTir();
-  };
+  });
   if(daysLeft<=10&&daysLeft>0){
     showConfirm('⚠️ Срок ТИР заканчивается!',`Осталось ${daysLeft} дней. Передать?`,'Да, передать',doTransfer);
   } else { doTransfer(); }
 }
 
 // ШАГ 1: Водитель вернул ТИР в офис
-async function returnTirToOffice() {
+async function _returnTirToOfficeImpl() {
   const sel=document.getElementById('rt-tir');
   if(!sel||!sel.value) return;
   const t=TIRS.find(x=>x.id===sel.value);
@@ -3704,7 +3723,7 @@ async function returnTirToOffice() {
   renderTir();
 }
 
-async function saveDozNew() {
+async function _saveDozNewImpl() {
   const num=document.getElementById('nd-num').value.trim();
   const country=document.getElementById('nd-country').value;
   const kind=document.getElementById('nd-kind').value;
@@ -3762,7 +3781,7 @@ function transferDozv() {
   if(!d||!fl) return;
   const kg=getFleetKontragent(fl);
   const tripId=document.getElementById('td-trip')?.value||'';
-  const doTransfer=async ()=>{
+  const doTransfer=guardDoubleSubmit('transferDozv', async ()=>{
     const date=document.getElementById('td-date').value||todayStr;
     const { error } = await sbClient.from('dozv').update({
       person_name:kg.name, plate:fl.label, fleet_id:fl.id,
@@ -3804,14 +3823,14 @@ function transferDozv() {
       } else { toast(`Дозвол выдан: ${d.num} → ${fl.label} (цена не задана)`); }
     }
     closeModal('modal-transfer-dozv'); renderDozv();
-  };
+  });
   if(!d.epermit&&isExp(d.expires)){
     showConfirm('⚠️ Просрочен!',`Дозвол ${d.num} просрочен. Санкция. Передать?`,'Да',doTransfer);
   } else { doTransfer(); }
 }
 
 // ШАГ 1: Водитель вернул бумажный ДОЗВОЛ в офис
-async function returnDozToOffice() {
+async function _returnDozToOfficeImpl() {
   const sel=document.getElementById('ro-dozv');
   if(!sel||!sel.value) return;
   const d=DOZV.find(x=>x.id===sel.value);
@@ -3838,7 +3857,7 @@ async function returnDozToOffice() {
 }
 
 // Закрыть Е-ПЕРМИТ (использован — не нужно возвращать)
-async function closeEpermit() {
+async function _closeEpermitImpl() {
   const sel=document.getElementById('rc-dozv');
   if(!sel||!sel.value) return;
   const d=DOZV.find(x=>x.id===sel.value);
@@ -4036,7 +4055,7 @@ function onWaybillFleetChange(){
   }
 }
 
-async function saveWaybill(){
+async function _saveWaybillImpl(){
   const dir=document.getElementById('wb-dir').value;
   const fleetId=document.getElementById('wb-fleet').value;
   const drv1Id=document.getElementById('wb-drv1').value;
@@ -4102,7 +4121,7 @@ function onLaborPersonChange(){
   }
 }
 
-async function saveLabor(){
+async function _saveLaborImpl(){
   const personId=document.getElementById('lb-person').value;
   const name=document.getElementById('lb-name').value.trim();
   if(!name){alert('Укажите ФИО');return;}
@@ -4149,7 +4168,7 @@ function onPoaPersonChange(){
   if(doc) document.getElementById('poa-passport').value=doc.num||'';
 }
 
-async function savePoa(){
+async function _savePoaImpl(){
   const personId=document.getElementById('poa-person').value;
   const name=document.getElementById('poa-name').value.trim();
   if(!name){alert('Укажите ФИО');return;}
@@ -4442,7 +4461,7 @@ function renderTir(){
     if(state==='free') actions=`<button class="btn xs primary" onclick="openTirTransfer('${t.id}')">Передать</button>`;
     if(state==='issued') actions=`<button class="btn xs amber-btn" onclick="openTirReturnOffice('${t.id}')">В офис ↩</button> <button class="btn xs" onclick="cancelTirTransfer('${t.id}')" title="Отменить передачу">↺ Откат</button>`;
     if(state==='office') actions=`<button class="btn xs primary" onclick="openTirTransfer('${t.id}')">Передать</button>`;
-    const canDelete=state==='free'&&!FINANCE.some(f=>f.desc&&f.desc.includes(t.num));
+    const canDelete=state==='free'&&!FINANCE.some(f=>f.desc&&f.desc.includes(`ТИР ${t.num} (`));
     const editBtn=`<button class="btn xs" onclick="openEditTir('${t.id}')" title="Редактировать">✏️</button>`;
     const delBtn=canDelete?`<button class="btn xs danger" onclick="deleteTir('${t.id}')" title="Удалить">🗑</button>`:`<button class="btn xs" style="opacity:.3;cursor:not-allowed" title="Нельзя удалить — есть транзакции или передавался">🗑</button>`;
     // Подпись под статусом — использован/зачёт суммы (раньше были отдельными колонками)
@@ -4497,7 +4516,7 @@ function renderDozv(){
     if(state==='issued'&&d.epermit) actions=`<button class="btn xs green-btn" onclick="openCloseEpermit('${d.id}')">✅ Закрыть</button> <button class="btn xs" onclick="cancelDozTransfer('${d.id}')" title="Отменить передачу">↺ Откат</button>`;
     if(state==='issued'&&!d.epermit) actions=`<button class="btn xs amber-btn" onclick="openDozReturnOffice('${d.id}')">В офис ↩</button> <button class="btn xs" onclick="cancelDozTransfer('${d.id}')" title="Отменить передачу">↺ Откат</button>`;
     if(state==='office') actions=`<span style="font-size:11px;color:var(--text3);">Готов к сдаче в МИНТРАНС (реестром)</span>`;
-    const canDeleteDoz=(state==='free'||state==='mintrans'||state==='closed')&&!FINANCE.some(f=>f.desc&&f.desc.includes(d.num));
+    const canDeleteDoz=(state==='free'||state==='mintrans'||state==='closed')&&!FINANCE.some(f=>f.desc&&f.desc.includes(`Дозвол ${d.num} (`));
     const editDozBtn=`<button class="btn xs" onclick="openEditDoz('${d.id}')" title="Редактировать">✏️</button>`;
     const delDozBtn=canDeleteDoz?`<button class="btn xs danger" onclick="deleteDoz('${d.id}')" title="Удалить">🗑</button>`:`<button class="btn xs" style="opacity:.3;cursor:not-allowed" title="Нельзя удалить">🗑</button>`;
     const statusSub=usedTxt!=='—'?('Исп.: '+(d.used===true?'да':'нет')):'';
@@ -5070,7 +5089,7 @@ async function updatePerson(id){
   toast('Водитель обновлён: '+p.name); renderPeople();
 }
 
-async function saveTransport(){
+async function _saveTransportImpl(){
   const callsign=document.getElementById('at-callsign').value.trim();
   if(!callsign){alert('Укажите позывной');return;}
   const owner=document.getElementById('at-owner').value;
@@ -5246,7 +5265,7 @@ function updateFleetForm(){
   if(block) block.style.display=type==='tenant'?'block':'none';
 }
 
-async function saveFleet(){
+async function _saveFleetImpl(){
   const kontragentId=document.getElementById('af-person').value;
   const kg=KONTRAGENTY.find(x=>x.id===kontragentId);
   if(!kg){alert('Выберите контрагента');return;}
@@ -5276,7 +5295,7 @@ async function saveFleet(){
 let _kopId=null;
 const mapKontragentTypeToDb = (t) => t === 'mm' ? 'driver_mm' : t;
 
-async function saveKontragent(){
+async function _saveKontragentImpl(){
   const name=document.getElementById('ak-name').value.trim();
   if(!name){alert('Укажите наименование');return;}
   const typeEl=document.getElementById('ak-type');
@@ -5312,7 +5331,7 @@ function openKontragentOp(id){
   openModal('modal-kontragent-op');
 }
 
-async function saveKontragentOp(){
+async function _saveKontragentOpImpl(){
   const k=KONTRAGENTY.find(x=>x.id===_kopId); if(!k) return;
   const amount=parseFloat(document.getElementById('kop-amount').value)||0;
   if(!amount){alert('Укажите сумму');return;}
@@ -5643,7 +5662,7 @@ function deselectAllRegistryTirs(){
   updateRegCount();
 }
 
-async function generateAsmafRegistry(){
+async function _generateAsmafRegistryImpl(){
   if(_selectedRegTirs.size===0){alert('Выберите хотя бы один ТИР');return;}
   const date=todayStr;
   const regNum=ASMAF_REGISTRIES.length+1;
@@ -6755,7 +6774,7 @@ function updateDozRegCount(){
 function selectAllDozRegistry(){ document.querySelectorAll('#registry-dozv-list input[type=checkbox]').forEach(cb=>cb.checked=true); updateDozRegCount(); }
 function deselectAllDozRegistry(){ document.querySelectorAll('#registry-dozv-list input[type=checkbox]').forEach(cb=>cb.checked=false); updateDozRegCount(); }
 
-async function generateMintransRegistry(){
+async function _generateMintransRegistryImpl(){
   if(_selectedRegDozv.size===0){alert('Выберите хотя бы один дозвол');return;}
   const date=todayStr;
   const regNum=(DOZ_REGISTRIES.length||0)+1;
@@ -6915,7 +6934,7 @@ async function savePersonDocsToDb(personId, docs) {
   }
 }
 
-async function savePerson(){
+async function _savePersonImpl(){
   const name=document.getElementById('ap-name').value.trim();
   if(!name){alert('Укажите ФИО');return;}
   const kgId=document.getElementById('ap-kontragent-link')?.value||'';
@@ -7051,7 +7070,7 @@ async function deleteTir(id){
   const t=TIRS.find(x=>x.id===id); if(!t) return;
   const state=tirGetState(t);
   if(state!=='free'){alert('Нельзя удалить — ТИР уже передавался.');return;}
-  const hasFin=FINANCE.some(f=>f.desc&&f.desc.includes(t.num));
+  const hasFin=FINANCE.some(f=>f.desc&&f.desc.includes(`ТИР ${t.num} (`));
   if(hasFin){alert('Нельзя удалить — есть связанные финансовые операции.');return;}
   showConfirm('🗑 Удалить ТИР?',`ТИР ${t.num} (${t.type}) будет безвозвратно удалён. Продолжить?`,'Да, удалить',async ()=>{
     const { error } = await sbClient.from('tirs').delete().eq('id', id);
@@ -7065,10 +7084,10 @@ function cancelTirTransfer(id){
   const t=TIRS.find(x=>x.id===id); if(!t) return;
   if(tirGetState(t)!=='issued'){alert('Откат возможен только если ТИР "На руках"');return;}
   // Find and rollback the charge transaction
-  const relatedFin=FINANCE.filter(f=>f.cat==='tir'&&f.desc&&f.desc.includes(t.num)&&f.type==='charge');
-  showConfirm('↺ Отменить передачу ТИР?',
-    `ТИР ${t.num} вернётся в статус "Свободен". ${relatedFin.length>0?'Начисление '+fmtN(relatedFin.reduce((s,f)=>s+f.amount,0))+' сум будет отменено.':''}`,
-    'Да, откатить',async ()=>{
+  // Точное совпадение "ТИР {num} (" вместо простого includes(t.num) — иначе номер
+  // одного ТИРа, являющийся подстрокой другого (напр. "5" внутри "125"), даёт ложный матч.
+  const relatedFin=FINANCE.filter(f=>f.cat==='tir'&&f.desc&&f.desc.includes(`ТИР ${t.num} (`)&&f.type==='charge');
+  const doCancel=guardDoubleSubmit('cancelTirTransfer', async ()=>{
     // Rollback finance and fleet balance
     for(const f of relatedFin){
       const fl=FLEET.find(x=>x.id===f.fleetId);
@@ -7085,6 +7104,9 @@ function cancelTirTransfer(id){
     t.person=''; t.plate=''; t.fleetId=''; t.transferred=''; t.used=null; t.comp=0;
     toast('Передача ТИР '+t.num+' отменена'); renderTir();
   });
+  showConfirm('↺ Отменить передачу ТИР?',
+    `ТИР ${t.num} вернётся в статус "Свободен". ${relatedFin.length>0?'Начисление '+fmtN(relatedFin.reduce((s,f)=>s+f.amount,0))+' сум будет отменено.':''}`,
+    'Да, откатить', doCancel);
 }
 
 // ============ DOZV EDIT / DELETE / CANCEL ============
@@ -7152,7 +7174,7 @@ async function deleteDoz(id){
   const d=DOZV.find(x=>x.id===id); if(!d) return;
   const state=dozGetState(d);
   if(state!=='free'&&state!=='mintrans'&&state!=='closed'){alert('Нельзя удалить — дозвол выдан или в офисе.');return;}
-  const hasFin=FINANCE.some(f=>f.desc&&f.desc.includes(d.num));
+  const hasFin=FINANCE.some(f=>f.desc&&f.desc.includes(`Дозвол ${d.num} (`));
   if(hasFin){alert('Нельзя удалить — есть связанные финансовые операции.');return;}
   showConfirm('🗑 Удалить дозвол?',`Дозвол ${d.num} (${d.country}) будет безвозвратно удалён.`,'Да, удалить',async ()=>{
     const { error } = await sbClient.from('dozv').delete().eq('id', id);
@@ -7166,10 +7188,9 @@ function cancelDozTransfer(id){
   const d=DOZV.find(x=>x.id===id); if(!d) return;
   const state=dozGetState(d);
   if(state!=='issued'){alert('Откат возможен только если дозвол "На руках"');return;}
-  const relatedFin=FINANCE.filter(f=>f.cat==='dozv'&&f.desc&&f.desc.includes(d.num)&&f.type==='charge');
-  showConfirm('↺ Отменить передачу дозвола?',
-    `Дозвол ${d.num} вернётся в статус "Свободен". ${relatedFin.length>0?'Начисление '+fmtN(relatedFin.reduce((s,f)=>s+f.amount,0))+' сум будет отменено.':''}`,
-    'Да, откатить',async ()=>{
+  // Точное совпадение "Дозвол {num} (" вместо простого includes(d.num) — та же причина, что и в cancelTirTransfer.
+  const relatedFin=FINANCE.filter(f=>f.cat==='dozv'&&f.desc&&f.desc.includes(`Дозвол ${d.num} (`)&&f.type==='charge');
+  const doCancel=guardDoubleSubmit('cancelDozTransfer', async ()=>{
     for(const f of relatedFin){
       const fl=FLEET.find(x=>x.id===f.fleetId);
       if(fl){
@@ -7184,6 +7205,9 @@ function cancelDozTransfer(id){
     d.person=''; d.plate=''; d.fleetId=''; d.issued=''; d.used=null; d.comp=0;
     toast('Передача дозвола '+d.num+' отменена'); renderDozv();
   });
+  showConfirm('↺ Отменить передачу дозвола?',
+    `Дозвол ${d.num} вернётся в статус "Свободен". ${relatedFin.length>0?'Начисление '+fmtN(relatedFin.reduce((s,f)=>s+f.amount,0))+' сум будет отменено.':''}`,
+    'Да, откатить', doCancel);
 }
 
 // ============ CHIPS CSS ============
@@ -7699,7 +7723,7 @@ function onTripFleetChange(){
   }
 }
 
-async function saveTrip(){
+async function _saveTripImpl(){
   const from=document.getElementById('tr-from').value.trim();
   const to=document.getElementById('tr-to').value.trim();
   const fleetId=document.getElementById('tr-truck').value;
@@ -9160,7 +9184,7 @@ function calcMaintCost(){
 }
 
 // --- СОХРАНИТЬ ---
-async function saveMaint(){
+async function _saveMaintImpl(){
   const transportId = document.getElementById('mn-transport').value;
   const date        = document.getElementById('mn-date').value;
   if(!transportId){alert('Выберите машину');return;}
