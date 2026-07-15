@@ -1980,14 +1980,49 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
       <div id="fh-summary" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px;"></div>
       <div style="overflow-x:auto;max-height:380px;overflow-y:auto;">
         <table class="tbl" style="font-size:12px;">
-          <thead><tr><th>Дата</th><th>Тип</th><th>Категория</th><th>Описание</th><th>Начислено</th><th>Приход</th></tr></thead>
+          <thead><tr><th>Дата</th><th>Тип</th><th>Категория</th><th>Описание</th><th>Начислено</th><th>Приход</th><th></th></tr></thead>
           <tbody id="fh-tbody"></tbody>
         </table>
       </div>
     </div>
     <div class="modal-foot">
       <button class="btn" onclick="closeModal('modal-fleet-history')">Закрыть</button>
+      <button class="btn" onclick="openBalanceAdjust()">⚖️ Корректировка баланса</button>
       <button class="btn primary" onclick="printFleetHistory()">🖨 Распечатать</button>
+    </div>
+  </div>
+</div>
+
+<!-- BALANCE ADJUSTMENT (ручная корректировка баланса ПС) -->
+<div class="overlay" id="modal-balance-adjust">
+  <div class="modal">
+    <div class="modal-head"><h3>⚖️ Корректировка баланса</h3><span class="modal-close" onclick="closeModal('modal-balance-adjust')">×</span></div>
+    <div class="modal-body">
+      <div class="info-box" id="ba-current"></div>
+      <div class="form-row"><label>Правильный остаток (сум) *</label><input type="number" id="ba-new-balance" placeholder="Например, -500000"></div>
+      <div class="form-row"><label>Дата</label><input type="date" id="ba-date"></div>
+      <div class="form-row"><label>Причина корректировки *</label><input type="text" id="ba-reason" placeholder="Например: сверка с банком, найдена неучтённая оплата"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeModal('modal-balance-adjust')">Отмена</button>
+      <button class="btn primary" onclick="saveBalanceAdjust()">Сохранить</button>
+    </div>
+  </div>
+</div>
+
+<!-- EDIT FINANCE ENTRY (Начисление/Приход/Отпуск) -->
+<div class="overlay" id="modal-edit-finance">
+  <div class="modal">
+    <div class="modal-head"><h3>✏️ Исправить запись</h3><span class="modal-close" onclick="closeModal('modal-edit-finance')">×</span></div>
+    <div class="modal-body">
+      <div class="info-box" id="ef-info"></div>
+      <div class="form-row"><label>Дата</label><input type="date" id="ef-date"></div>
+      <div class="form-row"><label id="ef-amount-label">Сумма (сум)</label><input type="number" id="ef-amount"></div>
+      <div class="form-row"><label>Описание</label><input type="text" id="ef-desc"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeModal('modal-edit-finance')">Отмена</button>
+      <button class="btn primary" onclick="saveFinanceEntryEdit()">Сохранить</button>
     </div>
   </div>
 </div>
@@ -2737,7 +2772,8 @@ function mapKassaFromDb(r) {
   return {
     id: r.id, wallet: r.wallet, type: r.type, date: r.date||'', cat: r.category||'',
     from: r.from_name||'', to: r.to_name||'', desc: r.description||'', amount: r.amount,
-    tripId: r.trip_id||'', tripExpId: r.trip_exp_id||'',
+    tripId: r.trip_id||'', tripExpId: r.trip_exp_id||'', maintenanceId: r.maintenance_id||'',
+    financeId: r.finance_id||'',
   };
 }
 
@@ -2990,6 +3026,22 @@ async function addFleetOpAndSave(fleetId, op){
   f.ops=newOps; f.balance=newBalance;
 }
 function findFleetByKontragent(kgId){ return FLEET.filter(f=>f.kontragentId===kgId); }
+
+// Откатывает уже найденный список начислений (баланс ПС + удаление записи из "Финансов").
+// Общий helper для отката передачи ТИР/Дозвола и для удаления рейса, к которому был привязан
+// документ — раньше удаление рейса возвращало ТИР/Дозвол в статус "Свободен", но забывало
+// вернуть деньги (найдено аудитом 2026-07-16).
+async function rollbackFinanceRows(relatedFin){
+  for(const f of relatedFin){
+    const fl=FLEET.find(x=>x.id===f.fleetId);
+    if(fl){
+      const { error:flErr } = await sbClient.from('fleet').update({ balance: fl.balance+f.amount }).eq('id', fl.id);
+      if (!flErr) fl.balance+=f.amount;
+    }
+    await sbClient.from('finance').delete().eq('id', f.id);
+    FINANCE=FINANCE.filter(x=>x.id!==f.id);
+  }
+}
 
 // PEOPLE — только физлица-водители (информационный блок, без балансов)
 let PEOPLE = ld('mm_people_v2', []);
@@ -3960,7 +4012,7 @@ async function _savePaymentImpl(){
   const wallet=walletMap[method]||'cash';
   const { data:kData, error:kErr } = await sbClient.from('kassa').insert({
     company_id:CURRENT_PROFILE.company_id, wallet, type:'income', date, category:'fleet_payment',
-    from_name:person, description:desc||('Оплата от '+person), amount,
+    from_name:person, description:desc||('Оплата от '+person), amount, finance_id:data.id,
   }).select().single();
   if (!kErr) KASSA.push(mapKassaFromDb(kData));
   if(modal) delete modal.dataset.fleetId;
@@ -5932,7 +5984,11 @@ function renderFleetHistory(){
     <div class="bs-card"><div class="bsl">Начислено за период</div><div class="bsv red">${fmtN(pCharged)}</div></div>
     <div class="bs-card"><div class="bsl">Оплачено за период</div><div class="bsv green">${fmtN(pPaid)}</div></div>
     <div class="bs-card"><div class="bsl">Общий долг</div><div class="bsv ${totalBalance<0?'red':'green'}">${fmtN(Math.abs(totalBalance))}${totalBalance<0?' (долг)':' (+)'}</div></div>`;
-  const cats={plan:'ПЛАН',tir:'ТИР',dozv:'ДОЗВОЛ',license:'Лиценз.',tax:'Налог',other:'Прочее','comp-tir':'Возврат ТИР','comp-dozv':'Возврат ДОЗВОЛ','':''};
+  const cats={plan:'ПЛАН',tir:'ТИР',dozv:'ДОЗВОЛ',license:'Лиценз.',tax:'Налог',other:'Прочее','comp-tir':'Возврат ТИР','comp-dozv':'Возврат ДОЗВОЛ',adjustment:'Корректировка','':''};
+  // Начисления/возвраты по ТИР и ДОЗВОЛУ редактируются/удаляются только через
+  // "Откат передачи" на странице ТИР/Дозвол — иначе документ останется числиться
+  // выданным, хотя начисление за него исчезнет (найдено аудитом 2026-07-16).
+  const isDocLinked=o=>o.cat==='tir'||o.cat==='dozv';
   document.getElementById('fh-tbody').innerHTML=period.map(o=>`<tr>
     <td>${fmt(o.date)}</td>
     <td><span class="tag ${o.type==='payment'||o.type==='vacation'?'green':'amber'}">${o.type==='payment'?'Приход':o.type==='vacation'?'Отпуск':'Начисл.'}</span></td>
@@ -5940,7 +5996,10 @@ function renderFleetHistory(){
     <td>${o.desc||'—'}</td>
     <td>${o.amount>0?`<span class="amount-neg">${fmtN(o.amount)}</span>`:'—'}</td>
     <td>${o.paid>0?`<span class="amount-pos">${fmtN(o.paid)}</span>`:'—'}</td>
-  </tr>`).join('')||`<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--text3)">Нет операций за выбранный период</td></tr>`;
+    <td style="white-space:nowrap;">${isDocLinked(o)
+      ?`<span style="font-size:10px;color:var(--text3);" title="Редактируется через Откат передачи на странице ТИР/Дозвол">через ТИР/Дозвол</span>`
+      :`<button class="btn xs" onclick="openEditFinanceEntry('${o.id}')" title="Исправить">✏️</button> <button class="btn xs danger" onclick="deleteFinanceEntry('${o.id}')" title="Удалить">🗑</button>`}</td>
+  </tr>`).join('')||`<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--text3)">Нет операций за выбранный период</td></tr>`;
 }
 
 function printFleetHistory(){
@@ -5957,7 +6016,7 @@ function printFleetHistory(){
   const pCharged=period.reduce((s,o)=>s+o.amount,0);
   const pPaid=period.reduce((s,o)=>s+o.paid,0);
   const totalBalance=(allOps.reduce((s,o)=>s+o.paid,0))-(allOps.reduce((s,o)=>s+o.amount,0));
-  const cats={plan:'ПЛАН',tir:'ТИР',dozv:'ДОЗВОЛ',license:'Лиценз.',tax:'Налог',other:'Прочее','comp-tir':'Возврат ТИР','comp-dozv':'Возврат ДОЗВОЛ','':''};
+  const cats={plan:'ПЛАН',tir:'ТИР',dozv:'ДОЗВОЛ',license:'Лиценз.',tax:'Налог',other:'Прочее','comp-tir':'Возврат ТИР','comp-dozv':'Возврат ДОЗВОЛ',adjustment:'Корректировка','':''};
   const rows=period.map(o=>`<tr><td>${fmt(o.date)}</td><td>${o.type==='payment'?'Приход':o.type==='vacation'?'Отпуск':'Начисл.'}</td><td>${cats[o.cat]||''}</td><td>${o.desc||'—'}</td><td style="color:red">${o.amount>0?fmtN(o.amount):''}</td><td style="color:green">${o.paid>0?fmtN(o.paid):''}</td></tr>`).join('');
   const win=window.open('','_blank','width=720,height=560');
   win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${name} — История</title>
@@ -5980,6 +6039,121 @@ function printFleetHistory(){
   </body></html>`);
   win.document.close();
 }
+
+// Ручная корректировка баланса ПС — подстраховка на случай, если цифра в системе
+// когда-нибудь разойдётся с реальностью по причине, не зависящей от самой системы
+// (сверка с банком, обнаруженная задним числом неучтённая оплата и т.п.). Пишет
+// обычную запись в "Финансы" (категория 'adjustment'), поэтому видна в Акте и
+// редактируется/удаляется как любая другая запись — ничего "магического" не делает.
+function openBalanceAdjust(){
+  const f=FLEET.find(x=>x.id===_fhFleetId); if(!f) return;
+  document.getElementById('ba-current').textContent='Текущий баланс: '+fmtN(f.balance)+' сум'+(f.balance<0?' (долг)':f.balance>0?' (переплата)':'');
+  document.getElementById('ba-new-balance').value=f.balance;
+  document.getElementById('ba-date').value=todayStr;
+  document.getElementById('ba-reason').value='';
+  openModal('modal-balance-adjust');
+}
+async function _saveBalanceAdjustImpl(){
+  const f=FLEET.find(x=>x.id===_fhFleetId); if(!f) return;
+  const newBalance=parseFloat(document.getElementById('ba-new-balance').value);
+  if(isNaN(newBalance)){alert('Укажите правильный остаток');return;}
+  const reason=document.getElementById('ba-reason').value.trim();
+  if(!reason){alert('Укажите причину корректировки');return;}
+  const date=document.getElementById('ba-date').value||todayStr;
+  const delta=newBalance-f.balance;
+  if(delta===0){alert('Остаток не изменился');return;}
+  const kg=getFleetKontragent(f);
+  const financeRecord={
+    company_id:CURRENT_PROFILE.company_id, date, fleet_id:f.id, kontragent_id:f.kontragentId,
+    person_name:kg.name, type: delta<0?'charge':'payment', category:'adjustment', description:reason,
+    amount: delta<0?Math.abs(delta):0, paid: delta>0?delta:0,
+  };
+  const { data, error } = await sbClient.from('finance').insert(financeRecord).select().single();
+  if (error) { alert('Не удалось сохранить корректировку: '+error.message); return; }
+  FINANCE.push(mapFinanceFromDb(data));
+  const { error:flErr } = await sbClient.from('fleet').update({ balance:newBalance }).eq('id', f.id);
+  if (flErr) { alert('Не удалось обновить баланс: '+flErr.message); return; }
+  f.balance=newBalance;
+  closeModal('modal-balance-adjust');
+  toast('Баланс скорректирован');
+  renderFleetHistory(); renderFleet();
+}
+const saveBalanceAdjust = guardDoubleSubmit('saveBalanceAdjust', (...a)=>_saveBalanceAdjustImpl(...a));
+
+// Исправление/удаление отдельной записи "Начисление"/"Приход"/"Отпуск" — до 2026-07-16
+// такой возможности не было вообще: опечатка в сумме оставалась в долге арендатора
+// навсегда. Записи по ТИР/Дозволу (cat 'tir'/'dozv') сюда не попадают — они правятся
+// только через "Откат передачи" на странице ТИР/Дозвол, иначе документ остался бы
+// числиться выданным, хотя начисление за него исчезло бы.
+let _editFinanceId=null;
+function openEditFinanceEntry(id){
+  const o=FINANCE.find(x=>x.id===id); if(!o) return;
+  _editFinanceId=id;
+  const isCharge=o.type==='charge';
+  const typeLabel=isCharge?'Начисление':o.type==='vacation'?'Отпуск':'Приход';
+  document.getElementById('ef-info').textContent=typeLabel+' · '+o.person+(o.desc?' · '+o.desc:'');
+  document.getElementById('ef-amount-label').textContent=isCharge?'Сумма начисления (сум)':'Сумма (сум)';
+  document.getElementById('ef-date').value=o.date||'';
+  document.getElementById('ef-amount').value=isCharge?o.amount:o.paid;
+  document.getElementById('ef-desc').value=o.desc||'';
+  openModal('modal-edit-finance');
+}
+async function _saveFinanceEntryEditImpl(){
+  const o=FINANCE.find(x=>x.id===_editFinanceId); if(!o) return;
+  const newDate=document.getElementById('ef-date').value||o.date;
+  const newAmount=parseFloat(document.getElementById('ef-amount').value)||0;
+  const newDesc=document.getElementById('ef-desc').value;
+  if(!newAmount){alert('Укажите сумму');return;}
+  const isCharge=o.type==='charge';
+  const oldAmount=isCharge?o.amount:o.paid;
+  const delta=newAmount-oldAmount;
+  if(o.fleetId&&delta!==0){
+    const fl=FLEET.find(x=>x.id===o.fleetId);
+    if(fl){
+      // Начисление растёт → долг растёт (баланс уменьшается); оплата растёт → долг падает (баланс растёт)
+      const balDelta = isCharge ? -delta : delta;
+      const { error:flErr } = await sbClient.from('fleet').update({ balance: fl.balance+balDelta }).eq('id', fl.id);
+      if (!flErr) fl.balance+=balDelta;
+    }
+  }
+  const updates = isCharge ? {date:newDate,amount:newAmount,description:newDesc} : {date:newDate,paid:newAmount,description:newDesc};
+  const { error } = await sbClient.from('finance').update(updates).eq('id', o.id);
+  if (error) { alert('Не удалось сохранить: '+error.message); return; }
+  o.date=newDate; o.desc=newDesc;
+  if(isCharge) o.amount=newAmount; else o.paid=newAmount;
+  // Если это "Приход" — держим связанную запись в кассе (finance_id) в курсе новой суммы
+  const kRow=KASSA.find(k=>k.financeId===o.id);
+  if(kRow){
+    const { error:kErr } = await sbClient.from('kassa').update({ amount:newAmount, date:newDate, description:newDesc }).eq('id', kRow.id);
+    if(!kErr){ kRow.amount=newAmount; kRow.date=newDate; kRow.desc=newDesc; }
+  }
+  closeModal('modal-edit-finance');
+  toast('Запись обновлена');
+  renderFleetHistory(); renderFleet(); renderKassa();
+}
+const saveFinanceEntryEdit = guardDoubleSubmit('saveFinanceEntryEdit', (...a)=>_saveFinanceEntryEditImpl(...a));
+
+async function _deleteFinanceEntryImpl(id){
+  const o=FINANCE.find(x=>x.id===id); if(!o) return;
+  const linkedKassa=KASSA.some(k=>k.financeId===id);
+  if(!confirm('Удалить запись?'+(linkedKassa?' Связанная запись в кассе тоже будет удалена.':''))) return;
+  if(o.fleetId){
+    const fl=FLEET.find(x=>x.id===o.fleetId);
+    if(fl){
+      const delta = o.type==='charge' ? o.amount : -(o.paid||o.amount);
+      const { error:flErr } = await sbClient.from('fleet').update({ balance: fl.balance+delta }).eq('id', fl.id);
+      if (!flErr) fl.balance+=delta;
+    }
+  }
+  const { error } = await sbClient.from('finance').delete().eq('id', id);
+  if (error) { alert('Не удалось удалить: '+error.message); return; }
+  FINANCE=FINANCE.filter(x=>x.id!==id);
+  // Связанная запись в kassa удалится каскадом в базе (0020_kassa_finance_link.sql)
+  KASSA=KASSA.filter(k=>k.financeId!==id);
+  renderFleetHistory(); renderFleet(); renderKassa();
+  toast('Запись удалена');
+}
+const deleteFinanceEntry = guardDoubleSubmit('deleteFinanceEntry', (...a)=>_deleteFinanceEntryImpl(...a));
 
 // ========= KASSA =========
 const WALLET_NAMES={cash:'💵 Наличные',card:'💳 Картага',bank:'🏦 Р/С'};
@@ -6102,11 +6276,43 @@ async function editKassaInit(wallet){
   toast('Начальный остаток обновлён');
 }
 
+// Найдено аудитом 2026-07-16: удаление записи в кассе раньше не трогало её "пару" —
+// начисление/оплату у арендатора (если это был "Приход") или аванс по рейсу (если это
+// была привязанная к рейсу выдача). Теперь откатываем обе стороны вместе.
 async function deleteKassaEntry(id){
-  if(!confirm('Удалить запись?')) return;
+  const k=KASSA.find(x=>x.id===id);
+  let warn='';
+  if(k&&k.financeId) warn=' Связанная оплата у арендатора тоже будет отменена (долг вернётся).';
+  else if(k&&k.tripId&&k.cat==='payout') warn=' Выданный аванс по рейсу будет вычтен обратно.';
+  if(!confirm('Удалить запись?'+warn)) return;
+
+  if(k&&k.financeId){
+    const f=FINANCE.find(x=>x.id===k.financeId);
+    if(f&&f.fleetId){
+      const fl=FLEET.find(x=>x.id===f.fleetId);
+      if(fl){
+        const delta = f.type==='charge' ? f.amount : -(f.paid||f.amount);
+        const { error:flErr } = await sbClient.from('fleet').update({ balance: fl.balance+delta }).eq('id', fl.id);
+        if (!flErr) fl.balance+=delta;
+      }
+    }
+    // Удалится каскадом в базе (0020_kassa_finance_link.sql) вместе с записью kassa ниже —
+    // явно чистим и локальный массив, и саму запись на всякий случай (единый путь отмены).
+    await sbClient.from('finance').delete().eq('id', k.financeId);
+    FINANCE=FINANCE.filter(x=>x.id!==k.financeId);
+  }
+  if(k&&k.tripId&&k.cat==='payout'){
+    const trip=TRIPS.find(x=>x.id===k.tripId);
+    if(trip){
+      const newAdvance=Math.max(0,(trip.advancePaid||0)-k.amount);
+      const { error:tripErr } = await sbClient.from('trips').update({ advance_paid:newAdvance }).eq('id', k.tripId);
+      if (!tripErr) trip.advancePaid=newAdvance;
+    }
+  }
+
   const { error } = await sbClient.from('kassa').delete().eq('id', id);
   if (error) { alert('Не удалось удалить: '+error.message); return; }
-  KASSA=KASSA.filter(k=>k.id!==id); renderKassa();
+  KASSA=KASSA.filter(x=>x.id!==id); renderKassa(); renderFleet(); renderTrips();
 }
 
 // Waybill tab switch
@@ -6647,7 +6853,7 @@ function renderFinance(){
   if(fP) data=data.filter(f=>f.person===fP);
   if(fT) data=data.filter(f=>f.type===fT);
   if(fM) data=data.filter(f=>f.date.startsWith(fM));
-  const cats={plan:'ПЛАН',tir:'ТИР',dozv:'ДОЗВОЛ',license:'Лиценз.',tax:'Налог',other:'Прочее','comp-tir':'Возврат ТИР','comp-dozv':'Возврат ДОЗВОЛ',vacation:'Отпуск','':''};
+  const cats={plan:'ПЛАН',tir:'ТИР',dozv:'ДОЗВОЛ',license:'Лиценз.',tax:'Налог',other:'Прочее','comp-tir':'Возврат ТИР','comp-dozv':'Возврат ДОЗВОЛ',vacation:'Отпуск',adjustment:'Корректировка','':''};
   const fleetLabel=f=>{ if(!f.fleetId) return ''; const u=FLEET.find(x=>x.id===f.fleetId); return u?`<br><span style="font-size:10px;color:var(--text3)">${u.label}</span>`:''; };
   document.getElementById('finance-tbody').innerHTML=data.map(f=>`<tr>
     <td>${fmt(f.date)}</td>
@@ -7005,15 +7211,17 @@ function openEditTir(id){
   const stateColors={free:'green',issued:'blue',office:'amber',asmaf:'gray'};
   // Status info
   document.getElementById('edit-tir-status-info').innerHTML=
-    `<div class="info-box">Текущий статус: <span class="tag ${stateColors[state]}">${stateLabels[state]}</span> · 
-    <b>${state==='free'?'Все поля доступны':state==='issued'?'Только даты и примечание':state==='office'?'Дата возврата и примечание':'Только примечание'}</b></div>`;
+    `<div class="info-box">Текущий статус: <span class="tag ${stateColors[state]}">${stateLabels[state]}</span> ·
+    <b>${state==='free'?'Все поля доступны':state==='issued'?'Номер, даты и примечание':state==='office'?'Номер, дата возврата и примечание':'Номер и примечание'}</b></div>`;
   // Populate TIR types
   const typeEl=document.getElementById('et-type');
   typeEl.innerHTML=TIR_TYPES.map(tp=>`<option value="${tp.name}" ${t.type===tp.name?'selected':''}>${tp.name}</option>`).join('');
   // Fill fields
   const readonly=state!=='free';
+  // Номер можно поправить и после передачи (опечатку обычно замечают уже в пути) —
+  // остальное (тип/даты получения) фиксируется, т.к. от них зависела уже прошедшая оплата.
   document.getElementById('et-num').value=t.num||'';
-  document.getElementById('et-num').readOnly=readonly;
+  document.getElementById('et-num').readOnly=false;
   document.getElementById('et-type').disabled=readonly;
   document.getElementById('et-received').value=t.received||'';
   document.getElementById('et-received').readOnly=readonly;
@@ -7036,8 +7244,11 @@ async function saveEditTir(){
   const t=TIRS.find(x=>x.id===_editTirId); if(!t) return;
   const state=tirGetState(t);
   const updates={};
+  const oldNum=t.num;
+  // Номер редактируется в любом статусе — опечатку обычно замечают уже после передачи.
+  const newNum=document.getElementById('et-num').value.trim();
+  if(newNum) updates.num=newNum;
   if(state==='free'){
-    updates.num=document.getElementById('et-num').value.trim()||t.num;
     updates.type=document.getElementById('et-type').value||t.type;
     updates.received=document.getElementById('et-received').value||t.received;
     updates.expires=document.getElementById('et-expires').value||t.expires;
@@ -7051,7 +7262,11 @@ async function saveEditTir(){
   if(t.returnedAsmaf) updates.returned_asmap=document.getElementById('et-returned-asmaf').value||t.returnedAsmaf;
   updates.note=document.getElementById('et-note').value;
   const { error } = await sbClient.from('tirs').update(updates).eq('id', t.id);
-  if (error) { alert('Не удалось сохранить: '+error.message); return; }
+  if (error) {
+    if (error.code==='23505') alert('ТИР с таким номером уже есть в системе — проверьте номер, книжки МДП должны быть уникальными.');
+    else alert('Не удалось сохранить: '+error.message);
+    return;
+  }
   if(updates.num!=null) t.num=updates.num;
   if(updates.type!=null) t.type=updates.type;
   if(updates.received!=null) t.received=updates.received;
@@ -7062,6 +7277,16 @@ async function saveEditTir(){
   if(updates.returned_office!=null) t.returnedOffice=updates.returned_office;
   if(updates.returned_asmap!=null) t.returnedAsmaf=updates.returned_asmap;
   t.note=updates.note;
+  // Номер сменился — переносим ссылку на него в описаниях уже сделанных начислений,
+  // иначе откат/удаление по старому тексту описания перестанут находить эти записи.
+  if(updates.num!=null && oldNum && updates.num!==oldNum){
+    const relatedFin=FINANCE.filter(f=>f.cat==='tir'&&f.desc&&f.desc.includes(`ТИР ${oldNum} (`));
+    for(const f of relatedFin){
+      const newDesc=f.desc.replace(`ТИР ${oldNum} (`, `ТИР ${updates.num} (`);
+      const { error:fErr } = await sbClient.from('finance').update({ description:newDesc }).eq('id', f.id);
+      if (!fErr) f.desc=newDesc;
+    }
+  }
   closeModal('modal-edit-tir');
   toast('ТИР '+t.num+' обновлён'); renderTir();
 }
@@ -7088,16 +7313,7 @@ function cancelTirTransfer(id){
   // одного ТИРа, являющийся подстрокой другого (напр. "5" внутри "125"), даёт ложный матч.
   const relatedFin=FINANCE.filter(f=>f.cat==='tir'&&f.desc&&f.desc.includes(`ТИР ${t.num} (`)&&f.type==='charge');
   const doCancel=guardDoubleSubmit('cancelTirTransfer', async ()=>{
-    // Rollback finance and fleet balance
-    for(const f of relatedFin){
-      const fl=FLEET.find(x=>x.id===f.fleetId);
-      if(fl){
-        const { error:flErr } = await sbClient.from('fleet').update({ balance: fl.balance+f.amount }).eq('id', fl.id);
-        if (!flErr) fl.balance+=f.amount;
-      }
-      await sbClient.from('finance').delete().eq('id', f.id);
-      FINANCE=FINANCE.filter(x=>x.id!==f.id);
-    }
+    await rollbackFinanceRows(relatedFin);
     // Reset TIR
     const { error } = await sbClient.from('tirs').update({ person_name:'', plate:'', fleet_id:null, transferred:null, used:null, comp:0 }).eq('id', id);
     if (error) { alert('Не удалось откатить передачу: '+error.message); return; }
@@ -7121,8 +7337,9 @@ function openEditDoz(id){
   document.getElementById('edit-dozv-status-info').innerHTML=
     `<div class="info-box">Статус: <span class="tag ${stateColors[state]||'gray'}">${stateLabels[state]||state}</span> · ${d.epermit?'<span class="tag blue">Е-ПЕРМИТ</span>':'<span class="tag amber">Бумажный</span>'}</div>`;
   const readonly=state!=='free';
+  // Номер можно поправить и после выдачи — та же логика, что и у ТИР.
   document.getElementById('ed-num').value=d.num||'';
-  document.getElementById('ed-num').readOnly=readonly;
+  document.getElementById('ed-num').readOnly=false;
   document.getElementById('ed-country').value=d.country||'';
   document.getElementById('ed-country').readOnly=readonly;
   document.getElementById('ed-kind').value=d.kind||'';
@@ -7144,8 +7361,10 @@ async function saveEditDoz(){
   const d=DOZV.find(x=>x.id===_editDozId); if(!d) return;
   const state=dozGetState(d);
   const updates={};
+  const oldNum=d.num;
+  const newNum=document.getElementById('ed-num').value.trim();
+  if(newNum) updates.num=newNum;
   if(state==='free'){
-    updates.num=document.getElementById('ed-num').value.trim()||d.num;
     updates.country=document.getElementById('ed-country').value||d.country;
     updates.kind=document.getElementById('ed-kind').value||d.kind;
     updates.received=document.getElementById('ed-received').value||d.received;
@@ -7157,7 +7376,11 @@ async function saveEditDoz(){
   }
   if(d.returnedOffice) updates.returned_office=document.getElementById('ed-returned-office').value||d.returnedOffice;
   const { error } = await sbClient.from('dozv').update(updates).eq('id', d.id);
-  if (error) { alert('Не удалось сохранить: '+error.message); return; }
+  if (error) {
+    if (error.code==='23505') alert('Дозвол с таким номером уже есть в системе — проверьте номер.');
+    else alert('Не удалось сохранить: '+error.message);
+    return;
+  }
   if(updates.num!=null) d.num=updates.num;
   if(updates.country!=null) d.country=updates.country;
   if(updates.kind!=null) d.kind=updates.kind;
@@ -7166,6 +7389,14 @@ async function saveEditDoz(){
   if(updates.person_name!=null) d.person=updates.person_name;
   if(updates.issued!=null) d.issued=updates.issued;
   if(updates.returned_office!=null) d.returnedOffice=updates.returned_office;
+  if(updates.num!=null && oldNum && updates.num!==oldNum){
+    const relatedFin=FINANCE.filter(f=>f.cat==='dozv'&&f.desc&&f.desc.includes(`Дозвол ${oldNum} (`));
+    for(const f of relatedFin){
+      const newDesc=f.desc.replace(`Дозвол ${oldNum} (`, `Дозвол ${updates.num} (`);
+      const { error:fErr } = await sbClient.from('finance').update({ description:newDesc }).eq('id', f.id);
+      if (!fErr) f.desc=newDesc;
+    }
+  }
   closeModal('modal-edit-dozv');
   toast('Дозвол '+d.num+' обновлён'); renderDozv();
 }
@@ -7191,15 +7422,7 @@ function cancelDozTransfer(id){
   // Точное совпадение "Дозвол {num} (" вместо простого includes(d.num) — та же причина, что и в cancelTirTransfer.
   const relatedFin=FINANCE.filter(f=>f.cat==='dozv'&&f.desc&&f.desc.includes(`Дозвол ${d.num} (`)&&f.type==='charge');
   const doCancel=guardDoubleSubmit('cancelDozTransfer', async ()=>{
-    for(const f of relatedFin){
-      const fl=FLEET.find(x=>x.id===f.fleetId);
-      if(fl){
-        const { error:flErr } = await sbClient.from('fleet').update({ balance: fl.balance+f.amount }).eq('id', fl.id);
-        if (!flErr) fl.balance+=f.amount;
-      }
-      await sbClient.from('finance').delete().eq('id', f.id);
-      FINANCE=FINANCE.filter(x=>x.id!==f.id);
-    }
+    await rollbackFinanceRows(relatedFin);
     const { error } = await sbClient.from('dozv').update({ person_name:'', plate:'', fleet_id:null, issued:null, used:null, comp:0 }).eq('id', id);
     if (error) { alert('Не удалось откатить передачу: '+error.message); return; }
     d.person=''; d.plate=''; d.fleetId=''; d.issued=''; d.used=null; d.comp=0;
@@ -8764,13 +8987,26 @@ async function deleteTrip(tripId){
   if(!confirm('Удалить рейс? Плечи, расходы, оплаты и штрафы этого рейса удалятся вместе с ним.'))return;
   const trip=TRIPS.find(t=>t.id===tripId);
   if(trip&&trip.status!=='done'){
+    // Полный откат — как cancelTirTransfer/cancelDozTransfer: возвращаем ТИР/Дозвол в
+    // "Свободен" И отменяем начисление арендатору за них. Раньше (до аудита 2026-07-16)
+    // документ возвращался в "Свободен", а деньги с баланса ПС и запись в "Финансах" — нет.
     for(const id of (trip.tirIds||[])){
       const t=TIRS.find(x=>x.id===id);
-      if(t){ await sbClient.from('tirs').update({ transferred:null, person_name:'', trip_id:null }).eq('id', id); t.transferred='';t.person=''; }
+      if(t){
+        const relatedFin=FINANCE.filter(f=>f.cat==='tir'&&f.desc&&f.desc.includes(`ТИР ${t.num} (`)&&f.type==='charge');
+        await rollbackFinanceRows(relatedFin);
+        await sbClient.from('tirs').update({ person_name:'', plate:'', fleet_id:null, transferred:null, returned_office:null, used:null, comp:0, trip_id:null }).eq('id', id);
+        t.person='';t.plate='';t.fleetId='';t.transferred='';t.returnedOffice='';t.used=null;t.comp=0;t.tripId='';
+      }
     }
     for(const id of (trip.dozvIds||[])){
       const d=DOZV.find(x=>x.id===id);
-      if(d){ await sbClient.from('dozv').update({ issued:null, person_name:'', trip_id:null }).eq('id', id); d.issued='';d.person=''; }
+      if(d){
+        const relatedFin=FINANCE.filter(f=>f.cat==='dozv'&&f.desc&&f.desc.includes(`Дозвол ${d.num} (`)&&f.type==='charge');
+        await rollbackFinanceRows(relatedFin);
+        await sbClient.from('dozv').update({ person_name:'', plate:'', fleet_id:null, issued:null, returned_office:null, used:null, comp:0, trip_id:null }).eq('id', id);
+        d.person='';d.plate='';d.fleetId='';d.issued='';d.returnedOffice='';d.used=null;d.comp=0;d.tripId='';
+      }
     }
   }
   const { error } = await sbClient.from('trips').delete().eq('id', tripId);
@@ -9223,6 +9459,7 @@ async function _saveMaintImpl(){
     interval_km: intervalKm||null, note, wallet,
   };
 
+  let newMaintId=null;
   if(_editMaintId){
     const { data, error } = await sbClient.from('maintenance').update(baseRecord).eq('id', _editMaintId).select().single();
     if (error) { alert('Не удалось сохранить ТО: '+error.message); return; }
@@ -9232,6 +9469,7 @@ async function _saveMaintImpl(){
     const { data, error } = await sbClient.from('maintenance').insert({...baseRecord, company_id:CURRENT_PROFILE.company_id}).select().single();
     if (error) { alert('Не удалось сохранить ТО: '+error.message); return; }
     MAINTENANCE.push(mapMaintFromDb(data));
+    newMaintId=data.id;
   }
 
   if(mileage>0) updateTransportMileage(transportId, mileage);
@@ -9252,6 +9490,7 @@ async function _saveMaintImpl(){
     const { data:kData, error:kErr } = await sbClient.from('kassa').insert({
       company_id:CURRENT_PROFILE.company_id, wallet, type:'expense', date, category:'maintenance',
       description:`${mt.label} · ${tName} (${items.length} работ)`, amount:totalCostUzs,
+      maintenance_id: newMaintId,
     }).select().single();
     if (!kErr) KASSA.push(mapKassaFromDb(kData));
   }
@@ -9308,11 +9547,14 @@ async function completeMaint(id){
 }
 
 async function deleteMaint(id){
-  if(!confirm('Удалить запись ТО?'))return;
+  const linkedKassa=KASSA.some(k=>k.maintenanceId===id);
+  if(!confirm('Удалить запись ТО?'+(linkedKassa?' Связанный расход в кассе тоже будет удалён.':'')))return;
   const { error } = await sbClient.from('maintenance').delete().eq('id', id);
   if (error) { alert('Не удалось удалить запись: '+error.message); return; }
   MAINTENANCE=MAINTENANCE.filter(m=>m.id!==id);
-  renderMaintenance();toast('Запись удалена');
+  // Связанная запись в kassa удаляется в базе каскадом (см. 0019_kassa_maintenance_link.sql) — здесь просто убираем её из локального списка.
+  KASSA=KASSA.filter(k=>k.maintenanceId!==id);
+  renderMaintenance();renderKassa();toast('Запись удалена');
 }
 
 // --- ОБНОВИТЬ ПРОБЕГ ---
