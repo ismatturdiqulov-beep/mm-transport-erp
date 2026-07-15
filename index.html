@@ -392,6 +392,30 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
         <tbody id="dash-debtors"></tbody></table>
       </div>
     </div>
+
+    <div class="section">
+      <div class="section-head"><h3>Прибыль по месяцам</h3><span style="font-size:11px;color:var(--text3)">Доход минус расходы по рейсам, последние 6 месяцев</span></div>
+      <div id="dash-profit-chart" style="padding:16px;"></div>
+    </div>
+
+    <div class="two-col">
+      <div class="section">
+        <div class="section-head"><h3>Рейтинг машин по прибыли</h3><button class="btn sm" onclick="showPage('fleet')">Все →</button></div>
+        <table class="tbl"><thead><tr><th>Транспорт</th><th>Рейсов</th><th>Прибыль</th></tr></thead>
+        <tbody id="dash-fleet-rank"></tbody></table>
+      </div>
+      <div class="section">
+        <div class="section-head"><h3>Рейтинг арендаторов / водителей</h3><button class="btn sm" onclick="showPage('tenants')">Все →</button></div>
+        <table class="tbl"><thead><tr><th>Имя</th><th>Тип</th><th>Начислено</th><th>Оплачено</th></tr></thead>
+        <tbody id="dash-people-rank"></tbody></table>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-head"><h3>Топ клиентов по обороту</h3><button class="btn sm" onclick="showPage('tenants')">Все →</button></div>
+      <table class="tbl"><thead><tr><th>Клиент</th><th>Рейсов</th><th>Выставлено</th><th>Оплачено</th><th>Долг</th></tr></thead>
+      <tbody id="dash-clients-rank"></tbody></table>
+    </div>
   </div>
 
   <!-- ===== SETTINGS ===== -->
@@ -4312,6 +4336,77 @@ function renderDashboard(){
   // Debtors
   const debtors=[...KONTRAGENTY].filter(k=>getKontragentBalance(k.id)<0).sort((a,b)=>getKontragentBalance(a.id)-getKontragentBalance(b.id)).slice(0,6);
   document.getElementById('dash-debtors').innerHTML=debtors.map(k=>`<tr><td>${k.name.split(' ').slice(0,2).join(' ')}</td><td class="mono">${findFleetByKontragent(k.id).map(f=>f.label).join(', ')||'—'}</td><td class="amount-neg">${fmtN(Math.abs(getKontragentBalance(k.id)))}</td></tr>`).join('');
+
+  renderDashboardAnalytics();
+}
+
+// ============ ДАШБОРД: РАСШИРЕННАЯ АНАЛИТИКА ============
+function renderDashboardAnalytics(){
+  // Прибыль по месяцам (последние 6 месяцев, по дате загрузки рейса)
+  const now=new Date();
+  const months=[];
+  for(let i=5;i>=0;i--){
+    const d=new Date(now.getFullYear(), now.getMonth()-i, 1);
+    months.push({key:`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`, label:d.toLocaleString('ru',{month:'short'})});
+  }
+  const byMonth={}; months.forEach(m=>byMonth[m.key]={income:0,expenses:0});
+  TRIPS.forEach(t=>{
+    if(!t.loadDate) return;
+    const key=t.loadDate.slice(0,7);
+    if(!byMonth[key]) return;
+    byMonth[key].income+=tripTotalIncome(t);
+    byMonth[key].expenses+=tripTotalExpenses(t);
+  });
+  const profits=months.map(m=>({label:m.label, profit:byMonth[m.key].income-byMonth[m.key].expenses}));
+  const maxAbs=Math.max(1,...profits.map(p=>Math.abs(p.profit)));
+  const chartEl=document.getElementById('dash-profit-chart');
+  if(chartEl) chartEl.innerHTML = profits.every(p=>p.profit===0) ? '<div style="color:var(--text3);font-size:12px;">Нет завершённых рейсов за этот период</div>' : `
+    <div style="display:flex;gap:14px;align-items:flex-end;height:140px;">
+      ${profits.map(p=>{
+        const h=Math.max(Math.round(Math.abs(p.profit)/maxAbs*100),2);
+        const color=p.profit>=0?'var(--green)':'var(--red)';
+        return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%;">
+          <div style="font-size:11px;font-weight:600;color:${color};margin-bottom:4px;white-space:nowrap;">${p.profit>=0?'+':''}${fmtN(Math.round(p.profit/1000))}k</div>
+          <div style="width:100%;max-width:44px;height:${h}%;background:${color};border-radius:4px 4px 0 0;"></div>
+          <div style="font-size:11px;color:var(--text3);margin-top:6px;text-transform:capitalize;">${p.label}</div>
+        </div>`;
+      }).join('')}
+    </div>`;
+
+  // Рейтинг машин по прибыли (топ-6 по сумме прибыли рейсов, привязанных к ПС)
+  const fleetProfit={};
+  TRIPS.forEach(t=>{
+    if(!t.fleetId) return;
+    if(!fleetProfit[t.fleetId]) fleetProfit[t.fleetId]={count:0,profit:0};
+    fleetProfit[t.fleetId].count++;
+    fleetProfit[t.fleetId].profit+=tripProfit(t);
+  });
+  const fleetRank=Object.entries(fleetProfit).map(([fid,v])=>({fleet:FLEET.find(f=>f.id===fid),...v})).filter(x=>x.fleet).sort((a,b)=>b.profit-a.profit).slice(0,6);
+  const fleetRankEl=document.getElementById('dash-fleet-rank');
+  if(fleetRankEl) fleetRankEl.innerHTML = fleetRank.length ? fleetRank.map(x=>`<tr><td>${x.fleet.label}</td><td>${x.count}</td><td class="${x.profit>=0?'amount-pos':'amount-neg'}">${fmtN(x.profit)}</td></tr>`).join('') : '<tr><td colspan="3" style="color:var(--text3);text-align:center;">Нет данных по рейсам</td></tr>';
+
+  // Рейтинг арендаторов/водителей ММ по начислениям (кто больше всего "принёс" компании)
+  const rankTypeLabel={mm:'Водитель ММ', tenant:'Арендатор'};
+  const peopleRank = KONTRAGENTY.filter(k=>k.type==='tenant'||k.type==='mm').map(k=>{
+    const charged=FINANCE.filter(f=>f.kontragentId===k.id&&f.type==='charge').reduce((s,f)=>s+f.amount,0);
+    const paid=FINANCE.filter(f=>f.kontragentId===k.id&&(f.type==='payment'||f.type==='vacation')).reduce((s,f)=>s+f.amount,0);
+    return {k, charged, paid};
+  }).filter(x=>x.charged>0).sort((a,b)=>b.charged-a.charged).slice(0,6);
+  const peopleRankEl=document.getElementById('dash-people-rank');
+  if(peopleRankEl) peopleRankEl.innerHTML = peopleRank.length ? peopleRank.map(x=>`<tr><td>${x.k.name.split(' ').slice(0,2).join(' ')}</td><td><span class="tag ${x.k.type==='tenant'?'blue':'green'}">${rankTypeLabel[x.k.type]}</span></td><td class="amount-neg">${fmtN(x.charged)}</td><td class="amount-pos">${fmtN(x.paid)}</td></tr>`).join('') : '<tr><td colspan="4" style="color:var(--text3);text-align:center;">Нет данных</td></tr>';
+
+  // Топ клиентов по обороту (выставлено по всем плечам, привязанным к клиенту)
+  const clientRank = KONTRAGENTY.filter(k=>k.type==='client').map(k=>{
+    const legMatches=TRIPS.flatMap(t=>(t.legs||[]).map((l,idx)=>({t,idx,clientId:l.clientId})).filter(x=>x.clientId===k.id));
+    const invoiced=legMatches.reduce((s,x)=>s+tripLegEffectiveRate(x.t,x.idx),0);
+    const paid=TRIPS.reduce((s,t)=>s+(t.payments||[]).filter(p=>p.fromId===k.id).reduce((ps,p)=>ps+p.amount,0),0);
+    return {k, trips:legMatches.length, invoiced, paid};
+  }).filter(x=>x.invoiced>0).sort((a,b)=>b.invoiced-a.invoiced).slice(0,8);
+  const clientRankEl=document.getElementById('dash-clients-rank');
+  if(clientRankEl) clientRankEl.innerHTML = clientRank.length ? clientRank.map(x=>{
+    const debt=x.invoiced-x.paid;
+    return `<tr><td>${x.k.name}</td><td>${x.trips}</td><td>${fmtN(x.invoiced)}</td><td class="amount-pos">${fmtN(x.paid)}</td><td class="${debt>0?'amount-neg':''}">${debt>0?fmtN(debt):'✅ 0'}</td></tr>`;
+  }).join('') : '<tr><td colspan="5" style="color:var(--text3);text-align:center;">Нет данных по клиентам</td></tr>';
 }
 
 // Единый список годов для фильтров-реестров: считаем года по дате-якорю,
