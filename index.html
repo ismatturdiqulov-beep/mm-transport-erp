@@ -5433,40 +5433,73 @@ async function exportAsmapReport(){
     {header:'Право собственности', width:30},
   ];
   const joinLines=parts=>parts.filter(Boolean).join('\n');
+  const period=(from,to)=>(from||to)?('с '+(from?fmt(from):'—')+' до '+(to?fmt(to):'—')):'';
   // Арендодатель — только если реально арендованный транспорт (баг, найденный
   // пользователем: раньше сюда попадало "Ответственное лицо" и для собственных
   // ММ-машин тоже, хотя у собственности компании арендодателя быть не может).
   const rows=sorted.map((t,i)=>{
     const d=t.docs||{};
     const kg=t.owner==='Аренда'&&t.respId?KONTRAGENTY.find(k=>k.id===t.respId):null;
-    const regData=joinLines([t.plate, d.tp?.num, [d.tp?.date,d.tp?.org].filter(Boolean).join('  ')]);
+    const regData=joinLines([t.plate, d.tp?.num, [d.tp?.date?fmt(d.tp.date):'',d.tp?.org].filter(Boolean).join('  ')]);
     const brandModel=[t.brand,t.model].filter(Boolean).join(' ');
     const factoryNums=joinLines([d.eng?.num?('Двиг. '+d.eng.num):'', t.vin?('Кузов '+t.vin):'']);
-    const licData=joinLines([d.lic?.num, (d.lic?.from||d.lic?.to)?('с '+(d.lic?.from||'—')+' до '+(d.lic?.to||'—')):'']);
-    const svidData=joinLines([d.svid?.num, (d.svid?.from||d.svid?.to)?('с '+(d.svid?.from||'—')+' до '+(d.svid?.to||'—')):'']);
+    const licData=joinLines([d.lic?.num, period(d.lic?.from,d.lic?.to)]);
+    const svidData=joinLines([d.svid?.num, period(d.svid?.from,d.svid?.to)]);
     const ownData = t.owner==='Аренда'
-      ? joinLines(['Аренда', kg?kg.name:'', t.contractNum?('№ '+t.contractNum):'', (t.contract_start||t.contract_end)?('с '+(t.contract_start||'—')+' до '+(t.contract_end||'—')):''])
+      ? joinLines(['Аренда', kg?kg.name:'', t.contractNum?('№ '+t.contractNum):'', period(t.contract_start,t.contract_end)])
       : 'Собственность компании';
     return [i+1, t.callsign, t.type, regData, brandModel, t.year||'', factoryNums, licData, svidData, ownData];
   });
   addSmartTable(ws, 4, columns, rows, 'AsmapTable');
 
-  // Перенос строк внутри ячейки виден в Excel только если явно включён wrapText —
-  // и высоту строки надо подогнать под самую "многострочную" ячейку в ней.
-  const wrapCols=[4,7,8,9,10];
+  // Оформление под образец: рамки на каждой ячейке, заливка заголовка, текст по
+  // центру (как в реальном файле АСМАП, а не только сверху-слева), перенос строк.
+  // Высота строки считается не по числу "\n", а по реально ожидаемому переносу
+  // текста внутри ширины колонки — иначе многострочные ячейки обрезаются визуально.
+  const estimateLines=(text,colWidth)=>{
+    if(!text) return 1;
+    const charsPerLine=Math.max(6, Math.floor(colWidth*1.1));
+    return String(text).split('\n').reduce((sum,line)=>sum+Math.max(1,Math.ceil(line.length/charsPerLine)),0);
+  };
+  const thin={style:'thin'};
+  const headerRow=ws.getRow(4);
+  headerRow.height=30;
+  headerRow.eachCell(cell=>{
+    cell.font={bold:true, size:10, name:'Arial'};
+    cell.alignment={horizontal:'center', vertical:'middle', wrapText:true};
+    cell.fill={type:'pattern', pattern:'solid', fgColor:{argb:'FFE8E8E8'}};
+    cell.border={top:thin,left:thin,right:thin,bottom:thin};
+  });
   const dataStartRow=5;
-  rows.forEach((_,i)=>{
+  rows.forEach((rowValues,i)=>{
     const rowIdx=dataStartRow+i;
     let maxLines=1;
-    wrapCols.forEach(c=>{
-      const cell=ws.getCell(rowIdx,c);
-      cell.alignment={wrapText:true, vertical:'top'};
-      maxLines=Math.max(maxLines, String(cell.value||'').split('\n').length);
+    rowValues.forEach((v,ci)=>{
+      const cell=ws.getCell(rowIdx, ci+1);
+      cell.font={size:9, name:'Arial'};
+      cell.alignment={horizontal:'center', vertical:'middle', wrapText:true};
+      cell.border={top:thin,left:thin,right:thin,bottom:thin};
+      maxLines=Math.max(maxLines, estimateLines(v, columns[ci].width));
     });
-    ws.getRow(rowIdx).height=Math.max(16, maxLines*14+4);
+    ws.getRow(rowIdx).height=Math.max(18, maxLines*12+8);
   });
-  ws.getRow(4).alignment={wrapText:true, vertical:'top'};
-  ws.getRow(4).height=28;
+
+  // Итог и подпись — по образцу: сводка по количеству, пустая строка, "Директор
+  // [компания]" / линия для подписи / ФИО директора (из реквизитов компании).
+  const footerRow1=dataStartRow+rows.length+1;
+  ws.mergeCells(`A${footerRow1}:C${footerRow1}`);
+  ws.getCell(`A${footerRow1}`).value=`Всего в системе АСК ТИР автомобилей общество: ${totalOwn} ед.`;
+  ws.mergeCells(`D${footerRow1}:J${footerRow1}`);
+  ws.getCell(`D${footerRow1}`).value=`Всего в системе АСК ТИР автомобилей в аренде: ${totalRent} ед.`;
+  [`A${footerRow1}`,`D${footerRow1}`].forEach(addr=>{ ws.getCell(addr).font={bold:true, size:10, name:'Arial'}; });
+
+  const sigRow=footerRow1+3;
+  ws.getCell(`A${sigRow}`).value=`Директор ${COMPANY.name||''}`;
+  ws.getCell(`A${sigRow}`).font={size:10, name:'Arial'};
+  ws.mergeCells(`A${sigRow}:C${sigRow}`);
+  ws.getCell(`E${sigRow}`).value='________________';
+  ws.getCell(`H${sigRow}`).value=COMPANY.directorName||'';
+  ws.getCell(`H${sigRow}`).font={size:10, name:'Arial'};
 
   const buffer=await wb.xlsx.writeBuffer();
   downloadXlsxBuffer(buffer, `Список_АСМАП_${todayStr}.xlsx`);
