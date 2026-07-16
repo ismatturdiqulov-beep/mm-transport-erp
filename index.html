@@ -2439,28 +2439,6 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
   </div>
 </div>
 
-<!-- ДОБАВИТЬ ТИР/ДОЗВОЛ К АКТИВНОМУ РЕЙСУ -->
-<div class="overlay" id="modal-trip-add-doc">
-  <div class="modal">
-    <div class="modal-head"><h3 id="tad-title">+ Документ к рейсу</h3><span class="modal-close" onclick="closeModal('modal-trip-add-doc')">×</span></div>
-    <div class="modal-body">
-      <div id="tad-tir-section">
-        <div style="font-size:12px;font-weight:600;margin-bottom:8px;">📋 Добавить ТИР карнет</div>
-        <select id="tad-tir"><option value="">— выберите свободный ТИР —</option></select>
-      </div>
-      <div style="margin:12px 0;border-top:1px solid var(--border);"></div>
-      <div id="tad-dozv-section">
-        <div style="font-size:12px;font-weight:600;margin-bottom:8px;">📄 Добавить дозвол</div>
-        <select id="tad-dozv"><option value="">— выберите свободный дозвол —</option></select>
-      </div>
-    </div>
-    <div class="modal-foot">
-      <button class="btn" onclick="closeModal('modal-trip-add-doc')">Отмена</button>
-      <button class="btn primary" onclick="saveTripAddDoc()">Добавить</button>
-    </div>
-  </div>
-</div>
-
 <!-- ВНЕСТИ ОПЛАТУ ПО РЕЙСУ -->
 <div class="overlay" id="modal-trip-payment">
   <div class="modal">
@@ -8459,7 +8437,7 @@ const TRIP_STATUS_FLOW = ['prep','active'];
 const TRIP_EXP_CATS = {fuel:'⛽ Топливо',road:'🛣 Дорога',border:'🛂 Граница',repair:'🔧 Ремонт',food:'🍔 Суточные',parking:'🅿️ Стоянка',tir:'📋 ТИР карнет',dozv:'📄 Дозвол',other:'📦 Прочее'};
 const TRIP_SURCHARGE_CATS = {downtime:'⏱ Простой',delay:'⏰ Задержка доставки',damage:'📦 Порча груза',other:'📌 Прочее'};
 
-let _editTripId=null, _expTripId=null, _finishTripId=null, _legTripId=null, _addDocTripId=null, _payTripId=null, _editExpId=null, _editLegIdx=null, _surchTripId=null, _editSurchId=null;
+let _editTripId=null, _expTripId=null, _finishTripId=null, _legTripId=null, _payTripId=null, _editExpId=null, _editLegIdx=null, _surchTripId=null, _editSurchId=null;
 let _tripTirIds=[], _tripDozvIds=[];
 
 // --- HELPERS ---
@@ -8978,43 +8956,6 @@ async function _saveTripLegImpl(){
   openTripDetail(_legTripId);renderTrips();
 }
 
-// --- ДОБАВИТЬ ТИР/ДОЗВОЛ В АКТИВНЫЙ РЕЙС ---
-function openAddDocToTrip(tripId){
-  _addDocTripId=tripId;
-  const trip=TRIPS.find(t=>t.id===tripId);if(!trip)return;
-  const freeTirs=TIRS.filter(t=>tirGetState(t)==='free'&&!isExp(t.expires));
-  const freeDozv=DOZV.filter(d=>dozGetState(d)==='free');
-  document.getElementById('tad-title').textContent='+ Документы к рейсу';
-  document.getElementById('tad-tir').innerHTML='<option value="">— выберите свободный ТИР —</option>'+freeTirs.map(t=>`<option value="${t.id}">${t.num} (${t.type})</option>`).join('');
-  document.getElementById('tad-dozv').innerHTML='<option value="">— выберите свободный дозвол —</option>'+freeDozv.map(d=>`<option value="${d.id}">${d.num} — ${d.country}</option>`).join('');
-  openModal('modal-trip-add-doc');
-}
-async function saveTripAddDoc(){
-  const trip=TRIPS.find(t=>t.id===_addDocTripId);if(!trip)return;
-  const tirId=document.getElementById('tad-tir').value;
-  const dozvId=document.getElementById('tad-dozv').value;
-  if(!tirId&&!dozvId){alert('Выберите ТИР или Дозвол');return;}
-  if(tirId){
-    const tir=TIRS.find(x=>x.id===tirId);
-    if(tir&&tirGetState(tir)==='free'){
-      const { error } = await sbClient.from('tirs').update({ transferred:todayStr, person_name:'(Рейс)', plate:'', trip_id:trip.id }).eq('id', tirId);
-      if (error) { alert('Не удалось привязать ТИР: '+error.message); return; }
-      tir.transferred=todayStr;tir.person='(Рейс)';tir.plate='';tir.tripId=trip.id;
-    }
-    trip.tirIds=trip.tirIds||[];if(!trip.tirIds.includes(tirId))trip.tirIds.push(tirId);
-  }
-  if(dozvId){
-    const dozv=DOZV.find(x=>x.id===dozvId);
-    if(dozv&&dozGetState(dozv)==='free'){
-      const { error } = await sbClient.from('dozv').update({ issued:todayStr, person_name:'(Рейс)', plate:'', trip_id:trip.id }).eq('id', dozvId);
-      if (error) { alert('Не удалось привязать дозвол: '+error.message); return; }
-      dozv.issued=todayStr;dozv.person='(Рейс)';dozv.plate='';dozv.tripId=trip.id;
-    }
-    trip.dozvIds=trip.dozvIds||[];if(!trip.dozvIds.includes(dozvId))trip.dozvIds.push(dozvId);
-  }
-  closeModal('modal-trip-add-doc');
-  toast('Документ добавлен к рейсу');openTripDetail(_addDocTripId);
-}
 
 // --- ОПЛАТА ПО РЕЙСУ ---
 function openTripPayment(tripId){
@@ -9364,7 +9305,7 @@ function openTripDetail(tripId){
     <div style="font-weight:600;font-size:13px;margin-bottom:8px;margin-top:8px;">📎 Документы</div>
     <div style="margin-bottom:4px;font-size:12px;">
       ТИР: ${tirNums||'нет'} · Дозволы: ${dozvNums||'нет'}
-      ${isActive?`<button class="btn xs" style="margin-left:8px;" onclick="closeModal('modal-trip-detail');openAddDocToTrip('${trip.id}')">+ Добавить ТИР/Дозвол</button>`:''}
+      ${isActive?`<span style="color:var(--text3);margin-left:8px;">Привязать — на странице ТИР/Дозволы, кнопка «Передать», поле «Привязать к рейсу»</span>`:''}
     </div>
     <div style="font-weight:600;font-size:13px;margin-bottom:8px;margin-top:12px;">💸 Расходы</div>
     ${expenses.length?`<div style="overflow-x:auto;"><table class="tbl" style="font-size:12px;"><thead><tr><th>Дата</th><th>Кат.</th><th>Страна</th><th>Описание</th><th style="text-align:right">Сумма</th><th></th></tr></thead><tbody>${expRows}</tbody><tfoot><tr style="font-weight:600;background:var(--surface2)"><td colspan="4">ИТОГО</td><td style="text-align:right;font-family:var(--mono);color:var(--red)">${fmtN(totalExp)}</td><td></td></tr></tfoot></table></div>`:'<div style="color:var(--text3);font-size:13px;margin-bottom:8px;">Нет расходов</div>'}
