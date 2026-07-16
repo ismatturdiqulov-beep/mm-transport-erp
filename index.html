@@ -2210,10 +2210,29 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
           <div class="form-row"><label>Откуда *</label><input type="text" id="tr-from" placeholder="Ташкент, Узбекистан"></div>
           <div class="form-row"><label>Куда *</label><input type="text" id="tr-to" placeholder="Самара, Россия"></div>
         </div>
+        <div class="form-row"><label>Клиент</label><select id="tr-client"><option value="">— без клиента —</option></select></div>
         <div class="form-grid-2">
-          <div class="form-row"><label>Клиент</label><select id="tr-client"><option value="">— без клиента —</option></select></div>
-          <div class="form-row"><label>Ставка (сум)</label><input type="text" inputmode="numeric" class="fmt-money" id="tr-rate" placeholder="0"></div>
+          <div class="form-row"><label>Ставка *</label><input type="text" inputmode="numeric" class="fmt-money" id="tr-rate" placeholder="0" oninput="calcTrRateUzs()"></div>
+          <div class="form-row"><label>Валюта</label>
+            <select id="tr-currency" onchange="onTrCurrencyChange()">
+              <option value="UZS">🇺🇿 UZS (сум)</option>
+              <option value="USD">🇺🇸 USD</option>
+              <option value="EUR">🇪🇺 EUR</option>
+              <option value="RUB">🇷🇺 RUB</option>
+              <option value="TRY">🇹🇷 TRY</option>
+              <option value="KZT">🇰🇿 KZT</option>
+            </select>
+          </div>
         </div>
+        <div id="tr-rate-row" style="display:none;">
+          <div class="form-grid-2">
+            <div class="form-row"><label>Курс к сум (ручной)</label><input type="number" id="tr-custom-rate" placeholder="0" oninput="calcTrRateUzs()"></div>
+            <div class="form-row"><label style="font-size:11px;color:var(--text3);">Из настроек: <span id="tr-settings-rate">—</span></label>
+              <button class="btn xs" onclick="useTrSettingsRate()" style="margin-top:4px;">↺ Из настроек</button>
+            </div>
+          </div>
+        </div>
+        <div id="tr-rate-uzs-preview" style="font-size:12px;color:var(--text3);margin:-4px 0 8px;"></div>
         <div class="form-row"><label>Груз</label><input type="text" id="tr-cargo" placeholder="Текстиль, 20 т..."></div>
       </div>
       <div class="form-row"><label>Примечание</label><input type="text" id="tr-note" placeholder="Любые заметки..."></div>
@@ -2426,12 +2445,31 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
       </div>
       <div class="form-grid-2">
         <div class="form-row"><label>Дата загрузки *</label><input type="date" id="tl-date"></div>
-        <div class="form-row"><label>Ставка (сум)</label><input type="text" inputmode="numeric" class="fmt-money" id="tl-rate" placeholder="0"></div>
+        <div class="form-row"><label>Клиент</label><select id="tl-client"><option value="">— без клиента —</option></select></div>
       </div>
       <div class="form-grid-2">
-        <div class="form-row"><label>Клиент</label><select id="tl-client"><option value="">— без клиента —</option></select></div>
-        <div class="form-row"><label>Груз</label><input type="text" id="tl-cargo" placeholder="Запчасти, 15 т..."></div>
+        <div class="form-row"><label>Ставка *</label><input type="text" inputmode="numeric" class="fmt-money" id="tl-rate" placeholder="0" oninput="calcTlRateUzs()"></div>
+        <div class="form-row"><label>Валюта</label>
+          <select id="tl-currency" onchange="onTlCurrencyChange()">
+            <option value="UZS">🇺🇿 UZS (сум)</option>
+            <option value="USD">🇺🇸 USD</option>
+            <option value="EUR">🇪🇺 EUR</option>
+            <option value="RUB">🇷🇺 RUB</option>
+            <option value="TRY">🇹🇷 TRY</option>
+            <option value="KZT">🇰🇿 KZT</option>
+          </select>
+        </div>
       </div>
+      <div id="tl-rate-row" style="display:none;">
+        <div class="form-grid-2">
+          <div class="form-row"><label>Курс к сум (ручной)</label><input type="number" id="tl-custom-rate" placeholder="0" oninput="calcTlRateUzs()"></div>
+          <div class="form-row"><label style="font-size:11px;color:var(--text3);">Из настроек: <span id="tl-settings-rate">—</span></label>
+            <button class="btn xs" onclick="useTlSettingsRate()" style="margin-top:4px;">↺ Из настроек</button>
+          </div>
+        </div>
+      </div>
+      <div id="tl-rate-uzs-preview" style="font-size:12px;color:var(--text3);margin:-4px 0 8px;"></div>
+      <div class="form-row"><label>Груз</label><input type="text" id="tl-cargo" placeholder="Запчасти, 15 т..."></div>
     </div>
     <div class="modal-foot">
       <button class="btn" onclick="closeModal('modal-trip-leg')">Отмена</button>
@@ -2913,6 +2951,7 @@ function mapTripFromDb(t, legs, expenses, payments, surcharges) {
     legs: myLegs.map(l => ({
       id: l.id, num: l.leg_num, from: l.from_point||'', to: l.to_point||'',
       clientId: l.client_id||'', rate: l.rate||0, rateFinal: l.rate_final||0,
+      currency: l.currency||'UZS', fxRate: l.fx_rate, rateOrig: l.rate_orig,
       cargo: l.cargo||'', loadDate: l.load_date||'', unloadDate: l.unload_date||'',
     })),
     kmStart: t.km_start||0, kmEnd: t.km_end||0,
@@ -4490,6 +4529,74 @@ function calcTpUzs(){
   const currency=(document.getElementById('tp-currency')||{}).value||'UZS';
   const customRate=parseFloat((document.getElementById('tp-custom-rate')||{}).value)||0;
   const uzsEl=document.getElementById('tp-uzs-preview');
+  if(!uzsEl) return;
+  if(currency!=='UZS'&&amount>0){
+    const amountUzs=toUZS(amount,currency,customRate);
+    const usedRate=customRate>0?customRate:(FX_RATES[currency]||0);
+    uzsEl.textContent=`≈ ${fmtN(amountUzs)} сум (курс: 1 ${currency} = ${fmtN(usedRate)} сум)`;
+  } else {
+    uzsEl.textContent='';
+  }
+}
+
+// --- Валюта ставки за рейс/плечо (тот же паттерн, что и tp-currency) ---
+function onTrCurrencyChange(){
+  const currency=(document.getElementById('tr-currency')||{}).value||'UZS';
+  const rateRow=document.getElementById('tr-rate-row');
+  const settingsEl=document.getElementById('tr-settings-rate');
+  if(rateRow) rateRow.style.display=currency!=='UZS'?'block':'none';
+  if(settingsEl&&currency!=='UZS'){
+    const rate=FX_RATES[currency]||0;
+    settingsEl.textContent=rate>0?fmtN(rate)+' сум':'не задан';
+    const customEl=document.getElementById('tr-custom-rate');
+    if(customEl&&(!customEl.value||customEl.value==='0')) customEl.value=rate||'';
+  }
+  calcTrRateUzs();
+}
+function useTrSettingsRate(){
+  const currency=(document.getElementById('tr-currency')||{}).value||'UZS';
+  const customEl=document.getElementById('tr-custom-rate');
+  if(customEl) customEl.value=FX_RATES[currency]||'';
+  calcTrRateUzs();
+}
+function calcTrRateUzs(){
+  const amount=numVal('tr-rate');
+  const currency=(document.getElementById('tr-currency')||{}).value||'UZS';
+  const customRate=parseFloat((document.getElementById('tr-custom-rate')||{}).value)||0;
+  const uzsEl=document.getElementById('tr-rate-uzs-preview');
+  if(!uzsEl) return;
+  if(currency!=='UZS'&&amount>0){
+    const amountUzs=toUZS(amount,currency,customRate);
+    const usedRate=customRate>0?customRate:(FX_RATES[currency]||0);
+    uzsEl.textContent=`≈ ${fmtN(amountUzs)} сум (курс: 1 ${currency} = ${fmtN(usedRate)} сум)`;
+  } else {
+    uzsEl.textContent='';
+  }
+}
+function onTlCurrencyChange(){
+  const currency=(document.getElementById('tl-currency')||{}).value||'UZS';
+  const rateRow=document.getElementById('tl-rate-row');
+  const settingsEl=document.getElementById('tl-settings-rate');
+  if(rateRow) rateRow.style.display=currency!=='UZS'?'block':'none';
+  if(settingsEl&&currency!=='UZS'){
+    const rate=FX_RATES[currency]||0;
+    settingsEl.textContent=rate>0?fmtN(rate)+' сум':'не задан';
+    const customEl=document.getElementById('tl-custom-rate');
+    if(customEl&&(!customEl.value||customEl.value==='0')) customEl.value=rate||'';
+  }
+  calcTlRateUzs();
+}
+function useTlSettingsRate(){
+  const currency=(document.getElementById('tl-currency')||{}).value||'UZS';
+  const customEl=document.getElementById('tl-custom-rate');
+  if(customEl) customEl.value=FX_RATES[currency]||'';
+  calcTlRateUzs();
+}
+function calcTlRateUzs(){
+  const amount=numVal('tl-rate');
+  const currency=(document.getElementById('tl-currency')||{}).value||'UZS';
+  const customRate=parseFloat((document.getElementById('tl-custom-rate')||{}).value)||0;
+  const uzsEl=document.getElementById('tl-rate-uzs-preview');
   if(!uzsEl) return;
   if(currency!=='UZS'&&amount>0){
     const amountUzs=toUZS(amount,currency,customRate);
@@ -8670,10 +8777,13 @@ function openNewTrip(){
   document.getElementById('trip-modal-title').textContent='🗺️ Новый рейс';
   document.getElementById('tr-save-btn').textContent='Создать рейс';
   document.getElementById('tr-save-btn').onclick=saveTrip;
-  ['tr-from','tr-to','tr-rate','tr-cargo','tr-note','tr-km-start','tr-fuel-start','tr-adblue-start'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+  ['tr-from','tr-to','tr-rate','tr-cargo','tr-note','tr-km-start','tr-fuel-start','tr-adblue-start','tr-custom-rate'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
   const kmHint=document.getElementById('tr-km-hint');if(kmHint)kmHint.textContent='';;
   document.getElementById('tr-load-date').value=todayStr;
   document.getElementById('tr-type').value='international';
+  document.getElementById('tr-currency').value='UZS';
+  const trRateRow=document.getElementById('tr-rate-row');if(trRateRow)trRateRow.style.display='none';
+  const trUzsPreview=document.getElementById('tr-rate-uzs-preview');if(trUzsPreview)trUzsPreview.textContent='';
   populateTripSelects();
   openModal('modal-new-trip');
 }
@@ -8742,6 +8852,11 @@ async function _saveTripImpl(){
   if(truckId&&!checkTransportMaintStatus(truckId)) return;
   const clientId=document.getElementById('tr-client').value||'';
   const loadDate=document.getElementById('tr-load-date').value||todayStr;
+  const rateOrig=numVal('tr-rate');
+  const rateCurrency=(document.getElementById('tr-currency')||{}).value||'UZS';
+  const rateCustomRate=parseFloat((document.getElementById('tr-custom-rate')||{}).value)||0;
+  const rateUzs=toUZS(rateOrig,rateCurrency,rateCustomRate);
+  const rateFxRate=rateCustomRate>0?rateCustomRate:(FX_RATES[rateCurrency]||0);
   const tripRecord = {
     company_id: CURRENT_PROFILE.company_id,
     trip_num: genTripNum(), type: document.getElementById('tr-type').value, status:'prep',
@@ -8757,7 +8872,7 @@ async function _saveTripImpl(){
   if (tripErr) { alert('Не удалось создать рейс: '+tripErr.message); return; }
   const legRecord = {
     trip_id: tripData.id, leg_num:1, from_point:from, to_point:to, client_id: clientId||null,
-    rate: numVal('tr-rate'), rate_final:0,
+    rate: rateUzs, rate_final:0, currency:rateCurrency, fx_rate:rateFxRate, rate_orig:rateOrig,
     cargo: document.getElementById('tr-cargo').value||'', load_date: loadDate, unload_date: null,
   };
   const { data: legData, error: legErr } = await sbClient.from('trip_legs').insert(legRecord).select().single();
@@ -8962,6 +9077,10 @@ function openAddLeg(tripId){
   document.getElementById('tl-date').value=todayStr;
   document.getElementById('tl-rate').value='';
   document.getElementById('tl-cargo').value='';
+  document.getElementById('tl-currency').value='UZS';
+  document.getElementById('tl-custom-rate').value='';
+  const tlRateRow=document.getElementById('tl-rate-row');if(tlRateRow)tlRateRow.style.display='none';
+  const tlUzsPreview=document.getElementById('tl-rate-uzs-preview');if(tlUzsPreview)tlUzsPreview.textContent='';
   const clients=KONTRAGENTY.filter(k=>k.active!==false&&(k.type==='client'||k.type==='other'));
   document.getElementById('tl-client').innerHTML='<option value="">— без клиента —</option>'+clients.map(k=>`<option value="${k.id}">${k.name}</option>`).join('');
   const info=document.getElementById('tl-info');
@@ -8981,7 +9100,12 @@ function editTripLeg(tripId,legIdx){
   document.getElementById('tl-from').value=leg.from||'';
   document.getElementById('tl-to').value=leg.to||'';
   document.getElementById('tl-date').value=leg.loadDate||todayStr;
-  document.getElementById('tl-rate').value=(leg.rateFinal||leg.rate)?formatNumberSpaces(String(leg.rateFinal||leg.rate)):'';
+  // Если ставка уже уточнена (rateFinal) — она всегда в сумах, валюту сбрасываем на UZS.
+  // Иначе показываем исходную сумму/валюту ввода, как она была введена.
+  document.getElementById('tl-currency').value=leg.rateFinal?'UZS':(leg.currency||'UZS');
+  document.getElementById('tl-custom-rate').value=leg.rateFinal?'':(leg.fxRate||'');
+  const tlRateVal=leg.rateFinal?leg.rateFinal:(leg.currency&&leg.currency!=='UZS'&&leg.rateOrig!=null?leg.rateOrig:leg.rate);
+  document.getElementById('tl-rate').value=tlRateVal?formatNumberSpaces(String(tlRateVal)):'';
   document.getElementById('tl-cargo').value=leg.cargo||'';
   const clients=KONTRAGENTY.filter(k=>k.active!==false&&(k.type==='client'||k.type==='other'));
   document.getElementById('tl-client').innerHTML='<option value="">— без клиента —</option>'+clients.map(k=>`<option value="${k.id}" ${leg.clientId===k.id?'selected':''}>${k.name}</option>`).join('');
@@ -8990,6 +9114,8 @@ function editTripLeg(tripId,legIdx){
     const route=(trip.legs||[]).map((l,i)=>`${i+1}: ${l.from}→${l.to}`).join(' · ');
     info.innerHTML=`<div class="info-box">Текущий маршрут: <b>${route}</b></div>`;
   }
+  onTlCurrencyChange();
+  calcTlRateUzs();
   openModal('modal-trip-leg');
 }
 async function _saveTripLegImpl(){
@@ -8998,18 +9124,24 @@ async function _saveTripLegImpl(){
   if(!from||!to){alert('Укажите откуда и куда');return;}
   const trip=TRIPS.find(t=>t.id===_legTripId);if(!trip)return;
   trip.legs=trip.legs||[];
-  const rate=numVal('tl-rate');
+  const rateOrig=numVal('tl-rate');
+  const rateCurrency=(document.getElementById('tl-currency')||{}).value||'UZS';
+  const rateCustomRate=parseFloat((document.getElementById('tl-custom-rate')||{}).value)||0;
+  const rate=toUZS(rateOrig,rateCurrency,rateCustomRate);
+  const rateFxRate=rateCustomRate>0?rateCustomRate:(FX_RATES[rateCurrency]||0);
   const clientId=document.getElementById('tl-client').value||'';
   const cargo=document.getElementById('tl-cargo').value||'';
   const loadDate=document.getElementById('tl-date').value||todayStr;
   if(_editLegIdx!==null){
     const leg=trip.legs[_editLegIdx];
     if(!leg){closeModal('modal-trip-leg');return;}
-    const updates = { from_point:from, to_point:to, client_id:clientId||null, rate, cargo, load_date:loadDate };
+    const updates = { from_point:from, to_point:to, client_id:clientId||null, rate, cargo, load_date:loadDate,
+      currency:rateCurrency, fx_rate:rateFxRate, rate_orig:rateOrig };
     if (leg.rateFinal) updates.rate_final = rate;
     const { error } = await sbClient.from('trip_legs').update(updates).eq('id', leg.id);
     if (error) { alert('Не удалось сохранить плечо: '+error.message); return; }
     leg.from=from;leg.to=to;leg.clientId=clientId;leg.rate=rate;leg.cargo=cargo;leg.loadDate=loadDate;
+    leg.currency=rateCurrency;leg.fxRate=rateFxRate;leg.rateOrig=rateOrig;
     if(leg.rateFinal) leg.rateFinal=rate;
     closeModal('modal-trip-leg');
     toast(`Плечо ${leg.num||_editLegIdx+1} обновлено`);
@@ -9020,6 +9152,7 @@ async function _saveTripLegImpl(){
   const legRecord = {
     trip_id: trip.id, leg_num: trip.legs.length+1, from_point:from, to_point:to,
     client_id: clientId||null, rate, rate_final:0, cargo, load_date:loadDate, unload_date:null,
+    currency:rateCurrency, fx_rate:rateFxRate, rate_orig:rateOrig,
   };
   const { data, error } = await sbClient.from('trip_legs').insert(legRecord).select().single();
   if (error) { alert('Не удалось добавить плечо: '+error.message); return; }
@@ -9027,6 +9160,7 @@ async function _saveTripLegImpl(){
     id:data.id, num:trip.legs.length+1,from,to,
     clientId,
     rate,rateFinal:0,
+    currency:rateCurrency,fxRate:rateFxRate,rateOrig,
     cargo,
     loadDate,unloadDate:''
   });
@@ -9337,7 +9471,7 @@ function openTripDetail(tripId){
         ${client?`<span>👤 ${client.name}</span>`:''}
         ${l.cargo?`<span>📦 ${l.cargo}</span>`:''}
         ${l.loadDate?`<span>📅 ${fmt(l.loadDate)}</span>`:''}
-        <span>Ставка: <b>${fmtN(baseRate)}</b>${legSurch!==0?` <span style="color:${legSurch>0?'var(--green)':'var(--red)'}">${legSurch>0?'+':''}${fmtN(legSurch)} = ${fmtN(legRate)}</span>`:''}</span>
+        <span>Ставка: <b>${fmtN(baseRate)}</b>${l.currency&&l.currency!=='UZS'&&l.rateOrig!=null?` <span style="color:var(--text3)">(${l.rateOrig} ${l.currency})</span>`:''}${legSurch!==0?` <span style="color:${legSurch>0?'var(--green)':'var(--red)'}">${legSurch>0?'+':''}${fmtN(legSurch)} = ${fmtN(legRate)}</span>`:''}</span>
         ${legPaid>0?`<span style="color:var(--green)">Получено: <b>${fmtN(legPaid)}</b></span>`:''}
         ${legRate>legPaid?`<span style="color:var(--red)">Долг: <b>${fmtN(legRate-legPaid)}</b></span>`:''}
       </div>
