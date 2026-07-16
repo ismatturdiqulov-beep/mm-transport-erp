@@ -457,15 +457,15 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
         <div style="background:var(--blue-bg);border-radius:var(--radius);padding:14px;">
           <div style="font-size:12px;font-weight:600;color:var(--accent2);margin-bottom:10px;">✅ Е-ПЕРМИТ (электронный)</div>
           <div class="form-grid-2">
-            <div class="form-row"><label>Для арендаторов (сум)</label><input type="number" id="dp-epermit-rent" style="width:100%;padding:7px 9px;border:1px solid var(--border2);border-radius:var(--radius);font-size:13px;font-family:var(--mono)"></div>
-            <div class="form-row"><label>Для водителей ММ (сум)</label><input type="number" id="dp-epermit-mm" style="width:100%;padding:7px 9px;border:1px solid var(--border2);border-radius:var(--radius);font-size:13px;font-family:var(--mono)"></div>
+            <div class="form-row"><label>Для арендаторов (сум)</label><input type="text" inputmode="numeric" class="fmt-money" id="dp-epermit-rent" style="width:100%;padding:7px 9px;border:1px solid var(--border2);border-radius:var(--radius);font-size:13px;font-family:var(--mono)"></div>
+            <div class="form-row"><label>Для водителей ММ (сум)</label><input type="text" inputmode="numeric" class="fmt-money" id="dp-epermit-mm" style="width:100%;padding:7px 9px;border:1px solid var(--border2);border-radius:var(--radius);font-size:13px;font-family:var(--mono)"></div>
           </div>
         </div>
         <div style="background:var(--amber-bg);border-radius:var(--radius);padding:14px;">
           <div style="font-size:12px;font-weight:600;color:var(--amber);margin-bottom:10px;">📄 Бумажный дозвол</div>
           <div class="form-grid-2">
-            <div class="form-row"><label>Для арендаторов (сум)</label><input type="number" id="dp-paper-rent" style="width:100%;padding:7px 9px;border:1px solid var(--border2);border-radius:var(--radius);font-size:13px;font-family:var(--mono)"></div>
-            <div class="form-row"><label>Для водителей ММ (сум)</label><input type="number" id="dp-paper-mm" style="width:100%;padding:7px 9px;border:1px solid var(--border2);border-radius:var(--radius);font-size:13px;font-family:var(--mono)"></div>
+            <div class="form-row"><label>Для арендаторов (сум)</label><input type="text" inputmode="numeric" class="fmt-money" id="dp-paper-rent" style="width:100%;padding:7px 9px;border:1px solid var(--border2);border-radius:var(--radius);font-size:13px;font-family:var(--mono)"></div>
+            <div class="form-row"><label>Для водителей ММ (сум)</label><input type="text" inputmode="numeric" class="fmt-money" id="dp-paper-mm" style="width:100%;padding:7px 9px;border:1px solid var(--border2);border-radius:var(--radius);font-size:13px;font-family:var(--mono)"></div>
           </div>
         </div>
       </div>
@@ -496,8 +496,8 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
         </div>
         <div style="background:var(--surface2);border-radius:var(--radius);padding:14px;">
           <div style="font-size:12px;font-weight:600;margin-bottom:10px;">📄 Покупные цены ДОЗВОЛ</div>
-          <div class="form-row"><label style="font-size:11px">Е-ПЕРМИТ (покупная, сум)</label><input type="number" id="buy-epermit" style="width:100%;padding:6px 8px;border:1px solid var(--border2);border-radius:var(--radius);font-family:var(--mono);font-size:13px"></div>
-          <div class="form-row"><label style="font-size:11px">Бумажный (покупная, сум)</label><input type="number" id="buy-paper" style="width:100%;padding:6px 8px;border:1px solid var(--border2);border-radius:var(--radius);font-family:var(--mono);font-size:13px"></div>
+          <div class="form-row"><label style="font-size:11px">Е-ПЕРМИТ (покупная, сум)</label><input type="text" inputmode="numeric" class="fmt-money" id="buy-epermit" style="width:100%;padding:6px 8px;border:1px solid var(--border2);border-radius:var(--radius);font-family:var(--mono);font-size:13px"></div>
+          <div class="form-row"><label style="font-size:11px">Бумажный (покупная, сум)</label><input type="text" inputmode="numeric" class="fmt-money" id="buy-paper" style="width:100%;padding:6px 8px;border:1px solid var(--border2);border-radius:var(--radius);font-family:var(--mono);font-size:13px"></div>
           <button class="btn sm green-btn" onclick="saveDozBuyPrices()">💾 Сохранить</button>
         </div>
       </div>
@@ -998,7 +998,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
         </label>
         <div id="nt-custom-price-block" style="display:none;">
           <div class="form-grid-2">
-            <div class="form-row"><label>Закупочная цена за 1 шт (сум)</label><input type="number" id="nt-buy-price" placeholder="0" oninput="updateTirBuyPreview()"></div>
+            <div class="form-row"><label>Закупочная цена за 1 шт (сум)</label><input type="text" inputmode="numeric" class="fmt-money" id="nt-buy-price" placeholder="0" oninput="updateTirBuyPreview()"></div>
             <div class="form-row"><label>Списать из кассы</label>
               <select id="nt-buy-wallet">
                 <option value="cash">💵 Наличные</option>
@@ -1058,7 +1058,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
       </div>
       <div id="rt-comp-block" style="display:none;">
         <div class="info-box">Сумма зачисляется обратно на баланс водителя/арендатора</div>
-        <div class="form-row"><label>Сумма зачёта (сум)</label><input type="number" id="rt-comp" placeholder="600000"></div>
+        <div class="form-row"><label>Сумма зачёта (сум)</label><input type="text" inputmode="numeric" class="fmt-money" id="rt-comp" placeholder="600000"></div>
         <div class="form-row"><label>Комментарий</label><input type="text" id="rt-comp-note" placeholder="Возврат неиспользованного ТИР"></div>
       </div>
       <div class="divider"></div>
@@ -1114,7 +1114,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
         </label>
         <div id="nd-custom-price-block" style="display:none;">
           <div class="form-grid-2">
-            <div class="form-row"><label>Закупочная цена (сум)</label><input type="number" id="nd-buy-price" placeholder="0"></div>
+            <div class="form-row"><label>Закупочная цена (сум)</label><input type="text" inputmode="numeric" class="fmt-money" id="nd-buy-price" placeholder="0"></div>
             <div class="form-row"><label>Списать из кассы</label>
               <select id="nd-buy-wallet">
                 <option value="cash">💵 Наличные</option>
@@ -1172,7 +1172,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
       </div>
       <div id="rd-comp-block" style="display:none;">
         <div class="info-box">Сумма зачисляется обратно на баланс водителя/арендатора</div>
-        <div class="form-row"><label>Сумма зачёта (сум)</label><input type="number" id="rd-comp" placeholder="0"></div>
+        <div class="form-row"><label>Сумма зачёта (сум)</label><input type="text" inputmode="numeric" class="fmt-money" id="rd-comp" placeholder="0"></div>
         <div class="form-row"><label>Комментарий</label><input type="text" id="rd-comp-note" placeholder="Возврат неиспользованного дозвола"></div>
       </div>
       <div class="divider"></div>
@@ -1220,7 +1220,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
             <option value="other">Прочее</option>
           </select>
         </div>
-        <div class="form-row"><label>Сумма (сум) *</label><input type="number" id="ch-amount" placeholder="1000000"></div>
+        <div class="form-row"><label>Сумма (сум) *</label><input type="text" inputmode="numeric" class="fmt-money" id="ch-amount" placeholder="1000000"></div>
       </div>
       <div class="form-grid-2">
         <div class="form-row"><label>Дата</label><input type="date" id="ch-date"></div>
@@ -1241,7 +1241,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
     <div class="modal-body">
       <div class="form-row"><label>Арендатор / Контрагент *</label><select id="pay-person"></select></div>
       <div class="form-grid-2">
-        <div class="form-row"><label>Сумма (сум) *</label><input type="number" id="pay-amount" placeholder="3000000"></div>
+        <div class="form-row"><label>Сумма (сум) *</label><input type="text" inputmode="numeric" class="fmt-money" id="pay-amount" placeholder="3000000"></div>
         <div class="form-row"><label>Способ оплаты</label>
           <select id="pay-method">
             <option value="kartaga">Картага (перевод)</option>
@@ -1271,7 +1271,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
         <div class="form-row"><label>Дата начала</label><input type="date" id="vac-start"></div>
         <div class="form-row"><label>Дата окончания</label><input type="date" id="vac-end"></div>
       </div>
-      <div class="form-row"><label>Сумма зачисления (сум) *</label><input type="number" id="vac-amount"></div>
+      <div class="form-row"><label>Сумма зачисления (сум) *</label><input type="text" inputmode="numeric" class="fmt-money" id="vac-amount"></div>
       <div class="form-row"><label>Примечание</label><input type="text" id="vac-note"></div>
     </div>
     <div class="modal-foot">
@@ -1296,7 +1296,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
         <div class="form-row"><label>Водитель 2</label><select id="wb-drv2"><option value="">— без второго водителя —</option></select></div>
       </div>
       <div class="form-row"><label>Пробег на выезде (км)</label>
-        <input type="number" id="wb-mileage" placeholder="0">
+        <input type="text" inputmode="numeric" class="fmt-mileage" id="wb-mileage" placeholder="0">
         <div id="wb-mileage-hint" style="font-size:11px;color:var(--text3);margin-top:2px;"></div>
       </div>
       <div class="form-grid-2">
@@ -1327,7 +1327,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
         <div class="form-row"><label>Дата заключения</label><input type="date" id="lb-date"></div>
         <div class="form-row"><label>Испытат. срок (мес.)</label><input type="number" id="lb-probation" value="3"></div>
       </div>
-      <div class="form-row"><label>Плановая выручка в месяц (сум)</label><input type="number" id="lb-plan-revenue" value="1000000"></div>
+      <div class="form-row"><label>Плановая выручка в месяц (сум)</label><input type="text" inputmode="numeric" class="fmt-money" id="lb-plan-revenue" value="1 000 000"></div>
       <div class="form-row"><label>Паспорт (загранпаспорт)</label><input type="text" id="lb-passport"></div>
       <div class="form-grid-2">
         <div class="form-row"><label>Кем выдан</label><input type="text" id="lb-passport-org" placeholder="MIA 22212"></div>
@@ -1378,8 +1378,8 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
       <div class="form-row"><label>Название типа *</label><input type="text" id="att-name" placeholder="6-листовой, 16-листовой, Е-ТИР..."></div>
       <div class="form-row"><label>Количество листов</label><input type="number" id="att-sheets" placeholder="6"></div>
       <div class="form-grid-2">
-        <div class="form-row"><label>Цена для арендаторов (сум)</label><input type="number" id="att-price-rent" placeholder="1200000"></div>
-        <div class="form-row"><label>Цена для водителей ММ (сум)</label><input type="number" id="att-price-mm" placeholder="900000"></div>
+        <div class="form-row"><label>Цена для арендаторов (сум)</label><input type="text" inputmode="numeric" class="fmt-money" id="att-price-rent" placeholder="1200000"></div>
+        <div class="form-row"><label>Цена для водителей ММ (сум)</label><input type="text" inputmode="numeric" class="fmt-money" id="att-price-mm" placeholder="900000"></div>
       </div>
     </div>
     <div class="modal-foot">
@@ -1470,7 +1470,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
         </div>
       </div>
       <div class="form-grid-2">
-        <div class="form-row"><label>Сумма (сум) *</label><input type="number" id="kt-amount" placeholder="1000000"></div>
+        <div class="form-row"><label>Сумма (сум) *</label><input type="text" inputmode="numeric" class="fmt-money" id="kt-amount" placeholder="1000000"></div>
         <div class="form-row"><label>Дата</label><input type="date" id="kt-date"></div>
       </div>
       <div class="form-row"><label>Описание</label><input type="text" id="kt-desc" placeholder="Инкассация, перевод..."></div>
@@ -1702,7 +1702,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
       </div>
       <div id="af-tenant-block">
         <div class="form-grid-2">
-          <div class="form-row"><label>Месячный план (сум)</label><input type="number" id="af-plan" placeholder="1000000"></div>
+          <div class="form-row"><label>Месячный план (сум)</label><input type="text" inputmode="numeric" class="fmt-money" id="af-plan" placeholder="1000000"></div>
           <div class="form-row"><label>Тип оплаты</label>
             <select id="af-plantype">
               <option value="paid">Платный</option>
@@ -1769,7 +1769,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
         </select>
       </div>
       <div class="form-grid-2">
-        <div class="form-row"><label>Сумма (сум) *</label><input type="number" id="kop-amount"></div>
+        <div class="form-row"><label>Сумма (сум) *</label><input type="text" inputmode="numeric" class="fmt-money" id="kop-amount"></div>
         <div class="form-row"><label>Дата</label><input type="date" id="kop-date"></div>
       </div>
       <div class="form-row"><label>Описание</label><input type="text" id="kop-desc" placeholder="За что..."></div>
@@ -1830,11 +1830,11 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
           </div>
         </div>
         <div class="form-row"><label>Цена по договору аренды (сум) — для налоговой (НДФЛ), не путать с абонентской платой ПС</label>
-          <input type="number" id="at-contract-price" placeholder="1550000"></div>
+          <input type="text" inputmode="numeric" class="fmt-money" id="at-contract-price" placeholder="1550000"></div>
       </div>
       <div id="at-purchase-row" style="display:none;">
         <div class="form-grid-2">
-          <div class="form-row"><label>Балансовая/покупная стоимость (сум)</label><input type="number" id="at-purchase-price" placeholder="250000000"></div>
+          <div class="form-row"><label>Балансовая/покупная стоимость (сум)</label><input type="text" inputmode="numeric" class="fmt-money" id="at-purchase-price" placeholder="250000000"></div>
           <div class="form-row"><label>Дата постановки на баланс</label><input type="date" id="at-balance-date"></div>
         </div>
       </div>
@@ -2009,7 +2009,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
         </select>
       </div>
       <div class="form-grid-2">
-        <div class="form-row"><label>Сумма (сум) *</label><input type="number" id="exp-amount" placeholder="500000"></div>
+        <div class="form-row"><label>Сумма (сум) *</label><input type="text" inputmode="numeric" class="fmt-money" id="exp-amount" placeholder="500000"></div>
         <div class="form-row"><label>Получатель / Кому</label><input type="text" id="exp-to" placeholder="АЗС Нафтгаз..."></div>
       </div>
       <div class="form-row"><label>Описание</label><input type="text" id="exp-desc" placeholder="Заправка 304, 80 л..."></div>
@@ -2055,7 +2055,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
     <div class="modal-head"><h3>⚖️ Корректировка баланса</h3><span class="modal-close" onclick="closeModal('modal-balance-adjust')">×</span></div>
     <div class="modal-body">
       <div class="info-box" id="ba-current"></div>
-      <div class="form-row"><label>Правильный остаток (сум) *</label><input type="number" id="ba-new-balance" placeholder="Например, -500000"></div>
+      <div class="form-row"><label>Правильный остаток (сум) *</label><input type="text" inputmode="numeric" class="fmt-money" id="ba-new-balance" placeholder="Например, -500 000"></div>
       <div class="form-row"><label>Дата</label><input type="date" id="ba-date"></div>
       <div class="form-row"><label>Причина корректировки *</label><input type="text" id="ba-reason" placeholder="Например: сверка с банком, найдена неучтённая оплата"></div>
     </div>
@@ -2073,7 +2073,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
     <div class="modal-body">
       <div class="info-box" id="ef-info"></div>
       <div class="form-row"><label>Дата</label><input type="date" id="ef-date"></div>
-      <div class="form-row"><label id="ef-amount-label">Сумма (сум)</label><input type="number" id="ef-amount"></div>
+      <div class="form-row"><label id="ef-amount-label">Сумма (сум)</label><input type="text" inputmode="numeric" class="fmt-money" id="ef-amount"></div>
       <div class="form-row"><label>Описание</label><input type="text" id="ef-desc"></div>
     </div>
     <div class="modal-foot">
@@ -2157,7 +2157,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
         </div>
         <div class="form-row"><label>Дата *</label><input type="date" id="ki-date"></div>
       </div>
-      <div class="form-row"><label>Сумма (сум) *</label><input type="number" id="ki-amount" placeholder="1000000"></div>
+      <div class="form-row"><label>Сумма (сум) *</label><input type="text" inputmode="numeric" class="fmt-money" id="ki-amount" placeholder="1000000"></div>
       <div class="form-row"><label>От кого / источник</label><input type="text" id="ki-from" placeholder="Арендатор Иванов..."></div>
       <div class="form-row"><label>Описание</label><input type="text" id="ki-desc" placeholder="Оплата за март..."></div>
     </div>
@@ -2189,7 +2189,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
       <div class="form-grid-2">
         <div class="form-row"><label>Водитель *</label><select id="tr-driver"><option value="">— выберите —</option></select></div>
         <div class="form-row"><label>Начальный пробег (км)</label>
-          <input type="number" id="tr-km-start" placeholder="0">
+          <input type="text" inputmode="numeric" class="fmt-mileage" id="tr-km-start" placeholder="0">
           <div id="tr-km-hint" style="font-size:11px;color:var(--text3);margin-top:2px;"></div>
         </div>
       </div>
@@ -2212,7 +2212,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
         </div>
         <div class="form-grid-2">
           <div class="form-row"><label>Клиент</label><select id="tr-client"><option value="">— без клиента —</option></select></div>
-          <div class="form-row"><label>Ставка (сум)</label><input type="number" id="tr-rate" placeholder="0"></div>
+          <div class="form-row"><label>Ставка (сум)</label><input type="text" inputmode="numeric" class="fmt-money" id="tr-rate" placeholder="0"></div>
         </div>
         <div class="form-row"><label>Груз</label><input type="text" id="tr-cargo" placeholder="Текстиль, 20 т..."></div>
       </div>
@@ -2255,7 +2255,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
         </div>
       </div>
       <div class="form-grid-2">
-        <div class="form-row"><label>Сумма *</label><input type="number" id="te-amount" placeholder="0" oninput="calcFuelPrice()"></div>
+        <div class="form-row"><label>Сумма *</label><input type="text" inputmode="numeric" class="fmt-money" id="te-amount" placeholder="0" oninput="calcFuelPrice()"></div>
         <div class="form-row"><label>Валюта</label>
           <select id="te-currency" onchange="onTeCurrencyChange()">
             <option value="UZS">🇺🇿 UZS (сум)</option>
@@ -2330,7 +2330,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
         </div>
         <div class="form-row"><label>Дата *</label><input type="date" id="ts-date"></div>
       </div>
-      <div class="form-row"><label>Сумма (сум) *</label><input type="number" id="ts-amount" placeholder="0"></div>
+      <div class="form-row"><label>Сумма (сум) *</label><input type="text" inputmode="numeric" class="fmt-money" id="ts-amount" placeholder="0"></div>
       <div class="form-row"><label>Примечание</label><input type="text" id="ts-note" placeholder="Простой 2 суток на границе..."></div>
     </div>
     <div class="modal-foot">
@@ -2351,8 +2351,8 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
       <div style="padding:10px 14px;background:var(--surface2);border-radius:var(--radius-lg);border-left:3px solid var(--accent2);margin-bottom:10px;">
         <div style="font-size:12px;font-weight:600;color:var(--accent2);margin-bottom:10px;">📏 Пробег и топливо</div>
         <div class="form-grid-2">
-          <div class="form-row"><label>Начальный пробег (км)</label><input type="number" id="tf-km-start" readonly style="background:var(--surface2);color:var(--text3)"></div>
-          <div class="form-row"><label>Конечный пробег (км) *</label><input type="number" id="tf-km-end" placeholder="Введите показание одометра" oninput="calcTripFinish()"></div>
+          <div class="form-row"><label>Начальный пробег (км)</label><input type="text" class="fmt-mileage" id="tf-km-start" readonly style="background:var(--surface2);color:var(--text3)"></div>
+          <div class="form-row"><label>Конечный пробег (км) *</label><input type="text" inputmode="numeric" class="fmt-mileage" id="tf-km-end" placeholder="Введите показание одометра" oninput="calcTripFinish()"></div>
         </div>
         <div class="form-grid-2">
           <div class="form-row"><label>Топливо в начале (л)</label><input type="number" id="tf-fuel-start" readonly style="background:var(--surface2);color:var(--text3)"></div>
@@ -2385,7 +2385,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
         <div style="font-size:12px;font-weight:600;color:var(--amber);margin-bottom:10px;">👤 Расчёт с водителем</div>
         <div id="tf-advance-info" style="font-size:12px;color:var(--text2);margin-bottom:8px;"></div>
         <div class="form-grid-2">
-          <div class="form-row"><label>ЗП водителю (сум)</label><input type="number" id="tf-salary" placeholder="0" oninput="calcTripFinish()"></div>
+          <div class="form-row"><label>ЗП водителю (сум)</label><input type="text" inputmode="numeric" class="fmt-money" id="tf-salary" placeholder="0" oninput="calcTripFinish()"></div>
           <div class="form-row"><label>Из кошелька</label>
             <select id="tf-salary-wallet">
               <option value="cash">💵 Наличные</option>
@@ -2394,7 +2394,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
           </div>
         </div>
         <div class="form-grid-2">
-          <div class="form-row"><label>Водитель сдал остаток (сум)</label><input type="number" id="tf-cash-return" placeholder="0" oninput="calcTripFinish()"></div>
+          <div class="form-row"><label>Водитель сдал остаток (сум)</label><input type="text" inputmode="numeric" class="fmt-money" id="tf-cash-return" placeholder="0" oninput="calcTripFinish()"></div>
           <div class="form-row">
             <div class="bs-card" style="margin-top:18px;"><div class="bsl">Итог по водителю</div><div class="bsv" id="tf-calc-driver">—</div></div>
           </div>
@@ -2425,7 +2425,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
       </div>
       <div class="form-grid-2">
         <div class="form-row"><label>Дата загрузки *</label><input type="date" id="tl-date"></div>
-        <div class="form-row"><label>Ставка (сум)</label><input type="number" id="tl-rate" placeholder="0"></div>
+        <div class="form-row"><label>Ставка (сум)</label><input type="text" inputmode="numeric" class="fmt-money" id="tl-rate" placeholder="0"></div>
       </div>
       <div class="form-grid-2">
         <div class="form-row"><label>Клиент</label><select id="tl-client"><option value="">— без клиента —</option></select></div>
@@ -2468,7 +2468,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
     <div class="modal-body">
       <div id="tp-summary" style="margin-bottom:12px;"></div>
       <div class="form-grid-2">
-        <div class="form-row"><label>Сумма *</label><input type="number" id="tp-amount" placeholder="0"></div>
+        <div class="form-row"><label>Сумма *</label><input type="text" inputmode="numeric" class="fmt-money" id="tp-amount" placeholder="0"></div>
         <div class="form-row"><label>Дата</label><input type="date" id="tp-date"></div>
       </div>
       <div class="form-grid-2">
@@ -2501,7 +2501,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
     <div class="modal-head"><h3>💵 Выдача наличных</h3><span class="modal-close" onclick="closeModal('modal-kassa-payout')">×</span></div>
     <div class="modal-body">
       <div class="form-grid-2">
-        <div class="form-row"><label>Сумма *</label><input type="number" id="kp-amount" placeholder="0"></div>
+        <div class="form-row"><label>Сумма *</label><input type="text" inputmode="numeric" class="fmt-money" id="kp-amount" placeholder="0"></div>
         <div class="form-row"><label>Дата</label><input type="date" id="kp-date"></div>
       </div>
       <div class="form-grid-2">
@@ -2565,7 +2565,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
       </div>
       <div class="form-grid-2">
         <div class="form-row"><label>Пробег при ТО (км)</label>
-          <input type="number" id="mn-mileage" placeholder="0" oninput="updateMaintNextHint()">
+          <input type="text" inputmode="numeric" class="fmt-mileage" id="mn-mileage" placeholder="0" oninput="updateMaintNextHint()">
           <div id="mn-mileage-hint" style="font-size:11px;color:var(--text3);margin-top:2px;"></div>
         </div>
         <div class="form-row"><label>Простой (дней)</label><input type="number" id="mn-downtime" placeholder="0"></div>
@@ -2620,7 +2620,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
     <div class="modal-body">
       <div id="um-info" style="margin-bottom:12px;"></div>
       <div class="form-row"><label>Текущий пробег (км) *</label>
-        <input type="number" id="um-mileage" placeholder="0">
+        <input type="text" inputmode="numeric" class="fmt-mileage" id="um-mileage" placeholder="0">
         <div style="font-size:11px;color:var(--text3);margin-top:2px;">Значение должно быть больше текущего</div>
       </div>
     </div>
@@ -3025,6 +3025,44 @@ const daysDiff = (d1,d2) => Math.floor((new Date(d1)-new Date(d2))/(864e5));
 const isExp = d => d && new Date(d)<TODAY;
 const expSoon = (d,days=30) => { if(!d) return false; const dd=new Date(d); return dd>=TODAY && dd<=new Date(TODAY.getTime()+days*864e5); };
 const genId = () => 'id'+Date.now()+Math.random().toString(36).slice(2,5);
+
+// ============ ЖИВОЕ ФОРМАТИРОВАНИЕ ЧИСЕЛ ПРОБЕЛАМИ (2026-07-19) ============
+// Пользователь набрал 200 000 000 вместо 20 000 000 (лишний ноль) — попросил
+// разбивку по разрядам пробелами для сумм и пробега, чтобы такое было видно
+// сразу при вводе. Намеренно НЕ применяется к сериям/номерам документов —
+// там пробелы только мешают. input[type=number] физически не может показывать
+// пробелы (браузер их просто не даёт ввести), поэтому такие поля переведены на
+// type=text + класс fmt-money/fmt-mileage; читать их значение — только через
+// numVal(), которая сама убирает пробелы перед parseFloat.
+function formatNumberSpaces(raw){
+  const s=String(raw==null?'':raw);
+  const neg=s.trim().startsWith('-'); // корректировка баланса допускает отрицательные суммы
+  const clean=s.replace(/\D/g,'');
+  // Пока набрали только "-" (цифр ещё нет) — не стираем его, иначе минус нельзя
+  // будет ввести первым символом.
+  if(!clean) return neg?'-':'';
+  return (neg?'-':'')+clean.replace(/\B(?=(\d{3})+(?!\d))/g,' ');
+}
+function unformatNumber(val){ return String(val==null?'':val).replace(/[^\d-]/g,''); }
+// Читает поле с разбивкой пробелами как обычное число (для parseFloat-мест).
+function numVal(id){
+  const el=document.getElementById(id);
+  if(!el) return 0;
+  return parseFloat(unformatNumber(el.value))||0;
+}
+// Записывает число в поле с разбивкой пробелами (для предзаполнения при редактировании).
+function setNumVal(id, num){
+  const el=document.getElementById(id); if(!el) return;
+  el.value=(num||num===0)?formatNumberSpaces(String(Math.round(num))):'';
+}
+document.addEventListener('input', (e)=>{
+  const el=e.target;
+  if(!el.classList || !(el.classList.contains('fmt-money')||el.classList.contains('fmt-mileage'))) return;
+  const cursorFromEnd=el.value.length-(el.selectionStart==null?el.value.length:el.selectionStart);
+  el.value=formatNumberSpaces(el.value);
+  const pos=Math.max(0, el.value.length-cursorFromEnd);
+  if(el.setSelectionRange) el.setSelectionRange(pos,pos);
+});
 
 // ============ STORAGE ============
 const ld = (k,def) => { try{const v=localStorage.getItem(k);return v?JSON.parse(v):def;}catch(e){return def;} };
@@ -3662,7 +3700,7 @@ async function _saveTirNewImpl() {
   const tirType=TIR_TYPES.find(t=>t.name===type);
   const settingsPrice=BUY_PRICES.tir&&tirType?BUY_PRICES.tir[tirType.id]||0:0;
   const unitPrice = useCustom
-    ? (parseFloat(document.getElementById('nt-buy-price').value)||0)
+    ? numVal('nt-buy-price')
     : settingsPrice;
   const buyWallet = useCustom
     ? (document.getElementById('nt-buy-wallet').value||'bank')
@@ -3739,7 +3777,7 @@ function updateTirBuyPreview(){
   const tirType=TIR_TYPES.find(t=>t.name===type);
   const settingsPrice=tirType&&BUY_PRICES.tir?BUY_PRICES.tir[tirType.id]||0:0;
   const useCustom=(document.getElementById('nt-custom-price-check')||{}).checked;
-  const customPrice=parseFloat((document.getElementById('nt-buy-price')||{}).value)||0;
+  const customPrice=numVal('nt-buy-price');
   const count=Math.max(1, getTirNums().length);
   const countLabel=count>1?`${count} шт × `:'';
   const preview=document.getElementById('nt-buy-preview');
@@ -3842,7 +3880,7 @@ async function _returnTirToOfficeImpl() {
   if(!t) return;
   const used=document.getElementById('rt-used').value==='used';
   const returnedOffice=document.getElementById('rt-office-date').value || todayStr;
-  const comp=!used?(parseFloat(document.getElementById('rt-comp').value)||0):0;
+  const comp=!used?numVal('rt-comp'):0;
   const { error } = await sbClient.from('tirs').update({ returned_office:returnedOffice, used, comp }).eq('id', t.id);
   if (error) { alert('Не удалось сохранить возврат ТИР: '+error.message); return; }
   t.returnedOffice=returnedOffice; t.used=used; t.comp=comp;
@@ -3883,7 +3921,7 @@ async function _saveDozNewImpl() {
   const useCustom = document.getElementById('nd-custom-price-check').checked;
   const settingsPrice=epermit?(BUY_PRICES.epermit||0):(BUY_PRICES.paper||0);
   const buyPrice = useCustom
-    ? (parseFloat(document.getElementById('nd-buy-price').value)||0)
+    ? numVal('nd-buy-price')
     : settingsPrice;
   const buyWallet = useCustom
     ? (document.getElementById('nd-buy-wallet').value||'bank')
@@ -3979,7 +4017,7 @@ async function _returnDozToOfficeImpl() {
   if(!d) return;
   const used=document.getElementById('ro-used').value==='used';
   const returnedOffice=document.getElementById('ro-date').value || todayStr;
-  const comp=!used?(parseFloat(document.getElementById('rd-comp').value)||0):0;
+  const comp=!used?numVal('rd-comp'):0;
   const { error } = await sbClient.from('dozv').update({ returned_office:returnedOffice, used, comp }).eq('id', d.id);
   if (error) { alert('Не удалось сохранить возврат дозвола: '+error.message); return; }
   d.returnedOffice=returnedOffice; d.used=used; d.comp=comp;
@@ -4049,7 +4087,7 @@ function toggleDozReturnComp() {
 
 async function _saveChargeImpl(){
   const person=document.getElementById('ch-person').value;
-  const amount=parseFloat(document.getElementById('ch-amount').value)||0;
+  const amount=numVal('ch-amount');
   if(!person||!amount){alert('Заполните все поля');return;}
   const date=document.getElementById('ch-date').value||todayStr;
   const cat=document.getElementById('ch-cat').value;
@@ -4078,7 +4116,7 @@ async function _saveChargeImpl(){
 
 async function _savePaymentImpl(){
   const person=document.getElementById('pay-person').value;
-  const amount=parseFloat(document.getElementById('pay-amount').value)||0;
+  const amount=numVal('pay-amount');
   if(!person||!amount){alert('Заполните все поля');return;}
   const method=document.getElementById('pay-method').value;
   const date=document.getElementById('pay-date').value||todayStr;
@@ -4114,7 +4152,7 @@ async function _savePaymentImpl(){
 
 async function _saveVacationImpl(){
   const person=document.getElementById('vac-person').value;
-  const amount=parseFloat(document.getElementById('vac-amount').value)||0;
+  const amount=numVal('vac-amount');
   if(!person||!amount){alert('Заполните все поля');return;}
   const start=document.getElementById('vac-start').value;
   const end=document.getElementById('vac-end').value;
@@ -4188,7 +4226,7 @@ function onWaybillFleetChange(){
   const kmEl=document.getElementById('wb-mileage');
   const hint=document.getElementById('wb-mileage-hint');
   if(mileage>0){
-    if(kmEl&&!kmEl.value) kmEl.value=mileage;
+    if(kmEl&&!kmEl.value) kmEl.value=formatNumberSpaces(String(mileage));
     if(hint) hint.textContent=`Текущий пробег тягача: ${fmtN(mileage)} км`;
   } else if(hint) hint.textContent='Пробег тягача не указан';
   if(fleet.driverId){
@@ -4219,7 +4257,7 @@ async function _saveWaybillImpl(){
     drv1: drv1?drv1.name:'', drv2: drv2?drv2.name:'',
     fleet_id: fleetId, truck_id: truck?truck.id:null, trailer_id: trailer?trailer.id:null,
     driver1_id: drv1Id, driver2_id: drv2Id||null,
-    mileage_start: parseFloat(document.getElementById('wb-mileage').value)||null,
+    mileage_start: numVal('wb-mileage')||null,
     dep_time: document.getElementById('wb-time').value||null,
     issued_date: document.getElementById('wb-date').value,
     days: parseInt(document.getElementById('wb-days').value)||45,
@@ -4240,7 +4278,7 @@ function openLaborModal(){
   document.getElementById('lb-days').value=364;
   document.getElementById('lb-date').value=todayStr;
   document.getElementById('lb-probation').value=3;
-  document.getElementById('lb-plan-revenue').value=1000000;
+  document.getElementById('lb-plan-revenue').value='1 000 000';
   document.getElementById('lb-passport').value='';
   document.getElementById('lb-passport-org').value='';
   document.getElementById('lb-passport-date').value='';
@@ -4279,7 +4317,7 @@ async function _saveLaborImpl(){
     passport_issued_by:document.getElementById('lb-passport-org').value,
     passport_issued_date:document.getElementById('lb-passport-date').value||null,
     probation_months:parseFloat(document.getElementById('lb-probation').value)||0,
-    plan_revenue:parseFloat(document.getElementById('lb-plan-revenue').value)||0,
+    plan_revenue:numVal('lb-plan-revenue'),
   };
   const { data, error } = await sbClient.from('labor').insert(record).select().single();
   if (error) { alert('Не удалось сохранить трудовой договор: '+error.message); return; }
@@ -4338,7 +4376,7 @@ function addTirType() { openModal('modal-add-tir-type'); }
 function saveNewTirType(){
   const name=document.getElementById('att-name').value.trim();
   if(!name){alert('Укажите название');return;}
-  TIR_TYPES.push({id:genId(),name,sheets:parseInt(document.getElementById('att-sheets').value)||0,priceRent:parseFloat(document.getElementById('att-price-rent').value)||0,priceMM:parseFloat(document.getElementById('att-price-mm').value)||0});
+  TIR_TYPES.push({id:genId(),name,sheets:parseInt(document.getElementById('att-sheets').value)||0,priceRent:numVal('att-price-rent'),priceMM:numVal('att-price-mm')});
   saveAll(); saveCompanySettings(); closeModal('modal-add-tir-type');
   renderSettings(); toast('Тип ТИР добавлен: '+name);
 }
@@ -4347,8 +4385,8 @@ function saveTirPrices(){
     const id=row.dataset.id;
     const t=TIR_TYPES.find(x=>x.id===id);
     if(t){
-      t.priceRent=parseFloat(row.querySelector('.pr-rent').value)||0;
-      t.priceMM=parseFloat(row.querySelector('.pr-mm').value)||0;
+      t.priceRent=parseFloat(unformatNumber(row.querySelector('.pr-rent').value))||0;
+      t.priceMM=parseFloat(unformatNumber(row.querySelector('.pr-mm').value))||0;
     }
   });
   saveAll(); saveCompanySettings(); toast('Цены сохранены');
@@ -4373,15 +4411,15 @@ function renderSettings(){
   if(tbody) tbody.innerHTML=TIR_TYPES.map(t=>`<tr class="tir-price-row" data-id="${t.id}">
     <td><b>${t.name}</b></td>
     <td>${t.sheets} листов</td>
-    <td><input class="pr-rent" type="number" value="${t.priceRent}" style="width:140px;padding:5px 8px;border:1px solid var(--border2);border-radius:6px;font-family:var(--mono);font-size:13px;"></td>
-    <td><input class="pr-mm" type="number" value="${t.priceMM}" style="width:140px;padding:5px 8px;border:1px solid var(--border2);border-radius:6px;font-family:var(--mono);font-size:13px;"></td>
+    <td><input class="pr-rent fmt-money" type="text" inputmode="numeric" value="${t.priceRent?formatNumberSpaces(String(t.priceRent)):''}" style="width:140px;padding:5px 8px;border:1px solid var(--border2);border-radius:6px;font-family:var(--mono);font-size:13px;"></td>
+    <td><input class="pr-mm fmt-money" type="text" inputmode="numeric" value="${t.priceMM?formatNumberSpaces(String(t.priceMM)):''}" style="width:140px;padding:5px 8px;border:1px solid var(--border2);border-radius:6px;font-family:var(--mono);font-size:13px;"></td>
     <td><button class="btn sm danger" onclick="deleteTirType('${t.id}')">Удалить</button></td>
   </tr>`).join('');
 
   // Populate dozv prices
   const dp=['epermit-rent','epermit-mm','paper-rent','paper-mm'];
   const dpKeys=['epermitRent','epermitMM','paperRent','paperMM'];
-  dp.forEach((id,i)=>{ const el=document.getElementById('dp-'+id); if(el) el.value=DOZ_PRICES[dpKeys[i]]||0; });
+  dp.forEach((id,i)=>{ setNumVal('dp-'+id, DOZ_PRICES[dpKeys[i]]||0); });
 
   const dtbody=document.getElementById('dozv-countries-tbody');
   if(dtbody) dtbody.innerHTML=DOZ_COUNTRIES.map(c=>`<tr>
@@ -4423,10 +4461,10 @@ function toUZS(amount, currency, customRate){
 }
 
 function saveDozPrices(){
-  DOZ_PRICES.epermitRent=parseFloat(document.getElementById('dp-epermit-rent').value)||0;
-  DOZ_PRICES.epermitMM=parseFloat(document.getElementById('dp-epermit-mm').value)||0;
-  DOZ_PRICES.paperRent=parseFloat(document.getElementById('dp-paper-rent').value)||0;
-  DOZ_PRICES.paperMM=parseFloat(document.getElementById('dp-paper-mm').value)||0;
+  DOZ_PRICES.epermitRent=numVal('dp-epermit-rent');
+  DOZ_PRICES.epermitMM=numVal('dp-epermit-mm');
+  DOZ_PRICES.paperRent=numVal('dp-paper-rent');
+  DOZ_PRICES.paperMM=numVal('dp-paper-mm');
   saveAll(); saveCompanySettings(); toast('Цены на дозволы сохранены');
 }
 
@@ -5199,9 +5237,9 @@ function openEditTransport(id){
     const csEl=document.getElementById('at-contract-start');if(csEl)csEl.value=t.contract_start||'';
     const ceEl=document.getElementById('at-contract-end');if(ceEl)ceEl.value=t.contract_end||'';
     const cnEl=document.getElementById('at-contract-num');if(cnEl)cnEl.value=t.contractNum||'';
-    const cpEl=document.getElementById('at-contract-price');if(cpEl)cpEl.value=t.contractPrice||'';
+    const cpEl=document.getElementById('at-contract-price');if(cpEl)cpEl.value=t.contractPrice?formatNumberSpaces(String(t.contractPrice)):'';
     const csrEl=document.getElementById('at-contract-status');if(csrEl)csrEl.value=t.contractStatus||'active';
-    const ppEl=document.getElementById('at-purchase-price');if(ppEl)ppEl.value=t.purchasePrice||'';
+    const ppEl=document.getElementById('at-purchase-price');if(ppEl)ppEl.value=t.purchasePrice?formatNumberSpaces(String(t.purchasePrice)):'';
     const bdEl=document.getElementById('at-balance-date');if(bdEl)bdEl.value=t.balanceDate||'';
     const asmapEl=document.getElementById('at-asmap-include');if(asmapEl)asmapEl.checked=!!t.asmapInclude;
     toggleTransportContractField();
@@ -5267,9 +5305,9 @@ async function _saveTransportImpl(){
     // Для отчётов бухгалтеру: договор аренды — только у "Аренда" (цена по договору,
     // не путать с абонентской платой ПС); балансовая стоимость — только у "ММ" (амортизация)
     contract_num: owner==='Аренда'?(document.getElementById('at-contract-num')?.value||null):null,
-    contract_price: owner==='Аренда'?(parseFloat(document.getElementById('at-contract-price')?.value)||null):null,
+    contract_price: owner==='Аренда'?(numVal('at-contract-price')||null):null,
     contract_status: owner==='Аренда'?(document.getElementById('at-contract-status')?.value||'active'):'active',
-    purchase_price: owner==='ММ'?(parseFloat(document.getElementById('at-purchase-price')?.value)||null):null,
+    purchase_price: owner==='ММ'?(numVal('at-purchase-price')||null):null,
     balance_date: owner==='ММ'?(document.getElementById('at-balance-date')?.value||null):null,
     asmap_include: document.getElementById('at-asmap-include')?.checked||false,
   };
@@ -5300,9 +5338,9 @@ async function updateTransport(id){
     contract_start: document.getElementById('at-contract-start')?.value||null,
     contract_end: contract_end||null,
     contract_num: owner==='Аренда'?(document.getElementById('at-contract-num')?.value||null):null,
-    contract_price: owner==='Аренда'?(parseFloat(document.getElementById('at-contract-price')?.value)||null):null,
+    contract_price: owner==='Аренда'?(numVal('at-contract-price')||null):null,
     contract_status: owner==='Аренда'?(document.getElementById('at-contract-status')?.value||'active'):'active',
-    purchase_price: owner==='ММ'?(parseFloat(document.getElementById('at-purchase-price')?.value)||null):null,
+    purchase_price: owner==='ММ'?(numVal('at-purchase-price')||null):null,
     balance_date: owner==='ММ'?(document.getElementById('at-balance-date')?.value||null):null,
     asmap_include: document.getElementById('at-asmap-include')?.checked||false,
   };
@@ -5645,7 +5683,7 @@ function openFleetEdit(id){
     <div class="form-row"><label>Тягач</label><select id="fe-truck-id" class="edit-field"><option value="">— не выбрано —</option>${truckOpts}</select></div>
     <div class="form-row"><label>Прицеп</label><select id="fe-trailer-id" class="edit-field"><option value="">— не выбрано —</option>${trailerOpts}</select></div>
     <div class="form-row"><label>Закреплённый водитель</label><select id="fe-driver" class="edit-field">${driverOpts}</select></div>
-    <div class="form-row"><label>Месячный план (сум)</label><input type="number" id="fe-plan" value="${f.plan}" class="edit-field"></div>
+    <div class="form-row"><label>Месячный план (сум)</label><input type="text" inputmode="numeric" class="fmt-money edit-field" id="fe-plan" value="${f.plan?formatNumberSpaces(String(f.plan)):''}"></div>
     <div class="form-row"><label>Тип оплаты</label>
       <select id="fe-plan-type" class="edit-field">
         <option value="paid" ${f.planType==='paid'?'selected':''}>Платный</option>
@@ -5668,7 +5706,7 @@ async function saveFleetEdit(){
       truck_id: document.getElementById('fe-truck-id').value || null,
       trailer_id: document.getElementById('fe-trailer-id').value || null,
       driver_id: document.getElementById('fe-driver')?.value || null,
-      plan: parseFloat(document.getElementById('fe-plan').value)||0,
+      plan: numVal('fe-plan'),
       plan_type: document.getElementById('fe-plan-type').value,
       contract_end: document.getElementById('fe-contract').value || null,
       note: document.getElementById('fe-note').value || '',
@@ -5695,7 +5733,7 @@ async function _saveFleetImpl(){
   if(!kg){alert('Выберите контрагента');return;}
   const truckId=document.getElementById('af-truck').value||'';
   const trailerId=document.getElementById('af-trailer').value||'';
-  const plan=parseFloat(document.getElementById('af-plan').value)||0;
+  const plan=numVal('af-plan');
   const planType=kg.type==='mm'?'mm':document.getElementById('af-plantype').value;
   const contract_end=document.getElementById('af-contract').value||kg.contract_end||'';
   const label=document.getElementById('af-label')?.value||
@@ -5757,7 +5795,7 @@ function openKontragentOp(id){
 
 async function _saveKontragentOpImpl(){
   const k=KONTRAGENTY.find(x=>x.id===_kopId); if(!k) return;
-  const amount=parseFloat(document.getElementById('kop-amount').value)||0;
+  const amount=numVal('kop-amount');
   if(!amount){alert('Укажите сумму');return;}
   const newOps = [...(k.ops||[]), {id:genId(),type:document.getElementById('kop-type').value,amount,date:document.getElementById('kop-date').value,desc:document.getElementById('kop-desc').value}];
   const { error } = await sbClient.from('kontragenty').update({ ops: newOps }).eq('id', k.id);
@@ -6420,14 +6458,14 @@ function printFleetHistory(){
 function openBalanceAdjust(){
   const f=FLEET.find(x=>x.id===_fhFleetId); if(!f) return;
   document.getElementById('ba-current').textContent='Текущий баланс: '+fmtN(f.balance)+' сум'+(f.balance<0?' (долг)':f.balance>0?' (переплата)':'');
-  document.getElementById('ba-new-balance').value=f.balance;
+  document.getElementById('ba-new-balance').value=formatNumberSpaces(String(Math.round(f.balance||0)));
   document.getElementById('ba-date').value=todayStr;
   document.getElementById('ba-reason').value='';
   openModal('modal-balance-adjust');
 }
 async function _saveBalanceAdjustImpl(){
   const f=FLEET.find(x=>x.id===_fhFleetId); if(!f) return;
-  const newBalance=parseFloat(document.getElementById('ba-new-balance').value);
+  const newBalance=parseFloat(unformatNumber(document.getElementById('ba-new-balance').value));
   if(isNaN(newBalance)){alert('Укажите правильный остаток');return;}
   const reason=document.getElementById('ba-reason').value.trim();
   if(!reason){alert('Укажите причину корректировки');return;}
@@ -6466,14 +6504,14 @@ function openEditFinanceEntry(id){
   document.getElementById('ef-info').textContent=typeLabel+' · '+o.person+(o.desc?' · '+o.desc:'');
   document.getElementById('ef-amount-label').textContent=isCharge?'Сумма начисления (сум)':'Сумма (сум)';
   document.getElementById('ef-date').value=o.date||'';
-  document.getElementById('ef-amount').value=isCharge?o.amount:o.paid;
+  setNumVal('ef-amount', isCharge?o.amount:o.paid);
   document.getElementById('ef-desc').value=o.desc||'';
   openModal('modal-edit-finance');
 }
 async function _saveFinanceEntryEditImpl(){
   const o=FINANCE.find(x=>x.id===_editFinanceId); if(!o) return;
   const newDate=document.getElementById('ef-date').value||o.date;
-  const newAmount=parseFloat(document.getElementById('ef-amount').value)||0;
+  const newAmount=numVal('ef-amount');
   const newDesc=document.getElementById('ef-desc').value;
   if(!newAmount){alert('Укажите сумму');return;}
   const isCharge=o.type==='charge';
@@ -6846,7 +6884,7 @@ function renderKassa(){
 }
 
 async function _saveExpenseImpl(){
-  const amount=parseFloat(document.getElementById('exp-amount').value)||0;
+  const amount=numVal('exp-amount');
   if(!amount){alert('Укажите сумму');return;}
   const { data, error } = await sbClient.from('kassa').insert({
     company_id:CURRENT_PROFILE.company_id, wallet:document.getElementById('exp-wallet').value, type:'expense',
@@ -6871,7 +6909,7 @@ function openKassaIncomeModal(){
 }
 
 async function _saveKassaIncomeModalImpl(){
-  const amount=parseFloat(document.getElementById('ki-amount').value)||0;
+  const amount=numVal('ki-amount');
   if(!amount){alert('Укажите сумму');return;}
   const { data, error } = await sbClient.from('kassa').insert({
     company_id:CURRENT_PROFILE.company_id,
@@ -7659,7 +7697,7 @@ async function _generateMintransRegistryImpl(){
 async function _saveKassaTransferImpl(){
   const from=document.getElementById('kt-from').value;
   const to=document.getElementById('kt-to').value;
-  const amount=parseFloat(document.getElementById('kt-amount').value)||0;
+  const amount=numVal('kt-amount');
   if(!amount){alert('Укажите сумму');return;}
   if(from===to){alert('Нельзя переводить в тот же кошелёк');return;}
   const date=document.getElementById('kt-date').value||todayStr;
@@ -7691,22 +7729,20 @@ function renderTirBuyPrices(){
   if(!block) return;
   block.innerHTML=TIR_TYPES.map(t=>`
     <div class="form-row"><label style="font-size:11px">${t.name} (покупная, сум)</label>
-    <input type="number" id="buy-tir-${t.id}" value="${(BUY_PRICES.tir&&BUY_PRICES.tir[t.id])||0}" 
+    <input type="text" inputmode="numeric" class="fmt-money" id="buy-tir-${t.id}" value="${formatNumberSpaces(String((BUY_PRICES.tir&&BUY_PRICES.tir[t.id])||0))}"
     style="width:100%;padding:6px 8px;border:1px solid var(--border2);border-radius:var(--radius);font-family:var(--mono);font-size:13px"></div>`).join('');
-  const be=document.getElementById('buy-epermit');
-  if(be) be.value=BUY_PRICES.epermit||0;
-  const bp=document.getElementById('buy-paper');
-  if(bp) bp.value=BUY_PRICES.paper||0;
+  setNumVal('buy-epermit', BUY_PRICES.epermit||0);
+  setNumVal('buy-paper', BUY_PRICES.paper||0);
 }
 
 function saveTirBuyPrices(){
   if(!BUY_PRICES.tir) BUY_PRICES.tir={};
-  TIR_TYPES.forEach(t=>{ const el=document.getElementById('buy-tir-'+t.id); if(el) BUY_PRICES.tir[t.id]=parseFloat(el.value)||0; });
+  TIR_TYPES.forEach(t=>{ const el=document.getElementById('buy-tir-'+t.id); if(el) BUY_PRICES.tir[t.id]=parseFloat(unformatNumber(el.value))||0; });
   sv('mm_buy_prices',BUY_PRICES); saveCompanySettings(); toast('Покупные цены ТИР сохранены');
 }
 function saveDozBuyPrices(){
-  BUY_PRICES.epermit=parseFloat(document.getElementById('buy-epermit').value)||0;
-  BUY_PRICES.paper=parseFloat(document.getElementById('buy-paper').value)||0;
+  BUY_PRICES.epermit=numVal('buy-epermit');
+  BUY_PRICES.paper=numVal('buy-paper');
   sv('mm_buy_prices',BUY_PRICES); saveCompanySettings(); toast('Покупные цены ДОЗВОЛ сохранены');
 }
 
@@ -8636,7 +8672,7 @@ function onTripFleetChange(){
   const kmEl = document.getElementById('tr-km-start');
   const hint = document.getElementById('tr-km-hint');
   if(mileage>0){
-    if(kmEl&&!kmEl.value) kmEl.value = mileage;
+    if(kmEl&&!kmEl.value) kmEl.value = formatNumberSpaces(String(mileage));
     if(hint) hint.textContent = `Текущий пробег тягача: ${fmtN(mileage)} км`;
   } else {
     if(hint) hint.textContent = 'Пробег тягача не указан';
@@ -8668,7 +8704,7 @@ async function _saveTripImpl(){
     fleet_id: fleetId||null, truck_id: truckId||null, trailer_id: trailerId||null,
     driver_id: document.getElementById('tr-driver').value||null,
     load_date: loadDate, unload_date: null,
-    km_start: parseFloat(document.getElementById('tr-km-start').value)||0, km_end:0,
+    km_start: numVal('tr-km-start'), km_end:0,
     fuel_start: parseFloat(document.getElementById('tr-fuel-start').value)||0, fuel_end:0,
     adblue_start: parseFloat(document.getElementById('tr-adblue-start').value)||0, adblue_end:0,
     advance_paid:0, note: document.getElementById('tr-note').value||'',
@@ -8677,7 +8713,7 @@ async function _saveTripImpl(){
   if (tripErr) { alert('Не удалось создать рейс: '+tripErr.message); return; }
   const legRecord = {
     trip_id: tripData.id, leg_num:1, from_point:from, to_point:to, client_id: clientId||null,
-    rate: parseFloat(document.getElementById('tr-rate').value)||0, rate_final:0,
+    rate: numVal('tr-rate'), rate_final:0,
     cargo: document.getElementById('tr-cargo').value||'', load_date: loadDate, unload_date: null,
   };
   const { data: legData, error: legErr } = await sbClient.from('trip_legs').insert(legRecord).select().single();
@@ -8694,7 +8730,7 @@ function toggleFuelFields(cat){
   if(fb) fb.style.display=cat==='fuel'?'block':'none';
 }
 function calcFuelPrice(){
-  const amount=parseFloat(document.getElementById('te-amount').value)||0;
+  const amount=numVal('te-amount');
   const liters=parseFloat(document.getElementById('te-liters').value)||0;
   const currency=(document.getElementById('te-currency')||{}).value||'UZS';
   const customRate=parseFloat((document.getElementById('te-custom-rate')||{}).value)||0;
@@ -8750,7 +8786,7 @@ function editTripExpense(tripId,expId){
   document.getElementById('te-date').value=exp.date||todayStr;
   document.getElementById('te-cat').value=exp.cat||'fuel';
   document.getElementById('te-currency').value=exp.currency||'UZS';
-  document.getElementById('te-amount').value=exp.amountOrig!=null?exp.amountOrig:exp.amount;
+  setNumVal('te-amount', exp.amountOrig!=null?exp.amountOrig:exp.amount);
   document.getElementById('te-custom-rate').value=exp.customRate||'';
   document.getElementById('te-liters').value=exp.liters||'';
   document.getElementById('te-country').value=exp.country||'';
@@ -8765,7 +8801,7 @@ function finishTripCheck(){
   const trip=TRIPS.find(t=>t.id===_finishTripId);if(!trip)return;
   const kmEndEl=document.getElementById('tf-km-end');
   const fuelEndEl=document.getElementById('tf-fuel-end');
-  const kmEnd=kmEndEl&&kmEndEl.value!==''?parseFloat(kmEndEl.value):null;
+  const kmEnd=kmEndEl&&kmEndEl.value!==''?parseFloat(unformatNumber(kmEndEl.value)):null;
   const fuelEnd=fuelEndEl&&fuelEndEl.value!==''?parseFloat(fuelEndEl.value):null;
   const warnings=[];
   if(!kmEnd) warnings.push('• Конечный пробег не указан');
@@ -8779,7 +8815,7 @@ function finishTripCheck(){
   finishTrip();
 }
 async function _saveTripExpenseImpl(){
-  const amount=parseFloat(document.getElementById('te-amount').value)||0;
+  const amount=numVal('te-amount');
   if(!amount){alert('Укажите сумму');return;}
   const trip=TRIPS.find(t=>t.id===_expTripId);if(!trip)return;
   const currency=(document.getElementById('te-currency')||{}).value||'UZS';
@@ -8864,7 +8900,7 @@ function openAddLeg(tripId){
   document.getElementById('tl-date').value=todayStr;
   document.getElementById('tl-rate').value='';
   document.getElementById('tl-cargo').value='';
-  const clients=KONTRAGENTY.filter(k=>k.active!==false);
+  const clients=KONTRAGENTY.filter(k=>k.active!==false&&(k.type==='client'||k.type==='other'));
   document.getElementById('tl-client').innerHTML='<option value="">— без клиента —</option>'+clients.map(k=>`<option value="${k.id}">${k.name}</option>`).join('');
   const info=document.getElementById('tl-info');
   if(info){
@@ -8883,9 +8919,9 @@ function editTripLeg(tripId,legIdx){
   document.getElementById('tl-from').value=leg.from||'';
   document.getElementById('tl-to').value=leg.to||'';
   document.getElementById('tl-date').value=leg.loadDate||todayStr;
-  document.getElementById('tl-rate').value=leg.rateFinal||leg.rate||'';
+  document.getElementById('tl-rate').value=(leg.rateFinal||leg.rate)?formatNumberSpaces(String(leg.rateFinal||leg.rate)):'';
   document.getElementById('tl-cargo').value=leg.cargo||'';
-  const clients=KONTRAGENTY.filter(k=>k.active!==false);
+  const clients=KONTRAGENTY.filter(k=>k.active!==false&&(k.type==='client'||k.type==='other'));
   document.getElementById('tl-client').innerHTML='<option value="">— без клиента —</option>'+clients.map(k=>`<option value="${k.id}" ${leg.clientId===k.id?'selected':''}>${k.name}</option>`).join('');
   const info=document.getElementById('tl-info');
   if(info){
@@ -8900,7 +8936,7 @@ async function _saveTripLegImpl(){
   if(!from||!to){alert('Укажите откуда и куда');return;}
   const trip=TRIPS.find(t=>t.id===_legTripId);if(!trip)return;
   trip.legs=trip.legs||[];
-  const rate=parseFloat(document.getElementById('tl-rate').value)||0;
+  const rate=numVal('tl-rate');
   const clientId=document.getElementById('tl-client').value||'';
   const cargo=document.getElementById('tl-cargo').value||'';
   const loadDate=document.getElementById('tl-date').value||todayStr;
@@ -8986,7 +9022,7 @@ function openTripPayment(tripId){
   const trip=TRIPS.find(t=>t.id===tripId);if(!trip)return;
   const income=tripTotalIncome(trip),paid=tripTotalPaid(trip),debt=income-paid;
   document.getElementById('tp-date').value=todayStr;
-  document.getElementById('tp-amount').value=debt>0?debt:'';
+  document.getElementById('tp-amount').value=debt>0?formatNumberSpaces(String(debt)):'';
   document.getElementById('tp-note').value='';
   document.getElementById('tp-wallet').value='bank';
   const legs=trip.legs||[];
@@ -9006,7 +9042,7 @@ function openTripPayment(tripId){
   openModal('modal-trip-payment');
 }
 async function _saveTripPaymentImpl(){
-  const amount=parseFloat(document.getElementById('tp-amount').value)||0;
+  const amount=numVal('tp-amount');
   if(!amount){alert('Укажите сумму');return;}
   const trip=TRIPS.find(t=>t.id===_payTripId);if(!trip)return;
   const legIdx=parseInt(document.getElementById('tp-leg').value)||0;
@@ -9035,7 +9071,7 @@ function calcTripFinish(){
   const trip=TRIPS.find(t=>t.id===_finishTripId);if(!trip)return;
   const kmStart=trip.kmStart||0;
   const kmEndEl=document.getElementById('tf-km-end');
-  const kmEnd=kmEndEl&&kmEndEl.value!==''?parseFloat(kmEndEl.value)||0:trip.kmEnd||0;
+  const kmEnd=kmEndEl&&kmEndEl.value!==''?parseFloat(unformatNumber(kmEndEl.value))||0:trip.kmEnd||0;
   const fuelStart=trip.fuelStart||0;
   const fuelEndEl=document.getElementById('tf-fuel-end');
   const fuelEnd=fuelEndEl&&fuelEndEl.value!==''?parseFloat(fuelEndEl.value)||0:trip.fuelEnd||0;
@@ -9051,10 +9087,10 @@ function calcTripFinish(){
   let totalIncome=0;
   legs.forEach((l,i)=>{
     const rateEl=el('tf-leg-rate-'+i);
-    totalIncome+=rateEl?parseFloat(rateEl.value)||l.rate||0:l.rate||0;
+    totalIncome+=rateEl?parseFloat(unformatNumber(rateEl.value))||l.rate||0:l.rate||0;
   });
-  const salary=parseFloat((el('tf-salary')||{}).value)||0;
-  const cashReturn=parseFloat((el('tf-cash-return')||{}).value)||0;
+  const salary=numVal('tf-salary');
+  const cashReturn=numVal('tf-cash-return');
   const expenses=tripTotalExpenses(trip);
   const profit=totalIncome-(expenses+salary);
   if(el('tf-calc-income')) el('tf-calc-income').textContent=fmtN(totalIncome);
@@ -9092,8 +9128,8 @@ function openFinishTrip(tripId){
   // Важно: используем >=0 / !=null, а не >0 / || — иначе законное значение "0"
   // (например, приехал на пустой бак) ошибочно показывалось бы как пустое поле,
   // и проверка при завершении решала бы, что данные не заполнены.
-  if(kmStartEl) kmStartEl.value=(trip.kmStart!=null&&trip.kmStart>=0)?trip.kmStart:'';
-  if(kmEndEl)   kmEndEl.value=(trip.kmEnd!=null&&trip.kmEnd>0)?trip.kmEnd:'';
+  if(kmStartEl) kmStartEl.value=(trip.kmStart!=null&&trip.kmStart>=0)?formatNumberSpaces(String(trip.kmStart)):'';
+  if(kmEndEl)   kmEndEl.value=(trip.kmEnd!=null&&trip.kmEnd>0)?formatNumberSpaces(String(trip.kmEnd)):'';
   if(fuelStartEl) fuelStartEl.value=(trip.fuelStart!=null&&trip.fuelStart>=0)?trip.fuelStart:'';
   if(fuelEndEl)   fuelEndEl.value=(trip.fuelEnd!=null&&trip.fuelEnd>=0)?trip.fuelEnd:'';
   document.getElementById('tf-adblue-end').value=(trip.adblueEnd!=null&&trip.adblueEnd>=0)?trip.adblueEnd:'';
@@ -9118,7 +9154,7 @@ function openFinishTrip(tripId){
   const retRow=document.getElementById('tf-ret-rate-row');
   if(retRow)retRow.innerHTML=legs.map((l,i)=>`
     <div class="form-row"><label>Ставка — плечо ${l.num||i+1} (${l.from}→${l.to})</label>
-    <input type="number" id="tf-leg-rate-${i}" value="${l.rateFinal||l.rate||''}" placeholder="0" oninput="calcTripFinish()"></div>
+    <input type="text" inputmode="numeric" class="fmt-money" id="tf-leg-rate-${i}" value="${(l.rateFinal||l.rate)?formatNumberSpaces(String(l.rateFinal||l.rate)):''}" placeholder="0" oninput="calcTripFinish()"></div>
   `).join('');
   const route=legs.map(l=>`${l.from}→${l.to}`).join(' ↩️ ');
   document.getElementById('tf-summary').innerHTML=`<div class="info-box">
@@ -9134,22 +9170,22 @@ function openFinishTrip(tripId){
 async function _finishTripImpl(){
   const trip=TRIPS.find(t=>t.id===_finishTripId);if(!trip)return;
   const unloadDate=document.getElementById('tf-unload-date').value||todayStr;
-  const kmEndVal=document.getElementById('tf-km-end').value;
+  const kmEndVal=unformatNumber(document.getElementById('tf-km-end').value);
   const fuelEndVal=document.getElementById('tf-fuel-end').value;
   const kmEnd=kmEndVal!==''?parseFloat(kmEndVal):trip.kmEnd||0;
   const fuelEnd=fuelEndVal!==''?parseFloat(fuelEndVal):trip.fuelEnd||0;
   const adblueEnd=parseFloat(document.getElementById('tf-adblue-end').value)||trip.adblueEnd||0;
   const note=document.getElementById('tf-note').value;
   // ЗП водителю
-  const salaryVal=parseFloat((document.getElementById('tf-salary')||{}).value)||0;
+  const salaryVal=numVal('tf-salary');
   const salaryWallet=(document.getElementById('tf-salary-wallet')||{}).value||'cash';
-  const cashReturnVal=parseFloat((document.getElementById('tf-cash-return')||{}).value)||0;
+  const cashReturnVal=numVal('tf-cash-return');
   const finalNote = note?(trip.note?trip.note+' | ':'')+note:trip.note;
 
   // Сохраняем финальные ставки по плечам
   for(const [i,l] of (trip.legs||[]).entries()){
     const rateEl=document.getElementById(`tf-leg-rate-${i}`);
-    const rateFinal = rateEl?parseFloat(rateEl.value)||l.rate||0 : l.rateFinal;
+    const rateFinal = rateEl?parseFloat(unformatNumber(rateEl.value))||l.rate||0 : l.rateFinal;
     const { error } = await sbClient.from('trip_legs').update({ rate_final:rateFinal, unload_date:unloadDate }).eq('id', l.id);
     if (error) { alert('Не удалось сохранить ставку по плечу: '+error.message); return; }
     l.rateFinal=rateFinal; l.unloadDate=unloadDate;
@@ -9389,7 +9425,7 @@ function editTripSurcharge(tripId,surchId){
   document.getElementById('ts-type').value=s.type||'charge';
   document.getElementById('ts-cat').value=s.cat||'other';
   document.getElementById('ts-date').value=s.date||todayStr;
-  document.getElementById('ts-amount').value=s.amount||'';
+  document.getElementById('ts-amount').value=s.amount?formatNumberSpaces(String(s.amount)):'';
   document.getElementById('ts-note').value=s.note||'';
   const legSel=document.getElementById('ts-leg');
   legSel.innerHTML=(trip.legs||[]).map((l,i)=>`<option value="${i}">Плечо ${l.num||i+1}: ${l.from}→${l.to}</option>`).join('');
@@ -9397,7 +9433,7 @@ function editTripSurcharge(tripId,surchId){
   openModal('modal-trip-surcharge');
 }
 async function _saveTripSurchargeImpl(){
-  const amount=parseFloat(document.getElementById('ts-amount').value)||0;
+  const amount=numVal('ts-amount');
   if(!amount){alert('Укажите сумму');return;}
   const trip=TRIPS.find(t=>t.id===_surchTripId);if(!trip)return;
   const legIdx=parseInt(document.getElementById('ts-leg').value)||0;
@@ -9736,7 +9772,7 @@ function openKassaPayoutModal(){
   openModal('modal-kassa-payout');
 }
 async function _saveKassaPayoutImpl(){
-  const amount=parseFloat(document.getElementById('kp-amount').value)||0;
+  const amount=numVal('kp-amount');
   if(!amount){alert('Укажите сумму');return;}
   const wallet=document.getElementById('kp-wallet').value;
   const to=document.getElementById('kp-to').value;
@@ -9926,7 +9962,7 @@ function updateMaintNextHint(){
   const intervalEl = document.getElementById('mn-next-interval');
   const hint = document.getElementById('mn-next-hint');
   if(!hint) return;
-  const mileage = parseFloat((mileageEl||{}).value)||0;
+  const mileage = parseFloat(unformatNumber((mileageEl||{}).value))||0;
   const interval = parseFloat((intervalEl||{}).value)||0;
   if(mileage>0&&interval>0){
     const next = mileage+interval;
@@ -10104,7 +10140,7 @@ function onMaintTransportChange(){
   const mileage = getTransportMileage(transportId);
   const hint    = document.getElementById('mn-mileage-hint');
   const mileageEl = document.getElementById('mn-mileage');
-  if(mileageEl&&!mileageEl.value) mileageEl.value=mileage>0?mileage:'';
+  if(mileageEl&&!mileageEl.value) mileageEl.value=mileage>0?formatNumberSpaces(String(mileage)):'';
   if(hint) hint.textContent=mileage>0?`Текущий пробег по данным системы: ${fmtN(mileage)} км`:'';
   // Интервал из настроек транспорта
   const t = TRANSPORT.find(x=>x.id===transportId);
@@ -10131,7 +10167,7 @@ async function _saveMaintImpl(){
   const hasDesc = _maintItems.every(i=>i.desc&&i.desc.trim());
   if(!hasDesc){alert('Укажите описание для каждой работы');return;}
 
-  const mileage   = parseFloat(document.getElementById('mn-mileage').value)||0;
+  const mileage   = numVal('mn-mileage');
   const status    = document.getElementById('mn-status').value;
   const serviceId = document.getElementById('mn-service').value;
   const wallet    = document.getElementById('mn-wallet').value;
@@ -10218,7 +10254,7 @@ function openEditMaint(id){
   document.getElementById('mn-type').value=m.type;
   document.getElementById('mn-date').value=m.date;
   document.getElementById('mn-status').value=m.status;
-  document.getElementById('mn-mileage').value=m.mileage||'';
+  document.getElementById('mn-mileage').value=m.mileage?formatNumberSpaces(String(m.mileage)):'';
   document.getElementById('mn-downtime').value=m.downtime||'';
   document.getElementById('mn-wallet').value=m.wallet||'';
   document.getElementById('mn-next-interval').value=m.intervalKm||'';
@@ -10266,12 +10302,12 @@ function openUpdateMileage(transportId){
   const current=getTransportMileage(transportId);
   document.getElementById('um-title').textContent=`📏 Пробег: ${t?t.callsign:''}`;
   document.getElementById('um-info').innerHTML=`<div class="info-box">Текущий пробег: <b>${current>0?fmtN(current)+' км':'не указан'}</b></div>`;
-  document.getElementById('um-mileage').value=current>0?current:'';
+  document.getElementById('um-mileage').value=current>0?formatNumberSpaces(String(current)):'';
   openModal('modal-update-mileage');
 }
 
 async function saveUpdateMileage(){
-  const val=parseFloat(document.getElementById('um-mileage').value)||0;
+  const val=numVal('um-mileage');
   if(!val){alert('Введите пробег');return;}
   const current=getTransportMileage(_updateMileageTransportId);
   if(val<current){if(!confirm(`Новый пробег (${fmtN(val)} км) меньше текущего (${fmtN(current)} км). Продолжить?`))return;}
