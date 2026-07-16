@@ -717,6 +717,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
           <button class="vt-btn active" id="people-view-card" onclick="setPeopleView('card',this)" title="Карточки">⊞</button>
           <button class="vt-btn" id="people-view-list" onclick="setPeopleView('list',this)" title="Список">≡</button>
         </div>
+        <button class="btn" onclick="exportDriversReport()" title="ФИО, ПИНФЛ, паспорт, права — для бухгалтерии">🧾 Отчёт для бухгалтерии</button>
         <button class="btn primary" onclick="resetPersonModal();openModal('modal-add-person')">+ Добавить водителя</button>
       </div>
     </div>
@@ -5320,7 +5321,7 @@ async function exportNdflReport(){
   }).sort((a,b)=>(a.kg?.name||'').localeCompare(b.kg?.name||'')||a.t.callsign.localeCompare(b.t.callsign));
 
   const columns=[
-    {header:'№', width:5}, {header:'Позывной', width:12}, {header:'АРЕНДОДАТЕЛЬ', width:32},
+    {header:'№', width:5}, {header:'Позывной', width:14}, {header:'АРЕНДОДАТЕЛЬ', width:32},
     {header:'ПИНФЛ / ИНН', width:16}, {header:'Гос номер АТС', width:16}, {header:'Марка АТС', width:16},
     {header:'№ договора', width:18}, {header:'Начало', width:12}, {header:'Окончание', width:12},
     {header:'Цена по договору аренды', width:18},
@@ -5328,13 +5329,14 @@ async function exportNdflReport(){
   const rows=sorted.map((r,i)=>{
     const statusLabel=CONTRACT_STATUS_LABEL[r.t.contractStatus];
     return [i+1, r.t.callsign, r.kg?r.kg.name:'', r.kg?r.kg.pinfl:'', r.t.plate, r.t.brand,
-      r.t.contractNum||'', r.t.contract_start||'', r.t.contract_end||'',
+      r.t.contractNum||'', r.t.contract_start?fmt(r.t.contract_start):'', r.t.contract_end?fmt(r.t.contract_end):'',
       statusLabel!=null?statusLabel:(r.t.contractPrice||'')];
   });
 
   const wb=new ExcelJS.Workbook();
   const ws=wb.addWorksheet('Аренда', {pageSetup:{orientation:'landscape', fitToPage:true, fitToWidth:1, fitToHeight:0}});
-  addSmartTable(ws, 1, columns, rows, 'NdflTable');
+  addReportTitle(ws, 'A1:J1', `Отчёт по арендованному транспорту для НДФЛ по состоянию на ${fmt(todayStr)}`);
+  buildStyledReportTable(ws, {startRow:3, columns, rows, tableName:'NdflTable'});
 
   const buffer=await wb.xlsx.writeBuffer();
   downloadXlsxBuffer(buffer, `Отчёт_аренда_НДФЛ_${todayStr}.xlsx`);
@@ -5351,15 +5353,16 @@ async function exportDepreciationReport(){
   const sorted=[...owned].sort((a,b)=>a.callsign.localeCompare(b.callsign));
 
   const columns=[
-    {header:'№', width:5}, {header:'Позывной', width:12}, {header:'Гос номер АТС', width:16},
+    {header:'№', width:5}, {header:'Позывной', width:14}, {header:'Гос номер АТС', width:16},
     {header:'Марка', width:16}, {header:'Модель', width:16}, {header:'Год выпуска', width:12},
     {header:'VIN', width:20}, {header:'Дата постановки на баланс', width:22}, {header:'Балансовая стоимость', width:18},
   ];
-  const rows=sorted.map((t,i)=>[i+1, t.callsign, t.plate, t.brand, t.model, t.year||'', t.vin||'', t.balanceDate||'', t.purchasePrice||'']);
+  const rows=sorted.map((t,i)=>[i+1, t.callsign, t.plate, t.brand, t.model, t.year||'', t.vin||'', t.balanceDate?fmt(t.balanceDate):'', t.purchasePrice||'']);
 
   const wb=new ExcelJS.Workbook();
   const ws=wb.addWorksheet('Амортизация', {pageSetup:{orientation:'landscape', fitToPage:true, fitToWidth:1, fitToHeight:0}});
-  addSmartTable(ws, 1, columns, rows, 'DepreciationTable');
+  addReportTitle(ws, 'A1:I1', `Отчёт по амортизации собственного транспорта по состоянию на ${fmt(todayStr)}`);
+  buildStyledReportTable(ws, {startRow:3, columns, rows, tableName:'DepreciationTable'});
 
   const buffer=await wb.xlsx.writeBuffer();
   downloadXlsxBuffer(buffer, `Отчёт_амортизация_${todayStr}.xlsx`);
@@ -5367,7 +5370,7 @@ async function exportDepreciationReport(){
 
 // "Умная таблица" Excel (настоящий Table-объект — полосатые строки, стрелки
 // фильтра в заголовке) вместо просто жирного текста в первой строке. Общий helper
-// для всех отчётов бухгалтеру/АСМАП — всегда начинается со столбца A.
+// для всех отчётов бухгалтеру/АСМАП/шаблона импорта — всегда начинается со столбца A.
 function addSmartTable(ws, startRow, columns, rows, tableName){
   ws.addTable({
     name: tableName, ref: `A${startRow}`, headerRow: true, totalsRow: false,
@@ -5376,6 +5379,57 @@ function addSmartTable(ws, startRow, columns, rows, tableName){
     rows,
   });
   columns.forEach((c,i)=>{ ws.getColumn(i+1).width=c.width||14; });
+}
+
+// Единое оформление всех Excel-файлов (отчёты бухгалтеру/АСМАП, шаблон импорта):
+// рамки на каждой ячейке, шапка с серой заливкой, данные по центру с переносом
+// строк, чередование строк светло-голубой/белый (нарочно ручное — не полагаемся
+// на то, какой оттенок случайно даст встроенная тема Excel), Arial везде.
+const REPORT_STRIPE_FILL={type:'pattern', pattern:'solid', fgColor:{argb:'FFDCEEFB'}};
+const REPORT_HEADER_FILL={type:'pattern', pattern:'solid', fgColor:{argb:'FFE8E8E8'}};
+const THIN_BORDER_SIDE={style:'thin'};
+const THIN_BORDER={top:THIN_BORDER_SIDE,left:THIN_BORDER_SIDE,right:THIN_BORDER_SIDE,bottom:THIN_BORDER_SIDE};
+
+// Высота строки — не по числу явных переносов "\n", а по реально ожидаемому
+// переносу текста внутри ширины колонки, иначе многострочные ячейки обрезаются.
+function estimateLines(text, colWidth){
+  if(!text) return 1;
+  const charsPerLine=Math.max(6, Math.floor(colWidth*1.1));
+  return String(text).split('\n').reduce((sum,line)=>sum+Math.max(1,Math.ceil(line.length/charsPerLine)),0);
+}
+
+function addReportTitle(ws, mergeRange, text){
+  ws.mergeCells(mergeRange);
+  const cell=ws.getCell(mergeRange.split(':')[0]);
+  cell.value=text;
+  cell.font={bold:true, size:13, name:'Arial'};
+  cell.alignment={horizontal:'center', vertical:'middle'};
+}
+
+function buildStyledReportTable(ws, {startRow, columns, rows, tableName}){
+  addSmartTable(ws, startRow, columns, rows, tableName);
+  const headerRow=ws.getRow(startRow);
+  headerRow.height=28;
+  headerRow.eachCell(cell=>{
+    cell.font={bold:true, size:10, name:'Arial'};
+    cell.alignment={horizontal:'center', vertical:'middle', wrapText:true};
+    cell.fill=REPORT_HEADER_FILL;
+    cell.border=THIN_BORDER;
+  });
+  const dataStartRow=startRow+1;
+  rows.forEach((rowValues,i)=>{
+    const rowIdx=dataStartRow+i;
+    let maxLines=1;
+    rowValues.forEach((v,ci)=>{
+      const cell=ws.getCell(rowIdx, ci+1);
+      cell.font={size:9, name:'Arial'};
+      cell.alignment={horizontal:'center', vertical:'middle', wrapText:true};
+      cell.border=THIN_BORDER;
+      if(i%2===1) cell.fill=REPORT_STRIPE_FILL;
+      maxLines=Math.max(maxLines, estimateLines(v, columns[ci].width));
+    });
+    ws.getRow(rowIdx).height=Math.max(18, maxLines*12+8);
+  });
 }
 
 function downloadXlsxBuffer(buffer, filename){
@@ -5411,10 +5465,7 @@ async function exportAsmapReport(){
   const wb=new ExcelJS.Workbook();
   const ws=wb.addWorksheet('АСМАП', {pageSetup:{orientation:'landscape', fitToPage:true, fitToWidth:1, fitToHeight:0}});
 
-  ws.mergeCells('A1:J1');
-  ws.getCell('A1').value=`Сведения по подвижному составу для АСМАП по состоянию на ${fmt(todayStr)}`;
-  ws.getCell('A1').font={bold:true, size:13, name:'Arial'};
-  ws.getCell('A1').alignment={horizontal:'center', vertical:'middle'};
+  addReportTitle(ws, 'A1:J1', `Сведения по подвижному составу для АСМАП по состоянию на ${fmt(todayStr)}`);
 
   ws.mergeCells('A2:J2');
   ws.getCell('A2').value=`Собственных (тягачи+прицепы+п/прицепы): ${totalOwn} — тягачей ${counters['ММ'].Тягач}, прицепов ${counters['ММ'].Прицеп}, п/прицепов ${counters['ММ'].Полуприцеп}.  `+
@@ -5451,48 +5502,12 @@ async function exportAsmapReport(){
       : 'Собственность компании';
     return [i+1, t.callsign, t.type, regData, brandModel, t.year||'', factoryNums, licData, svidData, ownData];
   });
-  addSmartTable(ws, 4, columns, rows, 'AsmapTable');
-
-  // Оформление под образец: рамки на каждой ячейке, заливка заголовка, текст по
-  // центру (как в реальном файле АСМАП, а не только сверху-слева), перенос строк.
-  // Высота строки считается не по числу "\n", а по реально ожидаемому переносу
-  // текста внутри ширины колонки — иначе многострочные ячейки обрезаются визуально.
-  const estimateLines=(text,colWidth)=>{
-    if(!text) return 1;
-    const charsPerLine=Math.max(6, Math.floor(colWidth*1.1));
-    return String(text).split('\n').reduce((sum,line)=>sum+Math.max(1,Math.ceil(line.length/charsPerLine)),0);
-  };
-  const thin={style:'thin'};
-  const headerRow=ws.getRow(4);
-  headerRow.height=30;
-  headerRow.eachCell(cell=>{
-    cell.font={bold:true, size:10, name:'Arial'};
-    cell.alignment={horizontal:'center', vertical:'middle', wrapText:true};
-    cell.fill={type:'pattern', pattern:'solid', fgColor:{argb:'FFE8E8E8'}};
-    cell.border={top:thin,left:thin,right:thin,bottom:thin};
-  });
-  const dataStartRow=5;
-  // Чередование строк красим сами (светло-голубой/белый) вместо того, чтобы
-  // полагаться на цвет встроенной темы Excel — так точно тот оттенок, что просили,
-  // а не то, что случайно назначено номеру темы.
-  const stripeFill={type:'pattern', pattern:'solid', fgColor:{argb:'FFDCEEFB'}};
-  rows.forEach((rowValues,i)=>{
-    const rowIdx=dataStartRow+i;
-    let maxLines=1;
-    rowValues.forEach((v,ci)=>{
-      const cell=ws.getCell(rowIdx, ci+1);
-      cell.font={size:9, name:'Arial'};
-      cell.alignment={horizontal:'center', vertical:'middle', wrapText:true};
-      cell.border={top:thin,left:thin,right:thin,bottom:thin};
-      if(i%2===1) cell.fill=stripeFill;
-      maxLines=Math.max(maxLines, estimateLines(v, columns[ci].width));
-    });
-    ws.getRow(rowIdx).height=Math.max(18, maxLines*12+8);
-  });
+  buildStyledReportTable(ws, {startRow:4, columns, rows, tableName:'AsmapTable'});
 
   // Подпись — по образцу: "Директор [компания]" / линия для подписи / ФИО
   // директора (из реквизитов компании). Счётчик внизу убран по просьбе
   // пользователя — он уже есть сверху (строка 2), дублировать не нужно.
+  const dataStartRow=5;
   const sigRow=dataStartRow+rows.length+2;
   ws.getCell(`A${sigRow}`).value=`Директор ${COMPANY.name||''}`;
   ws.getCell(`A${sigRow}`).font={size:10, name:'Arial'};
@@ -5503,6 +5518,36 @@ async function exportAsmapReport(){
 
   const buffer=await wb.xlsx.writeBuffer();
   downloadXlsxBuffer(buffer, `Список_АСМАП_${todayStr}.xlsx`);
+}
+
+// Отчёт по водителям для бухгалтерии (2026-07-18) — сознательно только 4 поля,
+// по прямому запросу: ФИО, ПИНФЛ, паспортные данные, права. Остальные документы
+// водителя (загранпаспорт, МНП, техталон и т.д.) для бухгалтерии не нужны.
+async function exportDriversReport(){
+  const drivers=PEOPLE.filter(p=>p.active!==false);
+  if(!drivers.length){ alert('Нет активных водителей'); return; }
+  const sorted=[...drivers].sort((a,b)=>a.name.localeCompare(b.name));
+
+  const columns=[
+    {header:'№', width:5}, {header:'ФИО', width:30}, {header:'ПИНФЛ', width:16},
+    {header:'Паспортные данные', width:32}, {header:'Водительское удостоверение', width:28},
+  ];
+  const joinLines=parts=>parts.filter(Boolean).join('\n');
+  const period=(from,to)=>(from||to)?('с '+(from?fmt(from):'—')+' до '+(to?fmt(to):'—')):'';
+  const rows=sorted.map((p,i)=>{
+    const d=p.docs||{};
+    const passData=joinLines([d.pass?.num||p.passport||'', period(d.pass?.from,d.pass?.to), d.pass?.org]);
+    const licData=joinLines([d.lic?.num, period(d.lic?.from,d.lic?.to), d.lic?.org]);
+    return [i+1, p.name, p.pinfl||'', passData, licData];
+  });
+
+  const wb=new ExcelJS.Workbook();
+  const ws=wb.addWorksheet('Водители', {pageSetup:{orientation:'landscape', fitToPage:true, fitToWidth:1, fitToHeight:0}});
+  addReportTitle(ws, 'A1:E1', `Список водителей для бухгалтерии по состоянию на ${fmt(todayStr)}`);
+  buildStyledReportTable(ws, {startRow:3, columns, rows, tableName:'DriversTable'});
+
+  const buffer=await wb.xlsx.writeBuffer();
+  downloadXlsxBuffer(buffer, `Отчёт_водители_${todayStr}.xlsx`);
 }
 
 // ========= FLEET OPERATIONS =========
@@ -6503,9 +6548,27 @@ const IMPORT_SHEETS=[
 async function downloadImportTemplate(){
   const wb=new ExcelJS.Workbook();
   IMPORT_SHEETS.forEach(sheet=>{
-    const ws=wb.addWorksheet(sheet.name);
+    const ws=wb.addWorksheet(sheet.name, {pageSetup:{orientation:'landscape', fitToPage:true, fitToWidth:1, fitToHeight:0}});
     ws.columns=sheet.columns.map(c=>({header:c.header, key:c.key, width:c.width||16}));
-    ws.getRow(1).font={bold:true};
+    const headerRow=ws.getRow(1);
+    headerRow.height=26;
+    headerRow.eachCell(cell=>{
+      cell.font={bold:true, size:10, name:'Arial'};
+      cell.alignment={horizontal:'center', vertical:'middle', wrapText:true};
+      cell.fill=REPORT_HEADER_FILL;
+      cell.border=THIN_BORDER;
+    });
+    // Лёгкая рамка + чередование строк на пустых строках — видна граница таблицы
+    // для заполнения ещё до того, как туда что-то впишут.
+    for(let r=2; r<=100; r++){
+      const row=ws.getRow(r);
+      sheet.columns.forEach((c,ci)=>{
+        const cell=row.getCell(ci+1);
+        cell.font={size:9, name:'Arial'};
+        cell.border=THIN_BORDER;
+        if(r%2===1) cell.fill=REPORT_STRIPE_FILL;
+      });
+    }
     sheet.columns.forEach((col,colIdx)=>{
       // list — обычный список значений прямо в формуле; listRef — ссылка на диапазон
       // другого листа (например, столбец "Наименование" на листе "Контрагенты"), чтобы
