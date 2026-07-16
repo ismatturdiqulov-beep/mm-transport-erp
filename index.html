@@ -740,6 +740,8 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
           <button class="vt-btn active" id="transport-view-card" onclick="setTransportView('card',this)" title="Карточки">⊞</button>
           <button class="vt-btn" id="transport-view-list" onclick="setTransportView('list',this)" title="Список">≡</button>
         </div>
+        <button class="btn" onclick="exportNdflReport()" title="Арендованный транспорт — арендодатель, ПИНФЛ, договор, цена">🧾 Отчёт по аренде (НДФЛ)</button>
+        <button class="btn" onclick="exportDepreciationReport()" title="Собственный транспорт — балансовая стоимость">📉 Отчёт по амортизации</button>
         <button class="btn primary" onclick="openModal('modal-add-transport')">+ Добавить транспорт</button>
       </div>
     </div>
@@ -1732,6 +1734,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
         <div class="form-row"><label>Телефон</label><input type="text" id="ak-phone" placeholder="+998 90 000 00 00"></div>
         <div class="form-row"><label>Паспорт</label><input type="text" id="ak-passport" placeholder="FA 0000000"></div>
       </div>
+      <div class="form-row"><label>ПИНФЛ</label><input type="text" id="ak-pinfl" placeholder="30000000000000" maxlength="14"></div>
       <div class="form-grid-2">
         <div class="form-row"><label>№ Договора</label><input type="text" id="ak-num" placeholder="№ 25/2026"></div>
         <div class="form-row"><label>Дата договора</label><input type="date" id="ak-date"></div>
@@ -1807,8 +1810,27 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
           <div class="form-row"><label>Договор с</label><input type="date" id="at-contract-start"></div>
           <div class="form-row"><label>Договор до *</label><input type="date" id="at-contract-end"></div>
         </div>
+        <div class="form-grid-2">
+          <div class="form-row"><label>№ договора аренды</label><input type="text" id="at-contract-num" placeholder="№ 25/2026"></div>
+          <div class="form-row"><label>Статус договора</label>
+            <select id="at-contract-status">
+              <option value="active">Действует</option>
+              <option value="free">Текин (бесплатно)</option>
+              <option value="terminated">Расторгнут</option>
+              <option value="sold">Продан</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row"><label>Цена по договору аренды (сум) — для налоговой (НДФЛ), не путать с абонентской платой ПС</label>
+          <input type="number" id="at-contract-price" placeholder="1550000"></div>
       </div>
-      <div class="form-row"><label>Ответственное лицо (из контрагентов)</label>
+      <div id="at-purchase-row" style="display:none;">
+        <div class="form-grid-2">
+          <div class="form-row"><label>Балансовая/покупная стоимость (сум)</label><input type="number" id="at-purchase-price" placeholder="250000000"></div>
+          <div class="form-row"><label>Дата постановки на баланс</label><input type="date" id="at-balance-date"></div>
+        </div>
+      </div>
+      <div class="form-row"><label>Ответственное лицо (из контрагентов)<span id="at-resp-hint" style="display:none;color:var(--text3);font-weight:400;"> — арендодатель для отчёта по НДФЛ</span></label>
         <select id="at-resp-id">
           <option value="">— не выбрано —</option>
         </select>
@@ -2768,6 +2790,8 @@ function mapTransportFromDb(r, kontragentyList) {
     note: r.note||'', docs: r.docs || {},
     currentMileage: r.current_mileage, mileageUpdatedAt: r.mileage_updated_at||'',
     maintenanceStatus: r.maintenance_status||'', plannedToMileage: r.planned_to_mileage,
+    contractNum: r.contract_num||'', contractPrice: r.contract_price, contractStatus: r.contract_status||'active',
+    purchasePrice: r.purchase_price, balanceDate: r.balance_date||'',
   };
 }
 
@@ -5124,6 +5148,10 @@ function toggleTransportContractField(){
   const owner=document.getElementById('at-owner')?.value;
   const row=document.getElementById('at-contract-row');
   if(row) row.style.display=owner==='Аренда'?'block':'none';
+  const purchaseRow=document.getElementById('at-purchase-row');
+  if(purchaseRow) purchaseRow.style.display=owner==='ММ'?'block':'none';
+  const respHint=document.getElementById('at-resp-hint');
+  if(respHint) respHint.style.display=owner==='Аренда'?'inline':'none';
 }
 
 function openEditTransport(id){
@@ -5143,6 +5171,11 @@ function openEditTransport(id){
     document.getElementById('at-vin').value=t.vin||'';
     const csEl=document.getElementById('at-contract-start');if(csEl)csEl.value=t.contract_start||'';
     const ceEl=document.getElementById('at-contract-end');if(ceEl)ceEl.value=t.contract_end||'';
+    const cnEl=document.getElementById('at-contract-num');if(cnEl)cnEl.value=t.contractNum||'';
+    const cpEl=document.getElementById('at-contract-price');if(cpEl)cpEl.value=t.contractPrice||'';
+    const csrEl=document.getElementById('at-contract-status');if(csrEl)csrEl.value=t.contractStatus||'active';
+    const ppEl=document.getElementById('at-purchase-price');if(ppEl)ppEl.value=t.purchasePrice||'';
+    const bdEl=document.getElementById('at-balance-date');if(bdEl)bdEl.value=t.balanceDate||'';
     toggleTransportContractField();
     fillTransportDocsToModal(t);
     document.querySelector('#modal-add-transport .modal-head h3').textContent='✏️ Редактировать транспорт';
@@ -5202,6 +5235,13 @@ async function _saveTransportImpl(){
     contract_start:document.getElementById('at-contract-start')?.value||null,
     contract_end: contract_end||null, active:true, note:'',
     docs:getTransportDocsFromModal(),
+    // Для отчётов бухгалтеру: договор аренды — только у "Аренда" (цена по договору,
+    // не путать с абонентской платой ПС); балансовая стоимость — только у "ММ" (амортизация)
+    contract_num: owner==='Аренда'?(document.getElementById('at-contract-num')?.value||null):null,
+    contract_price: owner==='Аренда'?(parseFloat(document.getElementById('at-contract-price')?.value)||null):null,
+    contract_status: owner==='Аренда'?(document.getElementById('at-contract-status')?.value||'active'):'active',
+    purchase_price: owner==='ММ'?(parseFloat(document.getElementById('at-purchase-price')?.value)||null):null,
+    balance_date: owner==='ММ'?(document.getElementById('at-balance-date')?.value||null):null,
   };
   const { data, error } = await sbClient.from('transport').insert(record).select().single();
   if (error) { alert('Не удалось сохранить транспорт: '+error.message); return; }
@@ -5229,16 +5269,113 @@ async function updateTransport(id){
     vin: document.getElementById('at-vin').value,
     contract_start: document.getElementById('at-contract-start')?.value||null,
     contract_end: contract_end||null,
+    contract_num: owner==='Аренда'?(document.getElementById('at-contract-num')?.value||null):null,
+    contract_price: owner==='Аренда'?(parseFloat(document.getElementById('at-contract-price')?.value)||null):null,
+    contract_status: owner==='Аренда'?(document.getElementById('at-contract-status')?.value||'active'):'active',
+    purchase_price: owner==='ММ'?(parseFloat(document.getElementById('at-purchase-price')?.value)||null):null,
+    balance_date: owner==='ММ'?(document.getElementById('at-balance-date')?.value||null):null,
   };
   const { error } = await sbClient.from('transport').update(updates).eq('id', id);
   if (error) { alert('Не удалось сохранить изменения: '+error.message); return; }
   Object.assign(t, { callsign:updates.callsign, type:updates.type, plate:updates.plate, brand:updates.brand,
     model:updates.model, owner:updates.owner, year:updates.year, respId, resp:updates.resp,
-    techpass:updates.techpass, vin:updates.vin, contract_start:updates.contract_start, contract_end:contract_end });
+    techpass:updates.techpass, vin:updates.vin, contract_start:updates.contract_start, contract_end:contract_end,
+    contractNum:updates.contract_num||'', contractPrice:updates.contract_price, contractStatus:updates.contract_status,
+    purchasePrice:updates.purchase_price, balanceDate:updates.balance_date||'' });
   closeModal('modal-add-transport');
   document.querySelector('#modal-add-transport .modal-head h3').textContent='🚛 Добавить транспорт';
   document.querySelector('#modal-add-transport .modal-foot .btn.primary').onclick=saveTransport;
   toast('Обновлено: '+t.callsign); renderTransport();
+}
+
+// ========= ОТЧЁТЫ ДЛЯ БУХГАЛТЕРА =========
+// Два отдельных отчёта, запрошенных бухгалтером 2026-07-17: (1) по арендованному
+// транспорту — источник для отчёта по НДФЛ (компания как налоговый агент), берётся
+// договорная цена аренды (transport.contractPrice) — это НЕ абонентская плата ПС
+// (fleet.plan), это разные суммы с разным назначением, путать нельзя; (2) по
+// собственному транспорту — для амортизации, берётся балансовая/покупная стоимость.
+const CONTRACT_STATUS_LABEL={active:null, free:'текин', terminated:'тугатилган', sold:'сотилган'};
+
+async function exportNdflReport(){
+  const rented=TRANSPORT.filter(t=>t.owner==='Аренда');
+  if(!rented.length){ alert('Нет транспорта с формой собственности "Аренда"'); return; }
+  const missing=rented.filter(t=>!t.respId || !(KONTRAGENTY.find(k=>k.id===t.respId)||{}).pinfl);
+  if(missing.length){
+    const go=confirm(`У ${missing.length} из ${rented.length} машин не указан арендодатель и/или его ПИНФЛ (карточка Транспорта → "Ответственное лицо", карточка Контрагента → "ПИНФЛ"). Сформировать отчёт всё равно, с пустыми ячейками по этим строкам?`);
+    if(!go) return;
+  }
+  const rows=rented.map(t=>{
+    const kg=t.respId?KONTRAGENTY.find(k=>k.id===t.respId):null;
+    return {t, kg};
+  }).sort((a,b)=>(a.kg?.name||'').localeCompare(b.kg?.name||'')||a.t.callsign.localeCompare(b.t.callsign));
+
+  const wb=new ExcelJS.Workbook();
+  const ws=wb.addWorksheet('Аренда');
+  ws.columns=[
+    {header:'№', key:'n', width:5},
+    {header:'Позывной', key:'callsign', width:12},
+    {header:'АРЕНДОДАТЕЛЬ', key:'lessor', width:34},
+    {header:'ПИНФЛ / ИНН', key:'pinfl', width:18},
+    {header:'Гос номер АТС', key:'plate', width:16},
+    {header:'Марка АТС', key:'brand', width:16},
+    {header:'№ договора', key:'contractNum', width:20},
+    {header:'Начало', key:'start', width:14},
+    {header:'Окончание', key:'end', width:14},
+    {header:'Цена по договору аренды', key:'price', width:20},
+  ];
+  ws.getRow(1).font={bold:true};
+  rows.forEach((r,i)=>{
+    const statusLabel=CONTRACT_STATUS_LABEL[r.t.contractStatus];
+    ws.addRow({
+      n:i+1, callsign:r.t.callsign, lessor:r.kg?r.kg.name:'', pinfl:r.kg?r.kg.pinfl:'',
+      plate:r.t.plate, brand:r.t.brand,
+      contractNum:r.t.contractNum||'', start:r.t.contract_start||'', end:r.t.contract_end||'',
+      price: statusLabel!=null ? statusLabel : (r.t.contractPrice||''),
+    });
+  });
+  const buffer=await wb.xlsx.writeBuffer();
+  downloadXlsxBuffer(buffer, `Отчёт_аренда_НДФЛ_${todayStr}.xlsx`);
+}
+
+async function exportDepreciationReport(){
+  const owned=TRANSPORT.filter(t=>t.owner==='ММ');
+  if(!owned.length){ alert('Нет транспорта в собственности ММ'); return; }
+  const missing=owned.filter(t=>!t.purchasePrice);
+  if(missing.length){
+    const go=confirm(`У ${missing.length} из ${owned.length} машин не указана балансовая стоимость (карточка Транспорта). Сформировать отчёт всё равно, с пустыми ячейками по этим строкам?`);
+    if(!go) return;
+  }
+  const rows=[...owned].sort((a,b)=>a.callsign.localeCompare(b.callsign));
+
+  const wb=new ExcelJS.Workbook();
+  const ws=wb.addWorksheet('Амортизация');
+  ws.columns=[
+    {header:'№', key:'n', width:5},
+    {header:'Позывной', key:'callsign', width:12},
+    {header:'Гос номер АТС', key:'plate', width:16},
+    {header:'Марка', key:'brand', width:16},
+    {header:'Модель', key:'model', width:16},
+    {header:'Год выпуска', key:'year', width:12},
+    {header:'VIN', key:'vin', width:20},
+    {header:'Дата постановки на баланс', key:'balanceDate', width:22},
+    {header:'Балансовая стоимость', key:'purchasePrice', width:20},
+  ];
+  ws.getRow(1).font={bold:true};
+  rows.forEach((t,i)=>{
+    ws.addRow({ n:i+1, callsign:t.callsign, plate:t.plate, brand:t.brand, model:t.model,
+      year:t.year||'', vin:t.vin||'', balanceDate:t.balanceDate||'', purchasePrice:t.purchasePrice||'' });
+  });
+  const buffer=await wb.xlsx.writeBuffer();
+  downloadXlsxBuffer(buffer, `Отчёт_амортизация_${todayStr}.xlsx`);
+}
+
+function downloadXlsxBuffer(buffer, filename){
+  const blob=new Blob([buffer], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url; a.download=filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
 }
 
 // ========= FLEET OPERATIONS =========
@@ -5398,7 +5535,7 @@ async function _saveKontragentImpl(){
     type: mapKontragentTypeToDb(typeEl?typeEl.value:'other'),
     phone: document.getElementById('ak-phone')?.value||'',
     passport: document.getElementById('ak-passport')?.value||'',
-    pinfl:'', active:true,
+    pinfl: document.getElementById('ak-pinfl')?.value||'', active:true,
     contract_num: document.getElementById('ak-num').value,
     contract_date: document.getElementById('ak-date').value || null,
     contract_end: document.getElementById('ak-end').value || null,
@@ -6259,12 +6396,7 @@ async function downloadImportTemplate(){
     });
   });
   const buffer=await wb.xlsx.writeBuffer();
-  const blob=new Blob([buffer], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
-  const url=URL.createObjectURL(blob);
-  const a=document.createElement('a');
-  a.href=url; a.download='MM_Transport_Шаблон_импорта.xlsx';
-  document.body.appendChild(a); a.click(); a.remove();
-  URL.revokeObjectURL(url);
+  downloadXlsxBuffer(buffer, 'MM_Transport_Шаблон_импорта.xlsx');
 }
 
 function handleImportFile(event){
@@ -7384,6 +7516,7 @@ function openEditKontragent(id){
       <div class="form-row"><label>Телефон</label><input type="text" id="ek-phone" value="${k.phone||''}" class="edit-field"></div>
       <div class="form-row"><label>Паспорт</label><input type="text" id="ek-passport" value="${k.passport||''}" class="edit-field"></div>
     </div>
+    <div class="form-row"><label>ПИНФЛ</label><input type="text" id="ek-pinfl" value="${k.pinfl||''}" maxlength="14" class="edit-field"></div>
     <div class="form-grid-2">
       <div class="form-row"><label>№ Договора</label><input type="text" id="ek-num" value="${k.contract_num||''}" class="edit-field"></div>
       <div class="form-row"><label>Дата договора</label><input type="date" id="ek-date" value="${k.contract_date||''}" class="edit-field"></div>
@@ -7400,6 +7533,7 @@ async function saveEditKontragent(){
     type: mapKontragentTypeToDb(document.getElementById('ek-type').value),
     phone: document.getElementById('ek-phone').value,
     passport: document.getElementById('ek-passport').value,
+    pinfl: document.getElementById('ek-pinfl').value,
     contract_num: document.getElementById('ek-num').value,
     contract_date: document.getElementById('ek-date').value || null,
     contract_end: document.getElementById('ek-end').value || null,
