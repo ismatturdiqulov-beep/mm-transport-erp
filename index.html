@@ -742,6 +742,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
         </div>
         <button class="btn" onclick="exportNdflReport()" title="Арендованный транспорт — арендодатель, ПИНФЛ, договор, цена">🧾 Отчёт по аренде (НДФЛ)</button>
         <button class="btn" onclick="exportDepreciationReport()" title="Собственный транспорт — балансовая стоимость">📉 Отчёт по амортизации</button>
+        <button class="btn" onclick="exportAsmapReport()" title="Только транспорт с галочкой «Допущен к TIR»">📋 Список для АСМАП</button>
         <button class="btn primary" onclick="openModal('modal-add-transport')">+ Добавить транспорт</button>
       </div>
     </div>
@@ -1835,6 +1836,12 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
           <option value="">— не выбрано —</option>
         </select>
       </div>
+      <div class="form-row">
+        <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-weight:400;">
+          <input type="checkbox" id="at-asmap-include" style="width:auto;">
+          Допущен к TIR — включать в список для АСМАП
+        </label>
+      </div>
       <div class="form-grid-2">
         <div class="form-row"><label>Техпаспорт до</label><input type="date" id="at-techpass"></div>
         <div class="form-row"><label>VIN / № кузова</label><input type="text" id="at-vin" placeholder="WBAHM71010..."></div>
@@ -2791,7 +2798,7 @@ function mapTransportFromDb(r, kontragentyList) {
     currentMileage: r.current_mileage, mileageUpdatedAt: r.mileage_updated_at||'',
     maintenanceStatus: r.maintenance_status||'', plannedToMileage: r.planned_to_mileage,
     contractNum: r.contract_num||'', contractPrice: r.contract_price, contractStatus: r.contract_status||'active',
-    purchasePrice: r.purchase_price, balanceDate: r.balance_date||'',
+    purchasePrice: r.purchase_price, balanceDate: r.balance_date||'', asmapInclude: !!r.asmap_include,
   };
 }
 
@@ -5176,6 +5183,7 @@ function openEditTransport(id){
     const csrEl=document.getElementById('at-contract-status');if(csrEl)csrEl.value=t.contractStatus||'active';
     const ppEl=document.getElementById('at-purchase-price');if(ppEl)ppEl.value=t.purchasePrice||'';
     const bdEl=document.getElementById('at-balance-date');if(bdEl)bdEl.value=t.balanceDate||'';
+    const asmapEl=document.getElementById('at-asmap-include');if(asmapEl)asmapEl.checked=!!t.asmapInclude;
     toggleTransportContractField();
     fillTransportDocsToModal(t);
     document.querySelector('#modal-add-transport .modal-head h3').textContent='✏️ Редактировать транспорт';
@@ -5242,6 +5250,7 @@ async function _saveTransportImpl(){
     contract_status: owner==='Аренда'?(document.getElementById('at-contract-status')?.value||'active'):'active',
     purchase_price: owner==='ММ'?(parseFloat(document.getElementById('at-purchase-price')?.value)||null):null,
     balance_date: owner==='ММ'?(document.getElementById('at-balance-date')?.value||null):null,
+    asmap_include: document.getElementById('at-asmap-include')?.checked||false,
   };
   const { data, error } = await sbClient.from('transport').insert(record).select().single();
   if (error) { alert('Не удалось сохранить транспорт: '+error.message); return; }
@@ -5274,6 +5283,7 @@ async function updateTransport(id){
     contract_status: owner==='Аренда'?(document.getElementById('at-contract-status')?.value||'active'):'active',
     purchase_price: owner==='ММ'?(parseFloat(document.getElementById('at-purchase-price')?.value)||null):null,
     balance_date: owner==='ММ'?(document.getElementById('at-balance-date')?.value||null):null,
+    asmap_include: document.getElementById('at-asmap-include')?.checked||false,
   };
   const { error } = await sbClient.from('transport').update(updates).eq('id', id);
   if (error) { alert('Не удалось сохранить изменения: '+error.message); return; }
@@ -5281,7 +5291,7 @@ async function updateTransport(id){
     model:updates.model, owner:updates.owner, year:updates.year, respId, resp:updates.resp,
     techpass:updates.techpass, vin:updates.vin, contract_start:updates.contract_start, contract_end:contract_end,
     contractNum:updates.contract_num||'', contractPrice:updates.contract_price, contractStatus:updates.contract_status,
-    purchasePrice:updates.purchase_price, balanceDate:updates.balance_date||'' });
+    purchasePrice:updates.purchase_price, balanceDate:updates.balance_date||'', asmapInclude:updates.asmap_include });
   closeModal('modal-add-transport');
   document.querySelector('#modal-add-transport .modal-head h3').textContent='🚛 Добавить транспорт';
   document.querySelector('#modal-add-transport .modal-foot .btn.primary').onclick=saveTransport;
@@ -5376,6 +5386,70 @@ function downloadXlsxBuffer(buffer, filename){
   a.href=url; a.download=filename;
   document.body.appendChild(a); a.click(); a.remove();
   URL.revokeObjectURL(url);
+}
+
+// Список для АСМАП (2026-07-17) — только транспорт, вручную отмеченный галочкой
+// "Допущен к TIR" (не весь транспорт компании реально допущен к международным
+// перевозкам). Договор аренды — тот же contract_num, что и в отчёте по НДФЛ (per
+// user: номера вида "Ash №..." в присланном образце — ошибка заполнения бланка,
+// правильный номер — наш внутренний договор). Подтип кузова / категория Евро /
+// объём-вес-оси / лизинг — по просьбе пользователя намеренно не включены.
+async function exportAsmapReport(){
+  const included=TRANSPORT.filter(t=>t.asmapInclude);
+  if(!included.length){ alert('Нет транспорта, отмеченного галочкой "Допущен к TIR — включать в список для АСМАП". Отметьте нужные машины на карточке транспорта.'); return; }
+
+  // Счётчик — только тягачи/прицепы/полуприцепы, остальные типы (фургон, легковой) не считаются
+  const countableTypes=['Тягач','Прицеп','Полуприцеп'];
+  const counters={'ММ':{Тягач:0,Прицеп:0,Полуприцеп:0}, 'Аренда':{Тягач:0,Прицеп:0,Полуприцеп:0}};
+  included.forEach(t=>{
+    if(countableTypes.includes(t.type) && counters[t.owner]) counters[t.owner][t.type]++;
+  });
+  const totalOwn=counters['ММ'].Тягач+counters['ММ'].Прицеп+counters['ММ'].Полуприцеп;
+  const totalRent=counters['Аренда'].Тягач+counters['Аренда'].Прицеп+counters['Аренда'].Полуприцеп;
+
+  const rows=[...included].sort((a,b)=>a.callsign.localeCompare(b.callsign));
+
+  const wb=new ExcelJS.Workbook();
+  const ws=wb.addWorksheet('АСМАП', {pageSetup:{orientation:'landscape', fitToPage:true, fitToWidth:1, fitToHeight:0}});
+
+  ws.mergeCells('A1:W1');
+  ws.getCell('A1').value=`Сведения по подвижному составу для АСМАП по состоянию на ${fmt(todayStr)}`;
+  ws.getCell('A1').font={bold:true, size:13};
+
+  ws.mergeCells('A2:W2');
+  ws.getCell('A2').value=`Собственных (тягачи+прицепы+п/прицепы): ${totalOwn} — тягачей ${counters['ММ'].Тягач}, прицепов ${counters['ММ'].Прицеп}, п/прицепов ${counters['ММ'].Полуприцеп}.  `+
+    `Арендованных: ${totalRent} — тягачей ${counters['Аренда'].Тягач}, прицепов ${counters['Аренда'].Прицеп}, п/прицепов ${counters['Аренда'].Полуприцеп}.`;
+  ws.getCell('A2').font={italic:true, size:10};
+
+  const headerRowIdx=4;
+  ws.getRow(headerRowIdx).values=[
+    '№','Позывной','Тип','Гос.номер','Серия/номер техпаспорта','Дата выдачи техпаспорта','Орган выдачи',
+    'Марка','Модель','Год выпуска','Двигатель №','VIN (кузов)',
+    'Лицензионная карточка №','Лицензия с','Лицензия до',
+    'Свид. о допущении №','Допущение с','Допущение до',
+    'Форма собственности','Арендодатель','№ договора аренды','Договор с','Договор до',
+  ];
+  ws.getRow(headerRowIdx).font={bold:true};
+  const colWidths=[5,10,10,14,20,16,22, 16,16,10,14,20, 18,12,12, 16,12,12, 14,26,18,12,12];
+  colWidths.forEach((w,i)=>{ ws.getColumn(i+1).width=w; });
+
+  rows.forEach((t,i)=>{
+    const d=t.docs||{};
+    const kg=t.respId?KONTRAGENTY.find(k=>k.id===t.respId):null;
+    ws.addRow([
+      i+1, t.callsign, t.type, t.plate,
+      d.tp?.num||'', d.tp?.date||'', d.tp?.org||'',
+      t.brand||'', t.model||'', t.year||'',
+      d.eng?.num||'', t.vin||'',
+      d.lic?.num||'', d.lic?.from||'', d.lic?.to||'',
+      d.svid?.num||'', d.svid?.from||'', d.svid?.to||'',
+      t.owner, kg?kg.name:'',
+      t.owner==='Аренда'?(t.contractNum||''):'', t.owner==='Аренда'?(t.contract_start||''):'', t.owner==='Аренда'?(t.contract_end||''):'',
+    ]);
+  });
+
+  const buffer=await wb.xlsx.writeBuffer();
+  downloadXlsxBuffer(buffer, `Список_АСМАП_${todayStr}.xlsx`);
 }
 
 // ========= FLEET OPERATIONS =========
