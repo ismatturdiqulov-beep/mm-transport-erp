@@ -8791,8 +8791,9 @@ function openNewTrip(){
 function populateTripSelects(){
   const fleetActive = FLEET.filter(f=>f.active!==false);
   const drivers = PEOPLE.filter(p=>p.active!==false);
-  // Клиенты — тип 'client' (Заказчик) и 'other' (Прочий) — оба могут быть заказчиками рейса
-  const clients = KONTRAGENTY.filter(k=>k.active!==false&&(k.type==='client'||k.type==='other'));
+  // Только реальные заказчики (тип 'client') — 'other' раньше тоже сюда попадал, но по факту
+  // там оказывались водители/арендодатели с неверно проставленным типом (2026-07-19)
+  const clients = KONTRAGENTY.filter(k=>k.active!==false&&k.type==='client');
   const freeTirs = TIRS.filter(t=>tirGetState(t)==='free'&&!isExp(t.expires));
   const freeDozv = DOZV.filter(d=>dozGetState(d)==='free');
   const set=(id,opts)=>{const el=document.getElementById(id);if(el)el.innerHTML=opts;};
@@ -9081,7 +9082,7 @@ function openAddLeg(tripId){
   document.getElementById('tl-custom-rate').value='';
   const tlRateRow=document.getElementById('tl-rate-row');if(tlRateRow)tlRateRow.style.display='none';
   const tlUzsPreview=document.getElementById('tl-rate-uzs-preview');if(tlUzsPreview)tlUzsPreview.textContent='';
-  const clients=KONTRAGENTY.filter(k=>k.active!==false&&(k.type==='client'||k.type==='other'));
+  const clients=KONTRAGENTY.filter(k=>k.active!==false&&k.type==='client');
   document.getElementById('tl-client').innerHTML='<option value="">— без клиента —</option>'+clients.map(k=>`<option value="${k.id}">${k.name}</option>`).join('');
   const info=document.getElementById('tl-info');
   if(info){
@@ -9107,7 +9108,7 @@ function editTripLeg(tripId,legIdx){
   const tlRateVal=leg.rateFinal?leg.rateFinal:(leg.currency&&leg.currency!=='UZS'&&leg.rateOrig!=null?leg.rateOrig:leg.rate);
   document.getElementById('tl-rate').value=tlRateVal?formatNumberSpaces(String(tlRateVal)):'';
   document.getElementById('tl-cargo').value=leg.cargo||'';
-  const clients=KONTRAGENTY.filter(k=>k.active!==false&&(k.type==='client'||k.type==='other'));
+  const clients=KONTRAGENTY.filter(k=>k.active!==false&&k.type==='client');
   document.getElementById('tl-client').innerHTML='<option value="">— без клиента —</option>'+clients.map(k=>`<option value="${k.id}" ${leg.clientId===k.id?'selected':''}>${k.name}</option>`).join('');
   const info=document.getElementById('tl-info');
   if(info){
@@ -9191,8 +9192,8 @@ function openTripPayment(tripId){
   const legs=trip.legs||[];
   const legSel=document.getElementById('tp-leg');
   if(legSel)legSel.innerHTML=legs.map((l,i)=>`<option value="${i}">Плечо ${i+1}: ${l.from}→${l.to} (${fmtN(tripLegEffectiveRate(trip,i))})</option>`).join('');
-  // Только прочие контрагенты (заказчики) — без водителей и арендаторов
-  const clients=KONTRAGENTY.filter(k=>(k.type==='client'||k.type==='other')&&k.active!==false);
+  // Только реальные заказчики (тип 'client')
+  const clients=KONTRAGENTY.filter(k=>k.type==='client'&&k.active!==false);
   const fromSel=document.getElementById('tp-from');
   if(fromSel)fromSel.innerHTML='<option value="">— выберите заказчика —</option>'+clients.map(k=>`<option value="${k.id}">${k.name}</option>`).join('');
   // Предзаполняем клиентом из первого плеча
