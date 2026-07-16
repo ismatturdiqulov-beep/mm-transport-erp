@@ -6137,11 +6137,11 @@ function printAktSverki(){
   .sign div{text-align:center;width:200px}.sign .line{border-top:1px solid #000;margin-top:26px;padding-top:3px;font-size:9pt;color:#555}
   @media print{button{display:none}}</style></head><body>
   <h2>АКТ СВЕРКИ ВЗАИМНЫХ РАСЧЁТОВ</h2>
-  <div class="meta">ООО «ММ Транспорт» и <b>${k.name}</b> (${typeLabel[k.type]||k.type}) · Период: <b>${period}</b>${k.phone?' · '+k.phone:''}</div>
+  <div class="meta">${COMPANY.name||'ООО «ММ Транспорт»'} и <b>${k.name}</b> (${typeLabel[k.type]||k.type}) · Период: <b>${period}</b>${k.phone?' · '+k.phone:''}</div>
   <div class="summary">${summaryHtml}</div>
   ${tableHtml}
   <div class="sign">
-    <div><div class="line">От ММ Транспорт: _____________</div></div>
+    <div><div class="line">От ${COMPANY.name||'ММ Транспорт'}: _____________</div></div>
     <div><div class="line">От ${k.name}: _____________</div></div>
     <div><div class="line">Дата: ${fmt(todayStr)}</div></div>
   </div>
@@ -6313,7 +6313,7 @@ function printAsmafRegistry(num, date, tirs){
   <h2>РЕЕСТР</h2>
   <h2>книжек МДП (ТИР-карнетов), сдаваемых в АСМАП</h2>
   <div class="meta">№ <b>${num}</b> от <b>${fmt(date)}</b></div>
-  <div class="meta">ООО «ММ Транспорт»</div>
+  <div class="meta">${COMPANY.name||'ООО «ММ Транспорт»'}</div>
   <table>
     <thead><tr>
       <th style="width:40px;text-align:center">№</th>
@@ -6580,7 +6580,7 @@ function printFleetHistory(){
   .sc{background:#f5f4f0;border-radius:6px;padding:8px 12px}.sc .l{font-size:10px;color:#888;margin-bottom:3px}.sc .v{font-size:15px;font-weight:700}
   table{width:100%;border-collapse:collapse}th{background:#f0efe9;padding:7px 8px;text-align:left;font-size:11px;border:1px solid #ddd}
   td{padding:7px 8px;border:1px solid #ddd}@media print{button{display:none}}</style></head><body>
-  <h2>ММ Транспорт — История расчётов</h2>
+  <h2>${COMPANY.name||'ММ Транспорт'} — История расчётов</h2>
   <p><b>${name}</b> · Период: ${fromM||'начало'}${toM?' — '+toM:''}</p>
   <div class="summary">
     <div class="sc"><div class="l">Вход. остаток</div><div class="v" style="color:${incoming<0?'red':'green'}">${fmtN(incoming)}</div></div>
@@ -7828,7 +7828,7 @@ async function _generateMintransRegistryImpl(){
   .sign{margin-top:40px;display:flex;justify-content:space-between}.sign div{border-top:1px solid #000;width:200px;text-align:center;padding-top:4px}
   @media print{button{display:none}}</style></head><body>
   <h2>РЕЕСТР ДОЗВОЛОВ, сдаваемых в МИНИСТЕРСТВО ТРАНСПОРТА</h2>
-  <div class="meta">№ <b>${regNum}</b> от <b>${fmt(date)}</b> · ООО «ММ Транспорт»</div>
+  <div class="meta">№ <b>${regNum}</b> от <b>${fmt(date)}</b> · ${COMPANY.name||'ООО «ММ Транспорт»'}</div>
   <table><thead><tr><th>#</th><th>Номер бланка</th><th>Страна</th><th>Вид</th><th>Дата получения</th><th>Статус</th><th>Кем использован</th></tr></thead>
   <tbody>${rows}</tbody></table>
   <div style="margin-top:8px;font-size:10pt">Итого дозволов: <b>${selected.length}</b></div>
@@ -9810,7 +9810,7 @@ function printTripReport(tripId){
   </style></head><body>
   <h1>ОТЧЁТ ПО РЕЙСУ ${getTripLabel(trip)}</h1>
   <div class="meta">
-    ООО «ММ Транспорт» · <b>${legs.map(l=>l.from+' → '+l.to).join(' ↩️ ')}</b><br>
+    ${COMPANY.name||'ООО «ММ Транспорт»'} · <b>${legs.map(l=>l.from+' → '+l.to).join(' ↩️ ')}</b><br>
     Статус: <b>${st.icon} ${st.label}</b> · Загрузка: <b>${fmt(trip.loadDate)}</b>${trip.unloadDate?' · Выгрузка: <b>'+fmt(trip.unloadDate)+'</b>':''}
   </div>
   <div class="summary">
@@ -9957,7 +9957,7 @@ function printTripReportShort(tripId){
   </style></head><body>
   <h1>КРАТКИЙ ОТЧЁТ ПО РЕЙСУ ${getTripLabel(trip)}</h1>
   <div class="meta">
-    ООО «ММ Транспорт» · <b>${legs.map(l=>l.from+' → '+l.to).join(' ↩️ ')}</b><br>
+    ${COMPANY.name||'ООО «ММ Транспорт»'} · <b>${legs.map(l=>l.from+' → '+l.to).join(' ↩️ ')}</b><br>
     Статус: <b>${st.icon} ${st.label}</b> · Загрузка: <b>${fmt(trip.loadDate)}</b>${trip.unloadDate?' · Выгрузка: <b>'+fmt(trip.unloadDate)+'</b>':''}
   </div>
   <div class="summary">
