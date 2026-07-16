@@ -2889,6 +2889,11 @@ function mapLaborFromDb(r) {
     passportIssuedBy: r.passport_issued_by||'', passportIssuedDate: r.passport_issued_date||'',
     probationMonths: r.probation_months, planRevenue: r.plan_revenue };
 }
+function mapTelegramLinkFromDb(r) {
+  return { id: r.id, kontragentId: r.kontragent_id||'', telegramUserId: r.telegram_user_id||null,
+    telegramUsername: r.telegram_username||'', linkCode: r.link_code||'', linkedAt: r.linked_at||'',
+    active: r.active };
+}
 
 function mapTripFromDb(t, legs, expenses, payments, surcharges) {
   const myLegs = legs.filter(l => l.trip_id === t.id).sort((a, b) => (a.leg_num||0) - (b.leg_num||0));
@@ -2931,7 +2936,7 @@ function mapTripFromDb(t, legs, expenses, payments, surcharges) {
 async function loadAllData() {
   const tables = ['companies','company_settings','kontragenty','people','person_docs','transport','fleet','trips','trip_legs',
     'trip_expenses','trip_payments','trip_surcharges','tirs','dozv','finance','kassa',
-    'kassa_wallets','maintenance','waybills','poa','labor'];
+    'kassa_wallets','maintenance','waybills','poa','labor','telegram_links'];
   const results = await Promise.all(tables.map(t => sbClient.from(t).select('*')));
   const byTable = {};
   tables.forEach((t, i) => {
@@ -2993,6 +2998,7 @@ async function loadAllData() {
   POA = byTable.poa.map(mapPoaFromDb);
   LABOR = byTable.labor.map(mapLaborFromDb);
   TRIPS = byTable.trips.map(t => mapTripFromDb(t, byTable.trip_legs, byTable.trip_expenses, byTable.trip_payments, byTable.trip_surcharges));
+  TELEGRAM_LINKS = byTable.telegram_links.map(mapTelegramLinkFromDb);
 }
 
 // При открытии страницы проверяем, нет ли уже активного входа (чтобы не спрашивать
@@ -3123,6 +3129,11 @@ let TRANSPORT = ld('mm_transport', []);
 let WAYBILLS = ld('mm_waybills', []);
 let POA = ld('mm_poa', []);
 let LABOR = ld('mm_labor', []);
+// Фундамент под будущего Telegram-бота (2026-07-18) — таблица существует с самого
+// начала схемы, но не заполнялась. Привязка к контрагенту (не к водителю отдельно),
+// т.к. в реальном рабочем процессе контрагент заводится первым в любом случае
+// (и на наёмного водителя, и на арендатора), а "Водители" — уже производная от него.
+let TELEGRAM_LINKS = [];
 
 // FINANCE — глобальная история всех операций
 // Поля: date, fleetId (на какую ед.ПС), kontragentId, type ('charge'/'payment'/'vacation'), cat, desc, amount, wallet
@@ -7713,8 +7724,71 @@ function openEditKontragent(id){
       <div class="form-row"><label>Дата договора</label><input type="date" id="ek-date" value="${k.contract_date||''}" class="edit-field"></div>
     </div>
     <div class="form-row"><label>Срок договора до</label><input type="date" id="ek-end" value="${k.contract_end||''}" class="edit-field"></div>
-    <div class="form-row"><label>Примечание</label><input type="text" id="ek-note" value="${k.note||''}" class="edit-field"></div>`;
+    <div class="form-row"><label>Примечание</label><input type="text" id="ek-note" value="${k.note||''}" class="edit-field"></div>
+    <div class="form-row"><label>Telegram</label>
+      <div id="ek-telegram-status" style="font-size:12px;padding:9px 11px;background:var(--surface2);border-radius:var(--radius);line-height:1.6;"></div>
+    </div>`;
+  renderTelegramStatus(id);
   openModal('modal-edit-kontragent');
+}
+
+// ============ TELEGRAM (фундамент под бота, 2026-07-18) ============
+// Привязка идёт к контрагенту, не к отдельной записи "Водитель" — см. пояснение
+// пользователя: контрагент заводится первым в любом случае (и на наёмного
+// водителя, и на арендатора), "Водители" — уже производная сущность от него.
+function renderTelegramStatus(kontragentId){
+  const el=document.getElementById('ek-telegram-status'); if(!el) return;
+  const link=TELEGRAM_LINKS.find(l=>l.kontragentId===kontragentId && l.active);
+  if(!link){
+    el.innerHTML=`<span style="color:var(--text3);">Не подключён</span><br>
+      <button class="btn xs" style="margin-top:6px;" onclick="generateTelegramLinkCode('${kontragentId}')">Сгенерировать код для подключения</button>`;
+  } else if(link.telegramUserId){
+    el.innerHTML=`<span class="tag green">Подключён</span> @${link.telegramUsername||'—'}${link.linkedAt?' · с '+fmt(link.linkedAt):''}<br>
+      <button class="btn xs danger" style="margin-top:6px;" onclick="deactivateTelegramLink('${link.id}')">Отключить</button>`;
+  } else {
+    el.innerHTML=`<span class="tag amber">Код выдан, ждём подключения</span><br>
+      Код: <b class="mono" style="font-size:15px;">${link.linkCode}</b> — передайте контрагенту, пусть напишет боту <span class="mono">/start ${link.linkCode}</span><br>
+      <button class="btn xs" style="margin-top:6px;" onclick="generateTelegramLinkCode('${kontragentId}')">Обновить код</button>
+      <button class="btn xs danger" style="margin-top:6px;" onclick="deactivateTelegramLink('${link.id}')">Отменить</button>`;
+  }
+}
+function genTelegramLinkCode(){
+  const chars='ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // без похожих на вид символов (0/O, 1/I)
+  let code='';
+  for(let i=0;i<6;i++) code+=chars[Math.floor(Math.random()*chars.length)];
+  return code;
+}
+async function generateTelegramLinkCode(kontragentId){
+  const existing=TELEGRAM_LINKS.find(l=>l.kontragentId===kontragentId && l.active);
+  if(existing && existing.telegramUserId){
+    alert('Этот контрагент уже подключён к Telegram. Сначала отключите текущую привязку.');
+    return;
+  }
+  const code=genTelegramLinkCode();
+  if(existing){
+    const { error } = await sbClient.from('telegram_links').update({ link_code:code }).eq('id', existing.id);
+    if (error) { alert('Не удалось создать код: '+error.message); return; }
+    existing.linkCode=code;
+  } else {
+    const { data, error } = await sbClient.from('telegram_links').insert({
+      company_id:CURRENT_PROFILE.company_id, kontragent_id:kontragentId, link_code:code, active:true,
+    }).select().single();
+    if (error) { alert('Не удалось создать код: '+error.message); return; }
+    TELEGRAM_LINKS.push(mapTelegramLinkFromDb(data));
+  }
+  renderTelegramStatus(kontragentId);
+  toast('Код для подключения создан');
+}
+async function deactivateTelegramLink(linkId){
+  if(!confirm('Отключить Telegram-аккаунт от этого контрагента?')) return;
+  const link=TELEGRAM_LINKS.find(l=>l.id===linkId); if(!link) return;
+  // Код освобождаем (null), не оставляем занятым под неактивной записью — иначе он
+  // теоретически может помешать уникальности будущего нового кода.
+  const { error } = await sbClient.from('telegram_links').update({ active:false, link_code:null }).eq('id', linkId);
+  if (error) { alert('Не удалось отключить: '+error.message); return; }
+  link.active=false; link.linkCode='';
+  renderTelegramStatus(link.kontragentId);
+  toast('Отключено от Telegram');
 }
 async function saveEditKontragent(){
   const k=KONTRAGENTY.find(x=>x.id===_editKgId); if(!k) return;
