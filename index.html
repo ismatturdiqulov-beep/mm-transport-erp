@@ -5411,43 +5411,62 @@ async function exportAsmapReport(){
   const wb=new ExcelJS.Workbook();
   const ws=wb.addWorksheet('АСМАП', {pageSetup:{orientation:'landscape', fitToPage:true, fitToWidth:1, fitToHeight:0}});
 
-  ws.mergeCells('A1:W1');
+  ws.mergeCells('A1:J1');
   ws.getCell('A1').value=`Сведения по подвижному составу для АСМАП по состоянию на ${fmt(todayStr)}`;
   ws.getCell('A1').font={bold:true, size:13};
 
-  ws.mergeCells('A2:W2');
+  ws.mergeCells('A2:J2');
   ws.getCell('A2').value=`Собственных (тягачи+прицепы+п/прицепы): ${totalOwn} — тягачей ${counters['ММ'].Тягач}, прицепов ${counters['ММ'].Прицеп}, п/прицепов ${counters['ММ'].Полуприцеп}.  `+
     `Арендованных: ${totalRent} — тягачей ${counters['Аренда'].Тягач}, прицепов ${counters['Аренда'].Прицеп}, п/прицепов ${counters['Аренда'].Полуприцеп}.`;
   ws.getCell('A2').font={italic:true, size:10};
 
+  // Несколько связанных полей объединяем в одну ячейку (несколько строк текста через
+  // перенос) — как в присланном образце — чтобы сократить число столбцов и таблица
+  // реально влезала на одну печатную страницу, а не только формально по ширине.
   const columns=[
-    {header:'№', width:5}, {header:'Позывной', width:10}, {header:'Тип', width:11}, {header:'Гос.номер', width:14},
-    {header:'Серия/номер техпаспорта', width:20}, {header:'Дата выдачи техпаспорта', width:16}, {header:'Орган выдачи', width:22},
-    {header:'Марка', width:16}, {header:'Модель', width:16}, {header:'Год выпуска', width:10},
-    {header:'Двигатель №', width:14}, {header:'VIN (кузов)', width:20},
-    {header:'Лицензионная карточка №', width:18}, {header:'Лицензия с', width:12}, {header:'Лицензия до', width:12},
-    {header:'Свид. о допущении №', width:16}, {header:'Допущение с', width:12}, {header:'Допущение до', width:12},
-    {header:'Форма собственности', width:14}, {header:'Арендодатель', width:26},
-    {header:'№ договора аренды', width:18}, {header:'Договор с', width:12}, {header:'Договор до', width:12},
+    {header:'№', width:5}, {header:'Позывной', width:10}, {header:'Тип', width:11},
+    {header:'Регистрационные данные\n(гос.номер, техпаспорт)', width:28},
+    {header:'Марка и модель', width:20}, {header:'Год выпуска', width:9},
+    {header:'Заводские номера\n(двигатель, кузов)', width:22},
+    {header:'Лицензионная карточка', width:22},
+    {header:'Свидетельство о допущении', width:22},
+    {header:'Право собственности', width:30},
   ];
+  const joinLines=parts=>parts.filter(Boolean).join('\n');
   // Арендодатель — только если реально арендованный транспорт (баг, найденный
   // пользователем: раньше сюда попадало "Ответственное лицо" и для собственных
   // ММ-машин тоже, хотя у собственности компании арендодателя быть не может).
   const rows=sorted.map((t,i)=>{
     const d=t.docs||{};
     const kg=t.owner==='Аренда'&&t.respId?KONTRAGENTY.find(k=>k.id===t.respId):null;
-    return [
-      i+1, t.callsign, t.type, t.plate,
-      d.tp?.num||'', d.tp?.date||'', d.tp?.org||'',
-      t.brand||'', t.model||'', t.year||'',
-      d.eng?.num||'', t.vin||'',
-      d.lic?.num||'', d.lic?.from||'', d.lic?.to||'',
-      d.svid?.num||'', d.svid?.from||'', d.svid?.to||'',
-      t.owner, t.owner==='Аренда'?(kg?kg.name:''):'Собственность компании',
-      t.owner==='Аренда'?(t.contractNum||''):'', t.owner==='Аренда'?(t.contract_start||''):'', t.owner==='Аренда'?(t.contract_end||''):'',
-    ];
+    const regData=joinLines([t.plate, d.tp?.num, [d.tp?.date,d.tp?.org].filter(Boolean).join('  ')]);
+    const brandModel=[t.brand,t.model].filter(Boolean).join(' ');
+    const factoryNums=joinLines([d.eng?.num?('Двиг. '+d.eng.num):'', t.vin?('Кузов '+t.vin):'']);
+    const licData=joinLines([d.lic?.num, (d.lic?.from||d.lic?.to)?('с '+(d.lic?.from||'—')+' до '+(d.lic?.to||'—')):'']);
+    const svidData=joinLines([d.svid?.num, (d.svid?.from||d.svid?.to)?('с '+(d.svid?.from||'—')+' до '+(d.svid?.to||'—')):'']);
+    const ownData = t.owner==='Аренда'
+      ? joinLines(['Аренда', kg?kg.name:'', t.contractNum?('№ '+t.contractNum):'', (t.contract_start||t.contract_end)?('с '+(t.contract_start||'—')+' до '+(t.contract_end||'—')):''])
+      : 'Собственность компании';
+    return [i+1, t.callsign, t.type, regData, brandModel, t.year||'', factoryNums, licData, svidData, ownData];
   });
   addSmartTable(ws, 4, columns, rows, 'AsmapTable');
+
+  // Перенос строк внутри ячейки виден в Excel только если явно включён wrapText —
+  // и высоту строки надо подогнать под самую "многострочную" ячейку в ней.
+  const wrapCols=[4,7,8,9,10];
+  const dataStartRow=5;
+  rows.forEach((_,i)=>{
+    const rowIdx=dataStartRow+i;
+    let maxLines=1;
+    wrapCols.forEach(c=>{
+      const cell=ws.getCell(rowIdx,c);
+      cell.alignment={wrapText:true, vertical:'top'};
+      maxLines=Math.max(maxLines, String(cell.value||'').split('\n').length);
+    });
+    ws.getRow(rowIdx).height=Math.max(16, maxLines*14+4);
+  });
+  ws.getRow(4).alignment={wrapText:true, vertical:'top'};
+  ws.getRow(4).height=28;
 
   const buffer=await wb.xlsx.writeBuffer();
   downloadXlsxBuffer(buffer, `Список_АСМАП_${todayStr}.xlsx`);
