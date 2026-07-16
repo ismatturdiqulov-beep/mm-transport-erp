@@ -5371,7 +5371,7 @@ async function exportDepreciationReport(){
 function addSmartTable(ws, startRow, columns, rows, tableName){
   ws.addTable({
     name: tableName, ref: `A${startRow}`, headerRow: true, totalsRow: false,
-    style: { theme:'TableStyleMedium9', showRowStripes:true },
+    style: { theme:'TableStyleLight9', showRowStripes:true },
     columns: columns.map(c=>({name:c.header, filterButton:true})),
     rows,
   });
@@ -5484,16 +5484,10 @@ async function exportAsmapReport(){
     ws.getRow(rowIdx).height=Math.max(18, maxLines*12+8);
   });
 
-  // Итог и подпись — по образцу: сводка по количеству, пустая строка, "Директор
-  // [компания]" / линия для подписи / ФИО директора (из реквизитов компании).
-  const footerRow1=dataStartRow+rows.length+1;
-  ws.mergeCells(`A${footerRow1}:C${footerRow1}`);
-  ws.getCell(`A${footerRow1}`).value=`Всего в системе АСК ТИР автомобилей общество: ${totalOwn} ед.`;
-  ws.mergeCells(`D${footerRow1}:J${footerRow1}`);
-  ws.getCell(`D${footerRow1}`).value=`Всего в системе АСК ТИР автомобилей в аренде: ${totalRent} ед.`;
-  [`A${footerRow1}`,`D${footerRow1}`].forEach(addr=>{ ws.getCell(addr).font={bold:true, size:10, name:'Arial'}; });
-
-  const sigRow=footerRow1+3;
+  // Подпись — по образцу: "Директор [компания]" / линия для подписи / ФИО
+  // директора (из реквизитов компании). Счётчик внизу убран по просьбе
+  // пользователя — он уже есть сверху (строка 2), дублировать не нужно.
+  const sigRow=dataStartRow+rows.length+2;
   ws.getCell(`A${sigRow}`).value=`Директор ${COMPANY.name||''}`;
   ws.getCell(`A${sigRow}`).font={size:10, name:'Arial'};
   ws.mergeCells(`A${sigRow}:C${sigRow}`);
