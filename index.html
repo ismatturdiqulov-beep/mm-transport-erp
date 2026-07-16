@@ -9717,9 +9717,11 @@ function buildCategoryPieChart(rows, opts){
       <span style="font-weight:bold;">${pct}%</span>
     </div>`;
   }).join('');
-  return `<div style="display:flex;gap:12px;align-items:center;">
-    <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" style="flex-shrink:0;">${paths}</svg>
-    <div style="flex:1;min-width:0;">${legend}</div>
+  // Легенда с процентами — под диаграммой (не сбоку), там всегда остаётся пустое место
+  // под кругом, так компактнее и красивее (правка пользователя 2026-07-19)
+  return `<div style="display:flex;flex-direction:column;align-items:center;gap:6px;width:${size}px;">
+    <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">${paths}</svg>
+    <div style="width:100%;">${legend}</div>
   </div>`;
 }
 
