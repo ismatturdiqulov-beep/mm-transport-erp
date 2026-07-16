@@ -5035,8 +5035,6 @@ function renderTransport(){
       <tbody>${data.map((t,i)=>{
         const techExp=t.techpass&&isExp(t.techpass);
         const techSoon=t.techpass&&expSoon(t.techpass,30);
-        const contractExp=t.contract_end&&isExp(t.contract_end);
-        const contractSoon=t.contract_end&&expSoon(t.contract_end,30);
         const rKg=t.respId?KONTRAGENTY.find(k=>k.id===t.respId):null;
         const rName=rKg?(rKg.short||rKg.name):t.resp||'—';
         return `<tr style="${!t.active?'opacity:.55':''}">
@@ -5048,7 +5046,7 @@ function renderTransport(){
           <td><span class="tag ${t.owner==='ММ'?'blue':'green'}">${t.owner}</span></td>
           <td>${rName}</td>
           <td>${t.techpass?`<span class="tag ${techExp?'red':techSoon?'amber':'green'}">${fmt(t.techpass)}</span>`:'—'}</td>
-          <td>${t.owner==='Аренда'&&t.contract_end?`<span class="tag ${contractExp?'red':contractSoon?'amber':'gray'}">${fmt(t.contract_end)}</span>`:(t.year||'—')}</td>
+          <td>${t.year||'—'}</td>
           <td><span class="tag ${t.active?'green':'gray'}">${t.active?'Активен':'Неактивен'}</span></td>
           <td style="white-space:nowrap;">
             <button class="btn xs" onclick="openTransportDetail('${t.id}')">ℹ</button>
