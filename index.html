@@ -9279,12 +9279,26 @@ function calcTripFinish(){
   const driverEl=el('tf-calc-driver');
   if(driverEl){
     if(advance>0){
-      let label;
-      if(mismatch>0) label=`↩️ Должен сдать ещё: ${fmtN(mismatch)} (остаток аванса: ${fmtN(remainingAdvance)})`;
-      else if(mismatch<0) label=`⚠️ Возврат больше остатка аванса на: ${fmtN(-mismatch)} (остаток: ${fmtN(remainingAdvance)})`;
-      else label=`✅ Аванс закрыт полностью (остаток: ${fmtN(remainingAdvance)})`;
+      let label,color;
+      if(remainingAdvance<0){
+        // Водитель потратил больше выданного аванса — из своих. Компания должна ему,
+        // это не то же самое, что "не сдал остаток" (баг найден пользователем 2026-07-19).
+        label=cashReturn>0
+          ? `⚠️ Аванса не хватило (перерасход ${fmtN(-remainingAdvance)}), а указан возврат ${fmtN(cashReturn)} — проверьте`
+          : `💸 Компания должна водителю: ${fmtN(-remainingAdvance)} (потратил сверх аванса из своих)`;
+        color='var(--red)';
+      } else if(mismatch>0){
+        label=`↩️ Должен сдать ещё: ${fmtN(mismatch)} (остаток аванса: ${fmtN(remainingAdvance)})`;
+        color='var(--amber)';
+      } else if(mismatch<0){
+        label=`⚠️ Возврат больше остатка аванса на: ${fmtN(-mismatch)} (остаток: ${fmtN(remainingAdvance)})`;
+        color='var(--red)';
+      } else {
+        label=`✅ Аванс закрыт полностью (остаток: ${fmtN(remainingAdvance)})`;
+        color='var(--green)';
+      }
       driverEl.textContent=label;
-      driverEl.style.color=mismatch>0?'var(--amber)':mismatch<0?'var(--red)':'var(--green)';
+      driverEl.style.color=color;
     }else{driverEl.textContent='Аванс не выдавался';driverEl.style.color='var(--text3)';}
   }
 }
@@ -9517,15 +9531,22 @@ function openTripDetail(tripId){
       <div class="bs-card"><div class="bsl">Долг</div><div class="bsv ${debt>0?'red':'green'}">${fmtN(debt)}</div></div>
       <div class="bs-card"><div class="bsl">Пробег</div><div class="bsv">${km>0?fmtN(km)+' км':'—'}</div></div>
     </div>`:''}
-    ${advance>0?`<div style="padding:10px 14px;background:var(--surface2);border-radius:var(--radius-lg);border-left:3px solid var(--amber);margin-bottom:12px;">
+    ${advance>0?(()=>{
+      const advSpent=tripAdvanceSpent(trip);
+      const advRemaining=advance-advSpent;
+      const owedLabel = advRemaining<0?'Должны водителю':'Остаток у водителя';
+      const owedVal = Math.abs(advRemaining);
+      const owedColor = advRemaining<0?'red':'';
+      return `<div style="padding:10px 14px;background:var(--surface2);border-radius:var(--radius-lg);border-left:3px solid var(--amber);margin-bottom:12px;">
       <div style="font-size:12px;font-weight:600;color:var(--amber);margin-bottom:8px;">💵 Расчёт с водителем</div>
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;">
         <div class="bs-card"><div class="bsl">Выдано авансом</div><div class="bsv amber">${fmtN(advance)}</div></div>
-        <div class="bs-card"><div class="bsl">Потрачено из аванса</div><div class="bsv red">${fmtN((trip.expenses||[]).filter(e=>e.wallet==='driver').reduce((s,e)=>s+e.amount,0))}</div></div>
-        <div class="bs-card"><div class="bsl">Остаток у водителя</div><div class="bsv">${fmtN(Math.max(0,advance-(trip.expenses||[]).filter(e=>e.wallet==='driver').reduce((s,e)=>s+e.amount,0)))}</div></div>
+        <div class="bs-card"><div class="bsl">Потрачено из аванса</div><div class="bsv red">${fmtN(advSpent)}</div></div>
+        <div class="bs-card"><div class="bsl">${owedLabel}</div><div class="bsv ${owedColor}">${fmtN(owedVal)}</div></div>
         <div class="bs-card"><div class="bsl">Сдал остаток</div><div class="bsv green">${trip.cashReturn>0?fmtN(trip.cashReturn):'—'}</div></div>
       </div>
-    </div>`:''}
+    </div>`;
+    })():''}
     ${km>0||fuelUsed>0?`<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px;">
       ${km>0?`<div class="bs-card"><div class="bsl">Пробег</div><div class="bsv">${fmtN(km)} км</div></div>`:''}
       ${fuelUsed>0?`<div class="bs-card"><div class="bsl">Топливо</div><div class="bsv">${fuelUsed.toFixed(1)} л</div></div>`:''}
