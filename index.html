@@ -3441,6 +3441,12 @@ function populateModal(id) {
     const el=document.getElementById(sid);
     if(el) el.innerHTML=opts.map(o=>`<option value="${o.v}">${o.l}</option>`).join('');
   });
+  // tt-fleet/td-fleet только что перезаполнены и браузер сам выбрал первый вариант,
+  // но onchange при этом не срабатывает — без явного вызова список рейсов (tt-trip/td-trip)
+  // остаётся пустым, пока пользователь вручную не переключит ПС на другой (баг найден
+  // пользователем 2026-07-19: привязка ТИР/Дозвол к рейсу "не работала").
+  if(id==='modal-transfer-tir') onTirFleetSelect();
+  if(id==='modal-transfer-dozv') onDozFleetSelect();
 
   // Reset return comp blocks
   const rtComp=document.getElementById('rt-comp-block');
