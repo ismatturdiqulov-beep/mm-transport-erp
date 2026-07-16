@@ -2286,7 +2286,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
       <div class="form-grid-2">
         <div class="form-row"><label>Страна</label><input type="text" id="te-country" placeholder="Россия..."></div>
         <div class="form-row"><label>Из кошелька</label>
-          <select id="te-wallet">
+          <select id="te-wallet" onchange="onTeWalletChange()">
             <option value="cash">💵 Наличные</option>
             <option value="card">💳 Картага</option>
             <option value="bank">🏦 Р/С</option>
@@ -2294,6 +2294,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
           </select>
         </div>
       </div>
+      <div id="te-advance-info" style="display:none;"></div>
       <div class="form-row"><label>Описание</label><input type="text" id="te-desc" placeholder="АЗС Лукойл..."></div>
     </div>
     <div class="modal-foot">
@@ -2446,10 +2447,29 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
     <div class="modal-body">
       <div id="tp-summary" style="margin-bottom:12px;"></div>
       <div class="form-grid-2">
-        <div class="form-row"><label>Сумма *</label><input type="text" inputmode="numeric" class="fmt-money" id="tp-amount" placeholder="0"></div>
-        <div class="form-row"><label>Дата</label><input type="date" id="tp-date"></div>
+        <div class="form-row"><label>Сумма *</label><input type="text" inputmode="numeric" class="fmt-money" id="tp-amount" placeholder="0" oninput="calcTpUzs()"></div>
+        <div class="form-row"><label>Валюта</label>
+          <select id="tp-currency" onchange="onTpCurrencyChange()">
+            <option value="UZS">🇺🇿 UZS (сум)</option>
+            <option value="USD">🇺🇸 USD</option>
+            <option value="EUR">🇪🇺 EUR</option>
+            <option value="RUB">🇷🇺 RUB</option>
+            <option value="TRY">🇹🇷 TRY</option>
+            <option value="KZT">🇰🇿 KZT</option>
+          </select>
+        </div>
       </div>
+      <div id="tp-rate-row" style="display:none;">
+        <div class="form-grid-2">
+          <div class="form-row"><label>Курс к сум (ручной)</label><input type="number" id="tp-custom-rate" placeholder="0" oninput="calcTpUzs()"></div>
+          <div class="form-row"><label style="font-size:11px;color:var(--text3);">Из настроек: <span id="tp-settings-rate">—</span></label>
+            <button class="btn xs" onclick="useTpSettingsRate()" style="margin-top:4px;">↺ Из настроек</button>
+          </div>
+        </div>
+      </div>
+      <div id="tp-uzs-preview" style="font-size:12px;color:var(--text3);margin:-4px 0 8px;"></div>
       <div class="form-grid-2">
+        <div class="form-row"><label>Дата</label><input type="date" id="tp-date"></div>
         <div class="form-row"><label>Кошелёк *</label>
           <select id="tp-wallet">
             <option value="cash">💵 Наличные</option>
@@ -2457,9 +2477,9 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
             <option value="bank">🏦 Расчётный счёт</option>
           </select>
         </div>
-        <div class="form-row"><label>Плечо</label>
-          <select id="tp-leg"></select>
-        </div>
+      </div>
+      <div class="form-row"><label>Плечо</label>
+        <select id="tp-leg"></select>
       </div>
       <div class="form-row"><label>От кого (заказчик)</label>
         <select id="tp-from"><option value="">— выберите заказчика —</option></select>
@@ -2907,6 +2927,7 @@ function mapTripFromDb(t, legs, expenses, payments, surcharges) {
       id: p.id, amount: p.amount||0, date: p.date||'', wallet: p.method||'',
       legIdx: p.leg_id ? legIdOrder.indexOf(p.leg_id) : 0,
       note: p.note||'', fromId: p.from_kontragent_id||'',
+      currency: p.currency||'UZS', fxRate: p.fx_rate, amountOrig: p.amount_orig,
     })),
     surcharges: surcharges.filter(s => s.trip_id === t.id).map(s => ({
       id: s.id, type: s.kind||'', cat: s.category||'',
@@ -4442,6 +4463,41 @@ function toUZS(amount, currency, customRate){
   if(!currency||currency==='UZS') return amount;
   const rate = customRate>0 ? customRate : (FX_RATES[currency]||1);
   return Math.round(amount*rate);
+}
+
+// --- Валюта оплаты по рейсу (тот же паттерн, что и у расходов te-currency) ---
+function onTpCurrencyChange(){
+  const currency=(document.getElementById('tp-currency')||{}).value||'UZS';
+  const rateRow=document.getElementById('tp-rate-row');
+  const settingsEl=document.getElementById('tp-settings-rate');
+  if(rateRow) rateRow.style.display=currency!=='UZS'?'block':'none';
+  if(settingsEl&&currency!=='UZS'){
+    const rate=FX_RATES[currency]||0;
+    settingsEl.textContent=rate>0?fmtN(rate)+' сум':'не задан';
+    const customEl=document.getElementById('tp-custom-rate');
+    if(customEl&&(!customEl.value||customEl.value==='0')) customEl.value=rate||'';
+  }
+  calcTpUzs();
+}
+function useTpSettingsRate(){
+  const currency=(document.getElementById('tp-currency')||{}).value||'UZS';
+  const customEl=document.getElementById('tp-custom-rate');
+  if(customEl) customEl.value=FX_RATES[currency]||'';
+  calcTpUzs();
+}
+function calcTpUzs(){
+  const amount=numVal('tp-amount');
+  const currency=(document.getElementById('tp-currency')||{}).value||'UZS';
+  const customRate=parseFloat((document.getElementById('tp-custom-rate')||{}).value)||0;
+  const uzsEl=document.getElementById('tp-uzs-preview');
+  if(!uzsEl) return;
+  if(currency!=='UZS'&&amount>0){
+    const amountUzs=toUZS(amount,currency,customRate);
+    const usedRate=customRate>0?customRate:(FX_RATES[currency]||0);
+    uzsEl.textContent=`≈ ${fmtN(amountUzs)} сум (курс: 1 ${currency} = ${fmtN(usedRate)} сум)`;
+  } else {
+    uzsEl.textContent='';
+  }
 }
 
 function saveDozPrices(){
@@ -8448,6 +8504,12 @@ let _tripTirIds=[], _tripDozvIds=[];
 function tripGetTruck(trip){return trip.truckId?TRANSPORT.find(t=>t.id===trip.truckId)||null:null;}
 function tripGetDriver(trip){return trip.driverId?PEOPLE.find(p=>p.id===trip.driverId)||null:null;}
 function tripTotalExpenses(trip){return (trip.expenses||[]).reduce((s,e)=>s+e.amount,0);}
+// Остаток аванса, выданного водителю: выдано наличными на руки (kassa type='payout') минус
+// то, что он уже потратил ИЗ ЭТОГО аванса (расходы с кошельком wallet==='driver'). Расходы,
+// оплаченные картой/р-с компании, водителя не касаются и на остаток не влияют.
+function tripAdvanceIssued(trip){return KASSA.filter(k=>k.tripId===trip.id&&k.type==='payout').reduce((s,k)=>s+k.amount,0);}
+function tripAdvanceSpent(trip){return (trip.expenses||[]).filter(e=>e.wallet==='driver').reduce((s,e)=>s+e.amount,0);}
+function tripAdvanceRemaining(trip){return tripAdvanceIssued(trip)-tripAdvanceSpent(trip);}
 // Штраф/доплата привязана к плечу (legIdx). type:'charge' — доплата клиенту (увеличивает долг), 'discount' — штраф/скидка (уменьшает долг)
 function tripLegSurcharges(trip,legIdx){
   return (trip.surcharges||[]).filter(s=>s.legIdx===legIdx).reduce((sum,s)=>sum+(s.type==='discount'?-s.amount:s.amount),0);
@@ -8743,6 +8805,22 @@ function useSettingsRate(){
   if(customEl) customEl.value=FX_RATES[currency]||'';
   calcFuelPrice();
 }
+function onTeWalletChange(){
+  const infoEl=document.getElementById('te-advance-info');
+  if(!infoEl) return;
+  const wallet=(document.getElementById('te-wallet')||{}).value||'cash';
+  const trip=TRIPS.find(t=>t.id===_expTripId);
+  if(wallet!=='driver'||!trip){ infoEl.style.display='none'; return; }
+  const issued=tripAdvanceIssued(trip);
+  const spent=tripAdvanceSpent(trip);
+  const remaining=issued-spent;
+  infoEl.style.display='block';
+  if(issued<=0){
+    infoEl.innerHTML='<div class="warn-box">⚠️ Водителю не выдавался аванс по этому рейсу — расход всё равно спишется как оплаченный «из своих», без движения по кассе.</div>';
+  } else {
+    infoEl.innerHTML=`<div class="info-box">Аванс выдан: <b>${fmtN(issued)}</b> · Уже потрачено из аванса: <b>${fmtN(spent)}</b> · Останется: <b style="color:${remaining>=0?'var(--green)':'var(--red)'}">${fmtN(remaining)}</b> сум</div>`;
+  }
+}
 function openTripExpense(tripId){
   _expTripId=tripId;
   _editExpId=null;
@@ -8756,6 +8834,7 @@ function openTripExpense(tripId){
   const uzsEl=document.getElementById('te-fuel-uzs');if(uzsEl)uzsEl.textContent='';
   const rateRow=document.getElementById('te-rate-row');if(rateRow)rateRow.style.display='none';
   toggleFuelFields('fuel');
+  onTeWalletChange();
   openModal('modal-trip-expense');
 }
 function editTripExpense(tripId,expId){
@@ -8777,6 +8856,7 @@ function editTripExpense(tripId,expId){
   toggleFuelFields(exp.cat);
   onTeCurrencyChange();
   calcFuelPrice();
+  onTeWalletChange();
   openModal('modal-trip-expense');
 }
 function finishTripCheck(){
@@ -8970,6 +9050,10 @@ function openTripPayment(tripId){
   document.getElementById('tp-amount').value=debt>0?formatNumberSpaces(String(debt)):'';
   document.getElementById('tp-note').value='';
   document.getElementById('tp-wallet').value='bank';
+  document.getElementById('tp-currency').value='UZS';
+  document.getElementById('tp-custom-rate').value='';
+  const tpRateRow=document.getElementById('tp-rate-row');if(tpRateRow)tpRateRow.style.display='none';
+  const tpUzsPreview=document.getElementById('tp-uzs-preview');if(tpUzsPreview)tpUzsPreview.textContent='';
   const legs=trip.legs||[];
   const legSel=document.getElementById('tp-leg');
   if(legSel)legSel.innerHTML=legs.map((l,i)=>`<option value="${i}">Плечо ${i+1}: ${l.from}→${l.to} (${fmtN(tripLegEffectiveRate(trip,i))})</option>`).join('');
@@ -8987,9 +9071,13 @@ function openTripPayment(tripId){
   openModal('modal-trip-payment');
 }
 async function _saveTripPaymentImpl(){
-  const amount=numVal('tp-amount');
-  if(!amount){alert('Укажите сумму');return;}
+  const amountOrig=numVal('tp-amount');
+  if(!amountOrig){alert('Укажите сумму');return;}
   const trip=TRIPS.find(t=>t.id===_payTripId);if(!trip)return;
+  const currency=(document.getElementById('tp-currency')||{}).value||'UZS';
+  const customRate=parseFloat((document.getElementById('tp-custom-rate')||{}).value)||0;
+  const amount=toUZS(amountOrig,currency,customRate);
+  const fxRate=customRate>0?customRate:(FX_RATES[currency]||0);
   const legIdx=parseInt(document.getElementById('tp-leg').value)||0;
   const wallet=document.getElementById('tp-wallet').value;
   const note=document.getElementById('tp-note').value;
@@ -8997,18 +9085,21 @@ async function _saveTripPaymentImpl(){
   const fromId=(document.getElementById('tp-from')||{}).value||'';
   const fromName=fromId?(KONTRAGENTY.find(k=>k.id===fromId)||{}).name||'':'';
   const leg=(trip.legs||[])[legIdx];
-  const paymentRecord = { trip_id:trip.id, date, amount, method:wallet, note, leg_id: leg?leg.id:null, from_kontragent_id: fromId||null };
+  const paymentRecord = { trip_id:trip.id, date, amount, method:wallet, note, leg_id: leg?leg.id:null, from_kontragent_id: fromId||null,
+    currency, fx_rate:fxRate, amount_orig:amountOrig };
   const { data, error } = await sbClient.from('trip_payments').insert(paymentRecord).select().single();
   if (error) { alert('Не удалось сохранить оплату: '+error.message); return; }
   trip.payments=trip.payments||[];
-  trip.payments.push({id:data.id,amount,date,wallet,legIdx,note,fromId});
+  trip.payments.push({id:data.id,amount,date,wallet,legIdx,note,fromId,currency,fxRate,amountOrig});
   const legRoute=leg?`${leg.from}→${leg.to}`:(trip.legs||[{}])[0].from+'→'+(trip.legs||[{}])[0].to;
+  const currNote=currency!=='UZS'?` (${amountOrig} ${currency})`:'';
   const kassaRecord = { company_id:CURRENT_PROFILE.company_id, wallet, type:'trip_payment', date, category:'trip_payment',
-    from_name:fromName, trip_id:trip.id, description:`Оплата рейса ${legRoute}${note?' ('+note+')':''}`, amount };
+    from_name:fromName, trip_id:trip.id, description:`Оплата рейса ${legRoute}${currNote}${note?' ('+note+')':''}`, amount };
   const { data:kData, error:kErr } = await sbClient.from('kassa').insert(kassaRecord).select().single();
   if (!kErr) KASSA.push(mapKassaFromDb(kData));
   closeModal('modal-trip-payment');
-  toast('Оплата записана: '+fmtN(amount));renderTrips();
+  const currStr=currency!=='UZS'?` (${amountOrig} ${currency})`:'';
+  toast('Оплата записана: '+fmtN(amount)+' сум'+currStr);renderTrips();
 }
 
 // --- ЗАВЕРШЕНИЕ ---
@@ -9042,14 +9133,23 @@ function calcTripFinish(){
   if(el('tf-calc-exp'))    el('tf-calc-exp').textContent   =fmtN(expenses+salary);
   const profEl=el('tf-calc-profit');
   if(profEl){profEl.textContent=fmtN(profit);profEl.className='bsv '+(profit>=0?'green':'red');}
-  const advance=KASSA.filter(k=>k.tripId===trip.id&&k.type==='payout').reduce((s,k)=>s+k.amount,0);
-  const driverBalance=advance-expenses-salary+cashReturn;
+  // Аванс и ЗП — независимые друг от друга величины: аванс тратится ТОЛЬКО на расходы,
+  // оплаченные именно "из аванса водителя" (wallet==='driver'), а не на все расходы рейса
+  // (часть могла быть оплачена картой/р-с компании — водителя это не касается). ЗП —
+  // отдельная выплата из кассы, не вычитается из остатка аванса на руках у водителя.
+  const advance=tripAdvanceIssued(trip);
+  const advanceSpent=tripAdvanceSpent(trip);
+  const remainingAdvance=advance-advanceSpent;
+  const mismatch=remainingAdvance-cashReturn;
   const driverEl=el('tf-calc-driver');
   if(driverEl){
     if(advance>0){
-      const label=driverBalance>0?'↩️ Должен сдать: '+fmtN(driverBalance):driverBalance<0?'⚠️ Перерасход: '+fmtN(-driverBalance):'✅ В расчёте';
+      let label;
+      if(mismatch>0) label=`↩️ Должен сдать ещё: ${fmtN(mismatch)} (остаток аванса: ${fmtN(remainingAdvance)})`;
+      else if(mismatch<0) label=`⚠️ Возврат больше остатка аванса на: ${fmtN(-mismatch)} (остаток: ${fmtN(remainingAdvance)})`;
+      else label=`✅ Аванс закрыт полностью (остаток: ${fmtN(remainingAdvance)})`;
       driverEl.textContent=label;
-      driverEl.style.color=driverBalance>0?'var(--amber)':driverBalance<0?'var(--red)':'var(--green)';
+      driverEl.style.color=mismatch>0?'var(--amber)':mismatch<0?'var(--red)':'var(--green)';
     }else{driverEl.textContent='Аванс не выдавался';driverEl.style.color='var(--text3)';}
   }
 }
@@ -9078,11 +9178,15 @@ function openFinishTrip(tripId){
   if(fuelStartEl) fuelStartEl.value=(trip.fuelStart!=null&&trip.fuelStart>=0)?trip.fuelStart:'';
   if(fuelEndEl)   fuelEndEl.value=(trip.fuelEnd!=null&&trip.fuelEnd>=0)?trip.fuelEnd:'';
   document.getElementById('tf-adblue-end').value=(trip.adblueEnd!=null&&trip.adblueEnd>=0)?trip.adblueEnd:'';
-  // ЗП и возврат
+  // ЗП и возврат — возврат остатка предлагаем сразу правильной суммой (аванс минус то,
+  // что уже списано именно "из аванса водителя"), зарплата отдельно, вручную
   const salaryEl=document.getElementById('tf-salary');
   const retEl=document.getElementById('tf-cash-return');
   if(salaryEl) salaryEl.value='';
-  if(retEl) retEl.value='';
+  if(retEl){
+    const remainingAdvance=tripAdvanceRemaining(trip);
+    retEl.value=remainingAdvance>0?formatNumberSpaces(String(remainingAdvance)):'';
+  }
   document.getElementById('tf-note').value='';
   // Аванс водителя
   const advInfo=document.getElementById('tf-advance-info');
@@ -9253,7 +9357,7 @@ function openTripDetail(tripId){
     <td>${legs[p.legIdx]?'Плечо '+(p.legIdx+1):'—'}</td>
     <td>${walletLabel[p.wallet]||p.wallet}</td>
     <td>${p.note||'—'}</td>
-    <td style="text-align:right;font-family:var(--mono);color:var(--green);font-weight:600">${fmtN(p.amount)}</td>
+    <td style="text-align:right;font-family:var(--mono);color:var(--green);font-weight:600">${fmtN(p.amount)}${p.currency&&p.currency!=='UZS'?`<div style="font-weight:400;color:var(--text3);font-size:11px;">${p.amountOrig} ${p.currency}</div>`:''}</td>
   </tr>`).join('');
 
   const surcharges=trip.surcharges||[];
@@ -9461,7 +9565,8 @@ function printTripReport(tripId){
   const payRows=payments.map(p=>{
     const fromName=p.fromId?(KONTRAGENTY.find(k=>k.id===p.fromId)||{}).name||'':'';
     const wn={cash:'Наличные',card:'Карта',bank:'Р/С'};
-    return `<tr><td>${fmt(p.date)}</td><td>${legs[p.legIdx]?legs[p.legIdx].from+'→'+legs[p.legIdx].to:'—'}</td><td>${fromName||'—'}</td><td>${wn[p.wallet]||p.wallet}</td><td>${p.note||'—'}</td><td style="text-align:right;color:green">${fmtN(p.amount)}</td></tr>`;
+    const pCurrStr=p.currency&&p.currency!=='UZS'?` (${p.amountOrig} ${p.currency})`:'';
+    return `<tr><td>${fmt(p.date)}</td><td>${legs[p.legIdx]?legs[p.legIdx].from+'→'+legs[p.legIdx].to:'—'}</td><td>${fromName||'—'}</td><td>${wn[p.wallet]||p.wallet}</td><td>${p.note||'—'}</td><td style="text-align:right;color:green">${fmtN(p.amount)}${pCurrStr}</td></tr>`;
   }).join('');
 
   const payoutRows=payouts.map(p=>`<tr><td>${fmt(p.date)}</td><td>${p.to||'—'}</td><td>${p.desc||'—'}</td><td style="text-align:right;color:orange">${fmtN(p.amount)}</td></tr>`).join('');
