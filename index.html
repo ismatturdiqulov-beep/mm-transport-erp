@@ -277,7 +277,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
 .login-box .li-hint{font-size:11px;color:var(--text3);margin-top:12px;line-height:1.5;}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 </head>
 <body>
 
@@ -551,9 +551,12 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
     <div class="section" style="padding:20px;margin-top:14px;">
       <div style="font-size:13px;font-weight:600;margin-bottom:4px;">📥 Импорт данных из Excel</div>
       <div style="font-size:11.5px;color:var(--text3);margin-bottom:14px;">
-        Перенос базы из Excel — Контрагенты, Транспорт, Водители, Подвижной состав. Скачайте шаблон,
-        заполните (не меняя названия листов и колонок), затем загрузите обратно — перед сохранением
-        покажем предпросмотр, ничего не запишется без вашего подтверждения.
+        Перенос коренных данных из Excel — только Контрагенты и Транспорт (это данные, от которых
+        зависит всё остальное). Водителей и Подвижной состав после этого удобнее заводить прямо в
+        приложении — они уже подтянут ваших контрагентов и транспорт из выпадающих списков. В шаблоне
+        поля "Тип" — выпадающий список в самом Excel, вводить вручную не нужно, только выбрать.
+        Скачайте шаблон, заполните (не меняя названия листов и колонок), затем загрузите обратно —
+        перед сохранением покажем предпросмотр, ничего не запишется без подтверждения.
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
         <button class="btn" onclick="downloadImportTemplate()">📄 Скачать шаблон Excel</button>
@@ -6190,75 +6193,79 @@ async function _deleteFinanceEntryImpl(id){
 const deleteFinanceEntry = guardDoubleSubmit('deleteFinanceEntry', (...a)=>_deleteFinanceEntryImpl(...a));
 
 // ========= ИМПОРТ ИЗ EXCEL =========
-// Перенос "мастер-данных" (не истории операций): Контрагенты → Транспорт → Водители →
-// Подвижной состав — именно в этом порядке, потому что каждый следующий лист ссылается
-// на предыдущие по названию/ФИО (см. аудит связей 2026-07-16). Загруженный файл сначала
-// только проверяется и показывается в предпросмотре — ничего не пишется в базу, пока
-// пользователь явно не нажмёт "Импортировать".
+// Перенос только коренных данных: Контрагенты → Транспорт (в этом порядке — Транспорт
+// может ссылаться на Контрагента как на ответственного). Водителей и Подвижной состав
+// сюда сознательно не включаем (per user 2026-07-17) — это связки поверх Контрагентов и
+// Транспорта, их удобнее и безопаснее заводить прямо в приложении, где выбор идёт
+// готовыми выпадающими списками, а не текстом. Поля "Тип" в самом Excel-шаблоне — тоже
+// настоящий выпадающий список (Excel data validation), чтобы не было произвольных
+// формулировок, которые потом придётся вручную разбирать.
+const CONTRAGENT_TYPE_OPTIONS=['Арендатор','Водитель ММ','Заказчик','Прочий','Сервис'];
+const TRANSPORT_TYPES=['Тягач','Прицеп','Полуприцеп','Фургон','Легковой'];
+const OWNER_TYPE_OPTIONS=['ММ','Аренда'];
+
 const IMPORT_SHEETS=[
   { name:'Контрагенты', key:'kontragenty', columns:[
-    {header:'Наименование*', key:'name', required:true},
-    {header:'Короткое имя', key:'short'},
-    {header:'Тип* (Арендатор/Водитель ММ/Заказчик/Прочий/Сервис)', key:'typeLabel', required:true},
-    {header:'Телефон', key:'phone'},
-    {header:'Паспорт', key:'passport'},
-    {header:'№ договора', key:'contractNum'},
-    {header:'Дата договора (ГГГГ-ММ-ДД)', key:'contractDate'},
-    {header:'Договор до (ГГГГ-ММ-ДД)', key:'contractEnd'},
-    {header:'Примечание', key:'note'},
+    {header:'Наименование*', key:'name', required:true, width:28},
+    {header:'Короткое имя', key:'short', width:16},
+    {header:'Тип*', key:'typeLabel', required:true, width:16, list:CONTRAGENT_TYPE_OPTIONS},
+    {header:'Телефон', key:'phone', width:16},
+    {header:'Паспорт', key:'passport', width:14},
+    {header:'№ договора', key:'contractNum', width:14},
+    {header:'Дата договора (ГГГГ-ММ-ДД)', key:'contractDate', width:20},
+    {header:'Договор до (ГГГГ-ММ-ДД)', key:'contractEnd', width:20},
+    {header:'Примечание', key:'note', width:24},
   ]},
   { name:'Транспорт', key:'transport', columns:[
-    {header:'Позывной*', key:'callsign', required:true},
-    {header:'Тип* (Тягач/Прицеп/Полуприцеп/Фургон/Легковой)', key:'typeLabel', required:true},
-    {header:'Гос.номер', key:'plate'},
-    {header:'Марка', key:'brand'},
-    {header:'Модель', key:'model'},
-    {header:'Владение* (ММ/Аренда)', key:'ownerLabel', required:true},
-    {header:'Год', key:'year'},
-    {header:'Ответственный (контрагент)', key:'respName'},
-    {header:'Техпаспорт №', key:'techpass'},
-    {header:'VIN', key:'vin'},
-    {header:'Начало договора (ГГГГ-ММ-ДД)', key:'contractStart'},
-    {header:'Договор до (ГГГГ-ММ-ДД, обяз. для Аренды)', key:'contractEnd'},
-  ]},
-  { name:'Водители', key:'people', columns:[
-    {header:'ФИО*', key:'name', required:true},
-    {header:'Короткое имя', key:'short'},
-    {header:'Контрагент (если тот же человек)', key:'kontragentName'},
-    {header:'ПИНФЛ', key:'pinfl'},
-    {header:'Дата рождения (ГГГГ-ММ-ДД)', key:'birth'},
-    {header:'Телефон', key:'phone'},
-    {header:'Паспорт', key:'passport'},
-    {header:'Адрес', key:'address'},
-  ]},
-  { name:'Подвижной состав', key:'fleet', columns:[
-    {header:'Контрагент*', key:'kontragentName', required:true},
-    {header:'Тягач* (позывной)', key:'truckCallsign', required:true},
-    {header:'Прицеп (позывной)', key:'trailerCallsign'},
-    {header:'Водитель (ФИО)', key:'driverName'},
-    {header:'Название ПС', key:'label'},
-    {header:'План начисления (сум)', key:'plan'},
-    {header:'Тип плана (Платный/Текин/Водитель ММ)', key:'planTypeLabel'},
-    {header:'Договор до (ГГГГ-ММ-ДД)', key:'contractEnd'},
-    {header:'Примечание', key:'note'},
+    {header:'Позывной*', key:'callsign', required:true, width:16},
+    {header:'Тип*', key:'typeLabel', required:true, width:14, list:TRANSPORT_TYPES},
+    {header:'Гос.номер', key:'plate', width:14},
+    {header:'Марка', key:'brand', width:14},
+    {header:'Модель', key:'model', width:14},
+    {header:'Владение*', key:'ownerLabel', required:true, width:12, list:OWNER_TYPE_OPTIONS},
+    {header:'Год', key:'year', width:8},
+    {header:'Ответственный (контрагент)', key:'respName', width:24},
+    {header:'Техпаспорт №', key:'techpass', width:16},
+    {header:'VIN', key:'vin', width:20},
+    {header:'Начало договора (ГГГГ-ММ-ДД)', key:'contractStart', width:20},
+    {header:'Договор до (ГГГГ-ММ-ДД, обяз. для Аренды)', key:'contractEnd', width:24},
   ]},
 ];
 
-function downloadImportTemplate(){
-  const wb=XLSX.utils.book_new();
+async function downloadImportTemplate(){
+  const wb=new ExcelJS.Workbook();
   IMPORT_SHEETS.forEach(sheet=>{
-    const ws=XLSX.utils.aoa_to_sheet([sheet.columns.map(c=>c.header)]);
-    XLSX.utils.book_append_sheet(wb, ws, sheet.name);
+    const ws=wb.addWorksheet(sheet.name);
+    ws.columns=sheet.columns.map(c=>({header:c.header, key:c.key, width:c.width||16}));
+    ws.getRow(1).font={bold:true};
+    sheet.columns.forEach((col,colIdx)=>{
+      if(!col.list) return;
+      const colLetter=ws.getColumn(colIdx+1).letter;
+      for(let row=2; row<=500; row++){
+        ws.getCell(`${colLetter}${row}`).dataValidation={
+          type:'list', allowBlank:true, formulae:[`"${col.list.join(',')}"`],
+          showErrorMessage:true, errorStyle:'stop', errorTitle:'Неверное значение',
+          error:'Выберите значение из выпадающего списка', promptTitle:col.header, prompt:'Выберите из списка',
+        };
+      }
+    });
   });
-  XLSX.writeFile(wb, 'MM_Transport_Шаблон_импорта.xlsx');
+  const buffer=await wb.xlsx.writeBuffer();
+  const blob=new Blob([buffer], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url; a.download='MM_Transport_Шаблон_импорта.xlsx';
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
 }
 
 function handleImportFile(event){
   const file=event.target.files[0]; if(!file) return;
   const reader=new FileReader();
-  reader.onload=(e)=>{
+  reader.onload=async (e)=>{
     try{
-      const wb=XLSX.read(new Uint8Array(e.target.result), {type:'array'});
+      const wb=new ExcelJS.Workbook();
+      await wb.xlsx.load(e.target.result);
       processImportWorkbook(wb);
     }catch(err){ alert('Не удалось прочитать файл: '+err.message); }
   };
@@ -6277,36 +6284,42 @@ function matchKontragentType(label){
   return null;
 }
 const KT_TYPE_LABEL={tenant:'Арендатор',mm:'Водитель ММ',client:'Заказчик',service:'Сервис',other:'Прочий'};
-const TRANSPORT_TYPES=['Тягач','Прицеп','Полуприцеп','Фургон','Легковой'];
 function matchTransportType(label){ return TRANSPORT_TYPES.find(t=>norm(t)===norm(label))||null; }
 function matchOwner(label){ const l=norm(label); if(l==='мм') return 'ММ'; if(l==='аренда') return 'Аренда'; return null; }
-function matchPlanType(label){
-  if(!label) return 'paid';
-  const l=norm(label);
-  if(l.includes('текин')) return 'tekin';
-  if(l.includes('мм')) return 'mm';
-  if(l.includes('плат')) return 'paid';
-  return null;
-}
 
-let _importRows=null; // {kontragenty:[...], transport:[...], people:[...], fleet:[...]} после валидации
+let _importRows=null; // {kontragenty:[...], transport:[...]} после валидации
+
+function excelCellText(val){
+  if(val==null) return '';
+  if(val instanceof Date) return val.toISOString().slice(0,10);
+  if(typeof val==='object' && val.result!==undefined) return String(val.result).trim(); // формула
+  if(typeof val==='object' && val.text!==undefined) return String(val.text).trim(); // rich text
+  return String(val).trim();
+}
 
 function processImportWorkbook(wb){
   const parsed={};
   let sheetsFound=0;
   IMPORT_SHEETS.forEach(sheetDef=>{
-    const wsName=wb.SheetNames.find(n=>n.trim()===sheetDef.name);
-    if(!wsName){ parsed[sheetDef.key]=[]; return; }
+    const ws=wb.worksheets.find(w=>w.name.trim()===sheetDef.name);
+    if(!ws){ parsed[sheetDef.key]=[]; return; }
     sheetsFound++;
-    const raw=XLSX.utils.sheet_to_json(wb.Sheets[wsName], {defval:''});
-    parsed[sheetDef.key]=raw.map((row,i)=>{
-      const obj={_row:i+2};
+    const headerToCol={};
+    ws.getRow(1).eachCell({includeEmpty:false},(cell,colNumber)=>{ headerToCol[excelCellText(cell.value)]=colNumber; });
+    const rows=[];
+    ws.eachRow((row,rowNumber)=>{
+      if(rowNumber===1) return;
+      const obj={_row:rowNumber};
+      let hasData=false;
       sheetDef.columns.forEach(col=>{
-        const matchKey=Object.keys(row).find(k=>k.trim()===col.header.trim());
-        obj[col.key]=matchKey?String(row[matchKey]).trim():'';
+        const colIdx=headerToCol[col.header.trim()];
+        const val=colIdx?excelCellText(row.getCell(colIdx).value):'';
+        obj[col.key]=val;
+        if(val) hasData=true;
       });
-      return obj;
-    }).filter(obj=>sheetDef.columns.some(c=>obj[c.key]));
+      if(hasData) rows.push(obj);
+    });
+    parsed[sheetDef.key]=rows;
   });
   if(!sheetsFound){
     alert('Не нашёл ни одного знакомого листа в файле. Использовали ли вы скачанный отсюда шаблон? Названия листов и колонок менять нельзя.');
@@ -6315,7 +6328,7 @@ function processImportWorkbook(wb){
   validateAndPreviewImport(parsed);
 }
 
-// Проверяет все 4 листа в порядке зависимостей и находит для каждой строки: будет
+// Проверяет оба листа в порядке зависимостей и находит для каждой строки: будет
 // создана новая запись / уже существует (используем существующую) / ошибка (пропустим).
 function validateAndPreviewImport(parsed){
   const rows=[]; // {sheet, rowNum, summary, status:'new'|'reuse'|'error', message}
@@ -6327,7 +6340,7 @@ function validateAndPreviewImport(parsed){
     const summary=r.name+(r.typeLabel?' · '+r.typeLabel:'');
     if(!r.name){ rows.push({sheet:'Контрагенты',rowNum:r._row,summary,status:'error',message:'Не указано наименование'}); return; }
     const type=matchKontragentType(r.typeLabel);
-    if(!type){ rows.push({sheet:'Контрагенты',rowNum:r._row,summary,status:'error',message:'Не распознан тип: "'+r.typeLabel+'"'}); return; }
+    if(!type){ rows.push({sheet:'Контрагенты',rowNum:r._row,summary,status:'error',message:'Не распознан тип: "'+r.typeLabel+'" (выберите из выпадающего списка)'}); return; }
     r._type=type;
     const key=norm(r.name);
     if(kgNameSeen.has(key)){
@@ -6346,7 +6359,7 @@ function validateAndPreviewImport(parsed){
     const summary=r.callsign+(r.typeLabel?' · '+r.typeLabel:'')+(r.plate?' · '+r.plate:'');
     if(!r.callsign){ rows.push({sheet:'Транспорт',rowNum:r._row,summary,status:'error',message:'Не указан позывной'}); return; }
     const type=matchTransportType(r.typeLabel);
-    if(!type){ rows.push({sheet:'Транспорт',rowNum:r._row,summary,status:'error',message:'Не распознан тип: "'+r.typeLabel+'"'}); return; }
+    if(!type){ rows.push({sheet:'Транспорт',rowNum:r._row,summary,status:'error',message:'Не распознан тип: "'+r.typeLabel+'" (выберите из выпадающего списка)'}); return; }
     const owner=matchOwner(r.ownerLabel);
     if(!owner){ rows.push({sheet:'Транспорт',rowNum:r._row,summary,status:'error',message:'Владение должно быть "ММ" или "Аренда"'}); return; }
     if(owner==='Аренда'&&!r.contractEnd){ rows.push({sheet:'Транспорт',rowNum:r._row,summary,status:'error',message:'Для "Аренда" обязателен срок договора'}); return; }
@@ -6361,40 +6374,6 @@ function validateAndPreviewImport(parsed){
       trCallsignSeen.set(key,{isNew:true});
       rows.push({sheet:'Транспорт',rowNum:r._row,summary,status:'new',message:'Будет создан новый транспорт'+respWarn});
     }
-  });
-
-  // --- Водители ---
-  const peopleNameSeen=new Map();
-  PEOPLE.forEach(p=>peopleNameSeen.set(norm(p.name),{isNew:false}));
-  parsed.people.forEach(r=>{
-    const summary=r.name+(r.phone?' · '+r.phone:'');
-    if(!r.name){ rows.push({sheet:'Водители',rowNum:r._row,summary,status:'error',message:'Не указано ФИО'}); return; }
-    let kgWarn='';
-    if(r.kontragentName && !kgNameSeen.has(norm(r.kontragentName))) kgWarn=' · Контрагент "'+r.kontragentName+'" не найден — сохранится без привязки';
-    const key=norm(r.name);
-    if(peopleNameSeen.has(key)){
-      rows.push({sheet:'Водители',rowNum:r._row,summary,status:'reuse',message:'Уже есть в системе — будет использован существующий'+kgWarn});
-      r._skip=true;
-    } else {
-      peopleNameSeen.set(key,{isNew:true});
-      rows.push({sheet:'Водители',rowNum:r._row,summary,status:'new',message:'Будет создан новый водитель'+kgWarn});
-    }
-  });
-
-  // --- Подвижной состав --- (уникальность не проверяем — одна и та же машина может быть в паре с разными прицепами)
-  parsed.fleet.forEach(r=>{
-    const summary=(r.kontragentName||'?')+' · '+(r.truckCallsign||'?')+(r.trailerCallsign?' + '+r.trailerCallsign:'');
-    if(!r.kontragentName || !kgNameSeen.has(norm(r.kontragentName))){
-      rows.push({sheet:'Подвижной состав',rowNum:r._row,summary,status:'error',message:'Контрагент "'+(r.kontragentName||'')+'" не найден (нет ни в системе, ни на листе "Контрагенты")'}); return;
-    }
-    if(!r.truckCallsign || !trCallsignSeen.has(norm(r.truckCallsign))){
-      rows.push({sheet:'Подвижной состав',rowNum:r._row,summary,status:'error',message:'Тягач "'+(r.truckCallsign||'')+'" не найден (нет ни в системе, ни на листе "Транспорт")'}); return;
-    }
-    let warn='';
-    if(r.trailerCallsign && !trCallsignSeen.has(norm(r.trailerCallsign))) warn+=' · Прицеп "'+r.trailerCallsign+'" не найден — сохранится без прицепа';
-    if(r.driverName && !peopleNameSeen.has(norm(r.driverName))) warn+=' · Водитель "'+r.driverName+'" не найден — сохранится без водителя';
-    if(r.planTypeLabel && !matchPlanType(r.planTypeLabel)) warn+=' · Тип плана не распознан, будет "Платный"';
-    rows.push({sheet:'Подвижной состав',rowNum:r._row,summary,status:'new',message:'Будет создана единица ПС'+warn});
   });
 
   _importRows=parsed;
@@ -6417,12 +6396,12 @@ function renderImportPreview(rows){
   openModal('modal-import-preview');
 }
 
-// Собственно запись в базу — строго в порядке зависимостей, с построением карт
-// "имя → id" по ходу дела (сначала то, что уже было в системе, затем то, что создаём).
+// Собственно запись в базу — Контрагенты, затем Транспорт (может сослаться на только
+// что созданного контрагента как на ответственного).
 async function _commitImportImpl(){
   if(!_importRows) return;
   const cid=CURRENT_PROFILE.company_id;
-  let created={kontragenty:0,transport:0,people:0,fleet:0}, errors=0;
+  let created={kontragenty:0,transport:0}, errors=0;
 
   const kgIdByName=new Map();
   KONTRAGENTY.forEach(k=>kgIdByName.set(norm(k.name), k.id));
@@ -6438,8 +6417,6 @@ async function _commitImportImpl(){
     created.kontragenty++;
   }
 
-  const trIdByCallsign=new Map();
-  TRANSPORT.forEach(t=>trIdByCallsign.set(norm(t.callsign), t.id));
   for(const r of _importRows.transport){
     if(r._skip || !r._type || !r._owner) continue;
     const respId=r.respName?kgIdByName.get(norm(r.respName))||null:null;
@@ -6449,45 +6426,13 @@ async function _commitImportImpl(){
     const { data, error } = await sbClient.from('transport').insert(record).select().single();
     if (error) { errors++; continue; }
     TRANSPORT.push(mapTransportFromDb(data, KONTRAGENTY));
-    trIdByCallsign.set(norm(r.callsign), data.id);
     created.transport++;
-  }
-
-  const peopleIdByName=new Map();
-  PEOPLE.forEach(p=>peopleIdByName.set(norm(p.name), p.id));
-  for(const r of _importRows.people){
-    if(r._skip) continue;
-    const kgId=r.kontragentName?kgIdByName.get(norm(r.kontragentName))||null:null;
-    const record={company_id:cid, name:r.name, short:r.short||'', kontragent_id:kgId, pinfl:r.pinfl||'',
-      birth:r.birth||null, phone:r.phone||'', passport:r.passport||'', address:r.address||'', active:true, note:''};
-    const { data, error } = await sbClient.from('people').insert(record).select().single();
-    if (error) { errors++; continue; }
-    PEOPLE.push(mapPersonFromDb(data, []));
-    peopleIdByName.set(norm(r.name), data.id);
-    created.people++;
-  }
-
-  for(const r of _importRows.fleet){
-    const kgId=kgIdByName.get(norm(r.kontragentName));
-    const truckId=trIdByCallsign.get(norm(r.truckCallsign));
-    if(!kgId||!truckId) { errors++; continue; }
-    const trailerId=r.trailerCallsign?trIdByCallsign.get(norm(r.trailerCallsign))||null:null;
-    const driverId=r.driverName?peopleIdByName.get(norm(r.driverName))||null:null;
-    const planType=matchPlanType(r.planTypeLabel)||'paid';
-    const label=r.label||((TRANSPORT.find(t=>t.id===truckId)?.callsign||'')+(trailerId?' / '+(TRANSPORT.find(t=>t.id===trailerId)?.callsign||''):''));
-    const record={company_id:cid, kontragent_id:kgId, driver_id:driverId, label,
-      truck_id:truckId, trailer_id:trailerId, plan:parseFloat(r.plan)||0, plan_type:planType,
-      contract_end:r.contractEnd||null, balance:0, active:true, note:r.note||'', ops:[]};
-    const { data, error } = await sbClient.from('fleet').insert(record).select().single();
-    if (error) { errors++; continue; }
-    FLEET.push(mapFleetFromDb(data));
-    created.fleet++;
   }
 
   closeModal('modal-import-preview');
   _importRows=null;
-  renderTenants(); renderTransport(); renderPeople(); renderFleet(); renderDashboard();
-  toast(`Импорт завершён: контрагентов +${created.kontragenty}, транспорта +${created.transport}, водителей +${created.people}, ПС +${created.fleet}`+(errors?` · ошибок: ${errors}`:''));
+  renderTenants(); renderTransport(); renderDashboard();
+  toast(`Импорт завершён: контрагентов +${created.kontragenty}, транспорта +${created.transport}`+(errors?` · ошибок: ${errors}`:''));
 }
 const commitImport = guardDoubleSubmit('commitImport', (...a)=>_commitImportImpl(...a));
 
