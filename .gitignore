@@ -5,6 +5,7 @@ supabase/.temp/
 # Secrets — never commit
 .owner_login_password.txt
 .supabase_db_password.txt
+.тестовые_доступы_волонтёры.txt
 
 # Real data exports (contain actual business data)
 mm_transport_export_*.json
@@ -13,3 +14,4 @@ mm_transport_export_*.sql
 # Sample documents with real personal/company data (passport numbers, bank accounts, addresses)
 ОБРАЗЕЦ*.doc
 ОБРАЗЕЦ*.docx
+ОБРАЗЕЦ*.xlsx
