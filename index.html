@@ -9680,6 +9680,49 @@ async function deleteTripSurcharge(tripId,surchId){
   openTripDetail(tripId);renderTrips();toast('Удалено');
 }
 
+// Круговая диаграмма расходов по категориям для печатных отчётов — чистый SVG,
+// без внешних библиотек (надёжнее при печати). Мелкие категории сверх topN сворачиваются
+// в один сектор "Прочее", иначе диаграмма превращается в кашу из тонких лепестков.
+const PIE_COLORS=['#e74c3c','#3498db','#f39c12','#27ae60','#9b59b6','#7f8c8d'];
+function pieSlicePath(cx,cy,r,startAngle,endAngle){
+  const toXY=(angle)=>{const rad=(angle-90)*Math.PI/180;return [cx+r*Math.cos(rad),cy+r*Math.sin(rad)];};
+  const [x1,y1]=toXY(startAngle),[x2,y2]=toXY(endAngle);
+  const largeArc=endAngle-startAngle>180?1:0;
+  return `M ${cx} ${cy} L ${x1.toFixed(2)} ${y1.toFixed(2)} A ${r} ${r} 0 ${largeArc} 1 ${x2.toFixed(2)} ${y2.toFixed(2)} Z`;
+}
+function buildCategoryPieChart(rows, opts){
+  opts=opts||{};
+  const size=opts.size||160, topN=opts.topN||5;
+  const r=size/2-2, cx=size/2, cy=size/2;
+  const total=rows.reduce((s,x)=>s+x.amount,0);
+  if(!total) return '';
+  const sorted=[...rows].filter(x=>x.amount>0).sort((a,b)=>b.amount-a.amount);
+  const slices=sorted.slice(0,topN);
+  const restAmt=sorted.slice(topN).reduce((s,x)=>s+x.amount,0);
+  if(restAmt>0) slices.push({label:'Прочее',amount:restAmt});
+  let angle=0;
+  const paths=slices.map((s,i)=>{
+    const pct=s.amount/total, startAngle=angle, endAngle=angle+pct*360; angle=endAngle;
+    const color=PIE_COLORS[i%PIE_COLORS.length];
+    if(slices.length===1) return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${color}"/>`;
+    return `<path d="${pieSlicePath(cx,cy,r,startAngle,endAngle)}" fill="${color}"/>`;
+  }).join('');
+  const legendFontSize=opts.legendFontSize||'9pt';
+  const legend=slices.map((s,i)=>{
+    const pct=Math.round(s.amount/total*1000)/10;
+    const color=PIE_COLORS[i%PIE_COLORS.length];
+    return `<div style="display:flex;align-items:center;gap:5px;font-size:${legendFontSize};margin-bottom:2px;white-space:nowrap;">
+      <span style="width:9px;height:9px;background:${color};display:inline-block;border-radius:2px;flex-shrink:0;"></span>
+      <span style="flex:1;">${s.label}</span>
+      <span style="font-weight:bold;">${pct}%</span>
+    </div>`;
+  }).join('');
+  return `<div style="display:flex;gap:12px;align-items:center;">
+    <svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" style="flex-shrink:0;">${paths}</svg>
+    <div style="flex:1;min-width:0;">${legend}</div>
+  </div>`;
+}
+
 function printTripReport(tripId){
   const trip=TRIPS.find(t=>t.id===tripId);if(!trip)return;
   const st=TRIP_STATUSES[trip.status]||TRIP_STATUSES.prep;
@@ -9717,6 +9760,20 @@ function printTripReport(tripId){
     const litStr=e.liters>0?` · ${e.liters} л`:'';
     return `<tr><td>${fmt(e.date)}</td><td>${TRIP_EXP_CATS[e.cat]||e.cat}</td><td>${e.country||'—'}</td><td>${e.desc||'—'}${litStr}</td><td style="text-align:right;color:red">${fmtN(e.amount)}${currStr}</td></tr>`;
   }).join('');
+
+  const expByCat={};
+  expenses.forEach(e=>{
+    const key=e.cat||'other';
+    if(!expByCat[key]) expByCat[key]={amount:0};
+    expByCat[key].amount+=e.amount;
+  });
+  const expCatRowsShare=Object.entries(expByCat).sort((a,b)=>b[1].amount-a[1].amount).map(([cat,v])=>
+    `<tr><td>${TRIP_EXP_CATS[cat]||cat}</td><td style="text-align:right;color:red">${fmtN(v.amount)}</td><td style="text-align:right">${totalExp>0?Math.round(v.amount/totalExp*1000)/10:0}%</td></tr>`
+  ).join('');
+  const expPieChart=buildCategoryPieChart(
+    Object.entries(expByCat).map(([cat,v])=>({label:TRIP_EXP_CATS[cat]||cat,amount:v.amount})),
+    {size:110, legendFontSize:'7.5pt'}
+  );
 
   const payRows=payments.map(p=>{
     const fromName=p.fromId?(KONTRAGENTY.find(k=>k.id===p.fromId)||{}).name||'':'';
@@ -9795,7 +9852,15 @@ function printTripReport(tripId){
   <tfoot><tr style="font-weight:bold;background:#f0f0f0"><td colspan="4">ИТОГО</td><td style="text-align:right">${fmtN(income)}</td><td style="text-align:right;color:green">${fmtN(paid)}</td></tr></tfoot>
   </table>
 
-  ${expenses.length?`<div class="section-title">💸 Расходы по рейсу</div>
+  ${expenses.length?`<div class="section-title">💸 Расходы по категориям</div>
+  <div style="display:flex;gap:14px;align-items:flex-start;margin-bottom:8px;">
+    <table style="flex:1;margin-bottom:0;"><thead><tr><th>Категория</th><th style="text-align:right">Сумма</th><th style="text-align:right">Доля</th></tr></thead>
+    <tbody>${expCatRowsShare}</tbody>
+    <tfoot><tr style="font-weight:bold;background:#f0f0f0"><td>ИТОГО</td><td style="text-align:right;color:red">${fmtN(totalExp)}</td><td style="text-align:right">100%</td></tr></tfoot>
+    </table>
+    ${expPieChart}
+  </div>
+  <div class="section-title">💸 Расходы по рейсу — детально</div>
   <table><thead><tr><th>Дата</th><th>Категория</th><th>Страна</th><th>Описание</th><th style="text-align:right">Сумма</th></tr></thead>
   <tbody>${expRows}</tbody>
   <tfoot><tr style="font-weight:bold;background:#f0f0f0"><td colspan="4">ИТОГО расходов</td><td style="text-align:right;color:red">${fmtN(totalExp)}</td></tr></tfoot>
@@ -9853,8 +9918,12 @@ function printTripReportShort(tripId){
     expByCat[key].amount+=e.amount;
   });
   const expCatRows=Object.entries(expByCat).sort((a,b)=>b[1].amount-a[1].amount).map(([cat,v])=>
-    `<tr><td>${TRIP_EXP_CATS[cat]||cat}</td><td style="text-align:center">${v.count}</td><td style="text-align:right;color:red">${fmtN(v.amount)}</td></tr>`
+    `<tr><td>${TRIP_EXP_CATS[cat]||cat}</td><td style="text-align:center">${v.count}</td><td style="text-align:right;color:red">${fmtN(v.amount)}</td><td style="text-align:right">${totalExp>0?Math.round(v.amount/totalExp*1000)/10:0}%</td></tr>`
   ).join('');
+  const expPieChartShort=buildCategoryPieChart(
+    Object.entries(expByCat).map(([cat,v])=>({label:TRIP_EXP_CATS[cat]||cat,amount:v.amount})),
+    {size:170, legendFontSize:'9.5pt'}
+  );
 
   const payouts=KASSA.filter(k=>k.tripId===trip.id&&k.type==='payout');
   const totalAdvance=payouts.reduce((s,k)=>s+k.amount,0);
@@ -9903,10 +9972,13 @@ function printTripReportShort(tripId){
   </div>
 
   <div class="section-title">💸 Расходы по категориям</div>
-  <table><thead><tr><th>Категория</th><th style="text-align:center">Кол-во</th><th style="text-align:right">Сумма</th></tr></thead>
-  <tbody>${expCatRows||'<tr><td colspan="3" style="text-align:center">—</td></tr>'}</tbody>
-  <tfoot><tr style="font-weight:bold;background:#f0f0f0"><td colspan="2">ИТОГО расходов</td><td style="text-align:right;color:red">${fmtN(totalExp)}</td></tr></tfoot>
-  </table>
+  <div style="display:flex;gap:16px;align-items:flex-start;">
+    <table style="flex:1;"><thead><tr><th>Категория</th><th style="text-align:center">Кол-во</th><th style="text-align:right">Сумма</th><th style="text-align:right">Доля</th></tr></thead>
+    <tbody>${expCatRows||'<tr><td colspan="4" style="text-align:center">—</td></tr>'}</tbody>
+    <tfoot><tr style="font-weight:bold;background:#f0f0f0"><td colspan="2">ИТОГО расходов</td><td style="text-align:right;color:red">${fmtN(totalExp)}</td><td style="text-align:right">100%</td></tr></tfoot>
+    </table>
+    ${expPieChartShort}
+  </div>
 
   <div class="section-title">💰 Итоги по деньгам</div>
   <div class="line-item"><span>Доход по рейсу (ставки за плечи)</span><b style="color:green">${fmtN(income)}</b></div>
