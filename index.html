@@ -6351,6 +6351,7 @@ const IMPORT_SHEETS=[
     {header:'Тип*', key:'typeLabel', required:true, width:16, list:CONTRAGENT_TYPE_OPTIONS},
     {header:'Телефон', key:'phone', width:16},
     {header:'Паспорт', key:'passport', width:14},
+    {header:'ПИНФЛ', key:'pinfl', width:16},
     {header:'№ договора', key:'contractNum', width:14},
     {header:'Дата договора (ГГГГ-ММ-ДД)', key:'contractDate', width:20},
     {header:'Договор до (ГГГГ-ММ-ДД)', key:'contractEnd', width:20},
@@ -6548,7 +6549,7 @@ async function _commitImportImpl(){
   for(const r of _importRows.kontragenty){
     if(r._skip || !r._type) continue;
     const record={company_id:cid, name:r.name, short:r.short||r.name.split(' ')[0],
-      type: r._type==='mm'?'driver_mm':r._type, phone:r.phone||'', passport:r.passport||'', pinfl:'', active:true,
+      type: r._type==='mm'?'driver_mm':r._type, phone:r.phone||'', passport:r.passport||'', pinfl:r.pinfl||'', active:true,
       contract_num:r.contractNum||'', contract_date:r.contractDate||null, contract_end:r.contractEnd||null, note:r.note||''};
     const { data, error } = await sbClient.from('kontragenty').insert(record).select().single();
     if (error) { errors++; continue; }
