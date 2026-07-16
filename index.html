@@ -1604,6 +1604,12 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
         <label>Связать с контрагентом (если водитель = арендатор)</label>
         <select id="ap-kontragent-link" onchange="onPersonKontragentLinkChange()"><option value="">— Не связывать —</option></select>
       </div>
+      <div class="form-row">
+        <label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-weight:400;">
+          <input type="checkbox" id="ap-mehnat-registered" style="width:auto;">
+          В штате / зарегистрирован в my.mehnat.uz — включать в отчёт для бухгалтерии
+        </label>
+      </div>
       <!-- EXPANDED DOCS -->
       <div style="margin-top:10px;">
         <button type="button" class="btn" style="width:100%;justify-content:center;" onclick="toggleSection('ap-docs')">+ Документы и права (паспорт, права, АДР...)</button>
@@ -2785,6 +2791,7 @@ function mapPersonFromDb(r, allDocs) {
     id: r.id, name: r.name, short: r.short||'', kontragentId: r.kontragent_id||'',
     pinfl: r.pinfl||'', birth: r.birth||'', phone: r.phone||'', passport: r.passport||'',
     address: r.address||'', active: r.active, note: r.note||'', docs,
+    mehnatRegistered: !!r.mehnat_registered,
   };
 }
 
@@ -5098,6 +5105,7 @@ function openEditPerson(id){
     set('ap-name',p.name); set('ap-short',p.short); set('ap-birth',p.birth); set('ap-phone',p.phone);
     set('ap-passport',p.passport); set('ap-address',p.address); set('ap-note',p.note); set('ap-pinfl',p.pinfl);
     const kgEl=document.getElementById('ap-kontragent-link'); if(kgEl) kgEl.value=p.kontragentId||'';
+    const mehnatEl=document.getElementById('ap-mehnat-registered'); if(mehnatEl) mehnatEl.checked=!!p.mehnatRegistered;
     fillPersonDocsToModal(p);
     document.querySelector('#modal-add-person .modal-head h3').textContent='✏️ Редактировать водителя';
     document.querySelector('#modal-add-person .modal-foot .btn.primary').onclick=()=>updatePerson(id);
@@ -5221,13 +5229,14 @@ async function updatePerson(id){
     address: document.getElementById('ap-address')?.value||'',
     note: document.getElementById('ap-note')?.value||'',
     kontragent_id: document.getElementById('ap-kontragent-link')?.value||null,
+    mehnat_registered: document.getElementById('ap-mehnat-registered')?.checked||false,
   };
   const { error } = await sbClient.from('people').update(updates).eq('id', id);
   if (error) { alert('Не удалось сохранить изменения: '+error.message); return; }
   await savePersonDocsToDb(id, docs);
   Object.assign(p, { name:updates.name, short:updates.short, pinfl:updates.pinfl, birth:updates.birth||'',
     phone:updates.phone, passport:updates.passport, address:updates.address, note:updates.note,
-    kontragentId: updates.kontragent_id||'', docs });
+    kontragentId: updates.kontragent_id||'', docs, mehnatRegistered: updates.mehnat_registered });
   closeModal('modal-add-person');
   document.querySelector('#modal-add-person .modal-head h3').textContent='👤 Добавить водителя';
   document.querySelector('#modal-add-person .modal-foot .btn.primary').onclick=savePerson;
@@ -5534,9 +5543,12 @@ async function exportAsmapReport(){
 // Отчёт по водителям для бухгалтерии (2026-07-18) — сознательно только 4 поля,
 // по прямому запросу: ФИО, ПИНФЛ, паспортные данные, права. Остальные документы
 // водителя (загранпаспорт, МНП, техталон и т.д.) для бухгалтерии не нужны.
+// Показываем только тех, кто реально в штате (галочка mehnatRegistered — та же идея,
+// что и asmap_include у транспорта) — не всякий активный водитель формально оформлен
+// в my.mehnat.uz, бухгалтерии нужны именно оформленные.
 async function exportDriversReport(){
-  const drivers=PEOPLE.filter(p=>p.active!==false);
-  if(!drivers.length){ alert('Нет активных водителей'); return; }
+  const drivers=PEOPLE.filter(p=>p.active!==false && p.mehnatRegistered);
+  if(!drivers.length){ alert('Нет водителей, отмеченных галочкой "В штате / зарегистрирован в my.mehnat.uz". Отметьте нужных на карточке водителя.'); return; }
   const sorted=[...drivers].sort((a,b)=>a.name.localeCompare(b.name));
 
   const columns=[
@@ -7842,6 +7854,7 @@ async function _savePersonImpl(){
     passport: document.getElementById('ap-passport')?.value||'',
     address: document.getElementById('ap-address')?.value||'', active:true,
     note: document.getElementById('ap-note').value,
+    mehnat_registered: document.getElementById('ap-mehnat-registered')?.checked||false,
   };
   const { data, error } = await sbClient.from('people').insert(record).select().single();
   if (error) { alert('Не удалось сохранить водителя: '+error.message); return; }
@@ -7859,6 +7872,7 @@ function resetPersonModal(){
     'ap-mnp-num','ap-mnp-exp','ap-taho-exp','ap-adr-num','ap-adr-exp'];
   ids.forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
   const kg=document.getElementById('ap-kontragent-link');if(kg)kg.value='';
+  const mehnatEl=document.getElementById('ap-mehnat-registered');if(mehnatEl)mehnatEl.checked=false;
   // Hide expanded docs section
   const docsSection=document.getElementById('ap-docs');if(docsSection)docsSection.style.display='none';
   // Reset title and button to "add" mode
