@@ -5314,35 +5314,28 @@ async function exportNdflReport(){
     const go=confirm(`У ${missing.length} из ${rented.length} машин не указан арендодатель и/или его ПИНФЛ (карточка Транспорта → "Ответственное лицо", карточка Контрагента → "ПИНФЛ"). Сформировать отчёт всё равно, с пустыми ячейками по этим строкам?`);
     if(!go) return;
   }
-  const rows=rented.map(t=>{
+  const sorted=rented.map(t=>{
     const kg=t.respId?KONTRAGENTY.find(k=>k.id===t.respId):null;
     return {t, kg};
   }).sort((a,b)=>(a.kg?.name||'').localeCompare(b.kg?.name||'')||a.t.callsign.localeCompare(b.t.callsign));
 
-  const wb=new ExcelJS.Workbook();
-  const ws=wb.addWorksheet('Аренда');
-  ws.columns=[
-    {header:'№', key:'n', width:5},
-    {header:'Позывной', key:'callsign', width:12},
-    {header:'АРЕНДОДАТЕЛЬ', key:'lessor', width:34},
-    {header:'ПИНФЛ / ИНН', key:'pinfl', width:18},
-    {header:'Гос номер АТС', key:'plate', width:16},
-    {header:'Марка АТС', key:'brand', width:16},
-    {header:'№ договора', key:'contractNum', width:20},
-    {header:'Начало', key:'start', width:14},
-    {header:'Окончание', key:'end', width:14},
-    {header:'Цена по договору аренды', key:'price', width:20},
+  const columns=[
+    {header:'№', width:5}, {header:'Позывной', width:12}, {header:'АРЕНДОДАТЕЛЬ', width:32},
+    {header:'ПИНФЛ / ИНН', width:16}, {header:'Гос номер АТС', width:16}, {header:'Марка АТС', width:16},
+    {header:'№ договора', width:18}, {header:'Начало', width:12}, {header:'Окончание', width:12},
+    {header:'Цена по договору аренды', width:18},
   ];
-  ws.getRow(1).font={bold:true};
-  rows.forEach((r,i)=>{
+  const rows=sorted.map((r,i)=>{
     const statusLabel=CONTRACT_STATUS_LABEL[r.t.contractStatus];
-    ws.addRow({
-      n:i+1, callsign:r.t.callsign, lessor:r.kg?r.kg.name:'', pinfl:r.kg?r.kg.pinfl:'',
-      plate:r.t.plate, brand:r.t.brand,
-      contractNum:r.t.contractNum||'', start:r.t.contract_start||'', end:r.t.contract_end||'',
-      price: statusLabel!=null ? statusLabel : (r.t.contractPrice||''),
-    });
+    return [i+1, r.t.callsign, r.kg?r.kg.name:'', r.kg?r.kg.pinfl:'', r.t.plate, r.t.brand,
+      r.t.contractNum||'', r.t.contract_start||'', r.t.contract_end||'',
+      statusLabel!=null?statusLabel:(r.t.contractPrice||'')];
   });
+
+  const wb=new ExcelJS.Workbook();
+  const ws=wb.addWorksheet('Аренда', {pageSetup:{orientation:'landscape', fitToPage:true, fitToWidth:1, fitToHeight:0}});
+  addSmartTable(ws, 1, columns, rows, 'NdflTable');
+
   const buffer=await wb.xlsx.writeBuffer();
   downloadXlsxBuffer(buffer, `Отчёт_аренда_НДФЛ_${todayStr}.xlsx`);
 }
@@ -5355,28 +5348,34 @@ async function exportDepreciationReport(){
     const go=confirm(`У ${missing.length} из ${owned.length} машин не указана балансовая стоимость (карточка Транспорта). Сформировать отчёт всё равно, с пустыми ячейками по этим строкам?`);
     if(!go) return;
   }
-  const rows=[...owned].sort((a,b)=>a.callsign.localeCompare(b.callsign));
+  const sorted=[...owned].sort((a,b)=>a.callsign.localeCompare(b.callsign));
+
+  const columns=[
+    {header:'№', width:5}, {header:'Позывной', width:12}, {header:'Гос номер АТС', width:16},
+    {header:'Марка', width:16}, {header:'Модель', width:16}, {header:'Год выпуска', width:12},
+    {header:'VIN', width:20}, {header:'Дата постановки на баланс', width:22}, {header:'Балансовая стоимость', width:18},
+  ];
+  const rows=sorted.map((t,i)=>[i+1, t.callsign, t.plate, t.brand, t.model, t.year||'', t.vin||'', t.balanceDate||'', t.purchasePrice||'']);
 
   const wb=new ExcelJS.Workbook();
-  const ws=wb.addWorksheet('Амортизация');
-  ws.columns=[
-    {header:'№', key:'n', width:5},
-    {header:'Позывной', key:'callsign', width:12},
-    {header:'Гос номер АТС', key:'plate', width:16},
-    {header:'Марка', key:'brand', width:16},
-    {header:'Модель', key:'model', width:16},
-    {header:'Год выпуска', key:'year', width:12},
-    {header:'VIN', key:'vin', width:20},
-    {header:'Дата постановки на баланс', key:'balanceDate', width:22},
-    {header:'Балансовая стоимость', key:'purchasePrice', width:20},
-  ];
-  ws.getRow(1).font={bold:true};
-  rows.forEach((t,i)=>{
-    ws.addRow({ n:i+1, callsign:t.callsign, plate:t.plate, brand:t.brand, model:t.model,
-      year:t.year||'', vin:t.vin||'', balanceDate:t.balanceDate||'', purchasePrice:t.purchasePrice||'' });
-  });
+  const ws=wb.addWorksheet('Амортизация', {pageSetup:{orientation:'landscape', fitToPage:true, fitToWidth:1, fitToHeight:0}});
+  addSmartTable(ws, 1, columns, rows, 'DepreciationTable');
+
   const buffer=await wb.xlsx.writeBuffer();
   downloadXlsxBuffer(buffer, `Отчёт_амортизация_${todayStr}.xlsx`);
+}
+
+// "Умная таблица" Excel (настоящий Table-объект — полосатые строки, стрелки
+// фильтра в заголовке) вместо просто жирного текста в первой строке. Общий helper
+// для всех отчётов бухгалтеру/АСМАП — всегда начинается со столбца A.
+function addSmartTable(ws, startRow, columns, rows, tableName){
+  ws.addTable({
+    name: tableName, ref: `A${startRow}`, headerRow: true, totalsRow: false,
+    style: { theme:'TableStyleMedium9', showRowStripes:true },
+    columns: columns.map(c=>({name:c.header, filterButton:true})),
+    rows,
+  });
+  columns.forEach((c,i)=>{ ws.getColumn(i+1).width=c.width||14; });
 }
 
 function downloadXlsxBuffer(buffer, filename){
@@ -5407,7 +5406,7 @@ async function exportAsmapReport(){
   const totalOwn=counters['ММ'].Тягач+counters['ММ'].Прицеп+counters['ММ'].Полуприцеп;
   const totalRent=counters['Аренда'].Тягач+counters['Аренда'].Прицеп+counters['Аренда'].Полуприцеп;
 
-  const rows=[...included].sort((a,b)=>a.callsign.localeCompare(b.callsign));
+  const sorted=[...included].sort((a,b)=>a.callsign.localeCompare(b.callsign));
 
   const wb=new ExcelJS.Workbook();
   const ws=wb.addWorksheet('АСМАП', {pageSetup:{orientation:'landscape', fitToPage:true, fitToWidth:1, fitToHeight:0}});
@@ -5421,32 +5420,34 @@ async function exportAsmapReport(){
     `Арендованных: ${totalRent} — тягачей ${counters['Аренда'].Тягач}, прицепов ${counters['Аренда'].Прицеп}, п/прицепов ${counters['Аренда'].Полуприцеп}.`;
   ws.getCell('A2').font={italic:true, size:10};
 
-  const headerRowIdx=4;
-  ws.getRow(headerRowIdx).values=[
-    '№','Позывной','Тип','Гос.номер','Серия/номер техпаспорта','Дата выдачи техпаспорта','Орган выдачи',
-    'Марка','Модель','Год выпуска','Двигатель №','VIN (кузов)',
-    'Лицензионная карточка №','Лицензия с','Лицензия до',
-    'Свид. о допущении №','Допущение с','Допущение до',
-    'Форма собственности','Арендодатель','№ договора аренды','Договор с','Договор до',
+  const columns=[
+    {header:'№', width:5}, {header:'Позывной', width:10}, {header:'Тип', width:11}, {header:'Гос.номер', width:14},
+    {header:'Серия/номер техпаспорта', width:20}, {header:'Дата выдачи техпаспорта', width:16}, {header:'Орган выдачи', width:22},
+    {header:'Марка', width:16}, {header:'Модель', width:16}, {header:'Год выпуска', width:10},
+    {header:'Двигатель №', width:14}, {header:'VIN (кузов)', width:20},
+    {header:'Лицензионная карточка №', width:18}, {header:'Лицензия с', width:12}, {header:'Лицензия до', width:12},
+    {header:'Свид. о допущении №', width:16}, {header:'Допущение с', width:12}, {header:'Допущение до', width:12},
+    {header:'Форма собственности', width:14}, {header:'Арендодатель', width:26},
+    {header:'№ договора аренды', width:18}, {header:'Договор с', width:12}, {header:'Договор до', width:12},
   ];
-  ws.getRow(headerRowIdx).font={bold:true};
-  const colWidths=[5,10,10,14,20,16,22, 16,16,10,14,20, 18,12,12, 16,12,12, 14,26,18,12,12];
-  colWidths.forEach((w,i)=>{ ws.getColumn(i+1).width=w; });
-
-  rows.forEach((t,i)=>{
+  // Арендодатель — только если реально арендованный транспорт (баг, найденный
+  // пользователем: раньше сюда попадало "Ответственное лицо" и для собственных
+  // ММ-машин тоже, хотя у собственности компании арендодателя быть не может).
+  const rows=sorted.map((t,i)=>{
     const d=t.docs||{};
-    const kg=t.respId?KONTRAGENTY.find(k=>k.id===t.respId):null;
-    ws.addRow([
+    const kg=t.owner==='Аренда'&&t.respId?KONTRAGENTY.find(k=>k.id===t.respId):null;
+    return [
       i+1, t.callsign, t.type, t.plate,
       d.tp?.num||'', d.tp?.date||'', d.tp?.org||'',
       t.brand||'', t.model||'', t.year||'',
       d.eng?.num||'', t.vin||'',
       d.lic?.num||'', d.lic?.from||'', d.lic?.to||'',
       d.svid?.num||'', d.svid?.from||'', d.svid?.to||'',
-      t.owner, kg?kg.name:'',
+      t.owner, t.owner==='Аренда'?(kg?kg.name:''):'Собственность компании',
       t.owner==='Аренда'?(t.contractNum||''):'', t.owner==='Аренда'?(t.contract_start||''):'', t.owner==='Аренда'?(t.contract_end||''):'',
-    ]);
+    ];
   });
+  addSmartTable(ws, 4, columns, rows, 'AsmapTable');
 
   const buffer=await wb.xlsx.writeBuffer();
   downloadXlsxBuffer(buffer, `Список_АСМАП_${todayStr}.xlsx`);
