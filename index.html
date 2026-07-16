@@ -5413,7 +5413,8 @@ async function exportAsmapReport(){
 
   ws.mergeCells('A1:J1');
   ws.getCell('A1').value=`Сведения по подвижному составу для АСМАП по состоянию на ${fmt(todayStr)}`;
-  ws.getCell('A1').font={bold:true, size:13};
+  ws.getCell('A1').font={bold:true, size:13, name:'Arial'};
+  ws.getCell('A1').alignment={horizontal:'center', vertical:'middle'};
 
   ws.mergeCells('A2:J2');
   ws.getCell('A2').value=`Собственных (тягачи+прицепы+п/прицепы): ${totalOwn} — тягачей ${counters['ММ'].Тягач}, прицепов ${counters['ММ'].Прицеп}, п/прицепов ${counters['ММ'].Полуприцеп}.  `+
@@ -5424,7 +5425,7 @@ async function exportAsmapReport(){
   // перенос) — как в присланном образце — чтобы сократить число столбцов и таблица
   // реально влезала на одну печатную страницу, а не только формально по ширине.
   const columns=[
-    {header:'№', width:5}, {header:'Позывной', width:10}, {header:'Тип', width:11},
+    {header:'№', width:5}, {header:'Позывной', width:14}, {header:'Тип', width:11},
     {header:'Регистрационные данные\n(гос.номер, техпаспорт)', width:28},
     {header:'Марка и модель', width:20}, {header:'Год выпуска', width:9},
     {header:'Заводские номера\n(двигатель, кузов)', width:22},
@@ -5471,6 +5472,10 @@ async function exportAsmapReport(){
     cell.border={top:thin,left:thin,right:thin,bottom:thin};
   });
   const dataStartRow=5;
+  // Чередование строк красим сами (светло-голубой/белый) вместо того, чтобы
+  // полагаться на цвет встроенной темы Excel — так точно тот оттенок, что просили,
+  // а не то, что случайно назначено номеру темы.
+  const stripeFill={type:'pattern', pattern:'solid', fgColor:{argb:'FFDCEEFB'}};
   rows.forEach((rowValues,i)=>{
     const rowIdx=dataStartRow+i;
     let maxLines=1;
@@ -5479,6 +5484,7 @@ async function exportAsmapReport(){
       cell.font={size:9, name:'Arial'};
       cell.alignment={horizontal:'center', vertical:'middle', wrapText:true};
       cell.border={top:thin,left:thin,right:thin,bottom:thin};
+      if(i%2===1) cell.fill=stripeFill;
       maxLines=Math.max(maxLines, estimateLines(v, columns[ci].width));
     });
     ws.getRow(rowIdx).height=Math.max(18, maxLines*12+8);
