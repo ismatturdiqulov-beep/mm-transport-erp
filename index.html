@@ -554,7 +554,10 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
         Перенос коренных данных из Excel — только Контрагенты и Транспорт (это данные, от которых
         зависит всё остальное). Водителей и Подвижной состав после этого удобнее заводить прямо в
         приложении — они уже подтянут ваших контрагентов и транспорт из выпадающих списков. В шаблоне
-        поля "Тип" — выпадающий список в самом Excel, вводить вручную не нужно, только выбрать.
+        поля "Тип", "Владение" и "Ответственный" — выпадающие списки в самом Excel (для
+        "Ответственного" — список подтягивается прямо из листа "Контрагенты"), вводить
+        вручную не нужно, только выбрать. Заполняйте лист "Контрагенты" раньше "Транспорта",
+        иначе выбирать в списке "Ответственный" будет не из чего.
         Скачайте шаблон, заполните (не меняя названия листов и колонок), затем загрузите обратно —
         перед сохранением покажем предпросмотр, ничего не запишется без подтверждения.
       </div>
@@ -6224,7 +6227,7 @@ const IMPORT_SHEETS=[
     {header:'Модель', key:'model', width:14},
     {header:'Владение*', key:'ownerLabel', required:true, width:12, list:OWNER_TYPE_OPTIONS},
     {header:'Год', key:'year', width:8},
-    {header:'Ответственный (контрагент)', key:'respName', width:24},
+    {header:'Ответственный (контрагент)', key:'respName', width:24, listRef:"'Контрагенты'!$A$2:$A$500"},
     {header:'Техпаспорт №', key:'techpass', width:16},
     {header:'VIN', key:'vin', width:20},
     {header:'Начало договора (ГГГГ-ММ-ДД)', key:'contractStart', width:20},
@@ -6239,13 +6242,18 @@ async function downloadImportTemplate(){
     ws.columns=sheet.columns.map(c=>({header:c.header, key:c.key, width:c.width||16}));
     ws.getRow(1).font={bold:true};
     sheet.columns.forEach((col,colIdx)=>{
-      if(!col.list) return;
+      // list — обычный список значений прямо в формуле; listRef — ссылка на диапазон
+      // другого листа (например, столбец "Наименование" на листе "Контрагенты"), чтобы
+      // выбор ответственного был ограничен реально введёнными контрагентами, а не текстом.
+      if(!col.list && !col.listRef) return;
       const colLetter=ws.getColumn(colIdx+1).letter;
+      const formula=col.listRef||`"${(col.list||[]).join(',')}"`;
       for(let row=2; row<=500; row++){
         ws.getCell(`${colLetter}${row}`).dataValidation={
-          type:'list', allowBlank:true, formulae:[`"${col.list.join(',')}"`],
+          type:'list', allowBlank:true, formulae:[formula],
           showErrorMessage:true, errorStyle:'stop', errorTitle:'Неверное значение',
-          error:'Выберите значение из выпадающего списка', promptTitle:col.header, prompt:'Выберите из списка',
+          error: col.listRef?'Выберите контрагента из списка (сначала заполните лист "Контрагенты")':'Выберите значение из выпадающего списка',
+          promptTitle:col.header, prompt:'Выберите из списка',
         };
       }
     });
