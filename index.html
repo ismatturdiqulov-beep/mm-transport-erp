@@ -7211,7 +7211,12 @@ function printWaybillIntl(w){
   <div class="subtitle">Грузового автомобиля в международном сообщении</div>
   <div class="warn">ДЕЙСТВИТЕЛЬНО ПО ПРЕДЪЯВЛЕНИЮ ВОДИТЕЛЬСКОГО УДОСТОВЕРЕНИЯ</div>
   <table class="box"><tr>
-    <td style="width:22%"></td>
+    <td style="width:22%;padding:0">
+      <table style="width:100%;height:100%;border-collapse:collapse">
+        <tr><td style="border:none;border-bottom:1px solid #000;font-size:7.5pt;color:#555;text-align:center;height:50%;">Место для углового штампа</td></tr>
+        <tr><td style="border:none;font-size:7.5pt;color:#555;text-align:center;height:50%;">М.П.</td></tr>
+      </table>
+    </td>
     <td style="width:39%">
       Показание спидометра при выезде из гаража <span class="blank">${mileageStr}</span> км.<br><br>
       автомобиль технический исправлен,<br>
@@ -7248,8 +7253,8 @@ function printWaybillIntl(w){
         <tr><th colspan="2">Фамилия, имя, отчество водителя</th><th>Номер водительского удостоверения</th></tr>
         <tr><td colspan="2" class="fill">${drv1Name||'—'}</td><td class="fill">${drv1Lic}</td></tr>
         ${drv2Name?`<tr><td colspan="2" class="fill">${drv2Name}</td><td class="fill">${drv2Lic}</td></tr>`:''}
-        <tr><th colspan="3">Табельный номер водителя</th></tr>
-        <tr><th colspan="3">Маршрут следования</th></tr>
+        <tr><th>Табельный номер водителя</th><td colspan="2"></td></tr>
+        <tr><th>Маршрут следования</th><td colspan="2"></td></tr>
         <tr><td>Пункты отдыха</td><td colspan="2">В прямом направления</td></tr>
         <tr><td></td><td colspan="2">в обратном направления</td></tr>
       </table>
