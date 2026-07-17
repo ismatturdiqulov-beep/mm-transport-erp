@@ -7232,8 +7232,7 @@ function printWaybillIntl(w){
       автомобиль технический исправлен,<br>
       Выезда разрешаю, деж. механик <span class="blank"></span><br>
       <span class="fill">${mechanic} ${mechanic?dateStr:''}</span><br><br>
-      Автомобиль технический исправном состоянии,<br>
-      принял водитель <span class="blank"></span> <span class="fill">${drv1Name}</span>
+      Автомобиль технический исправном состоянии, принял водитель <span class="blank"></span> <span class="fill">${drv1Name}</span>
     </td>
     <td style="width:28.6%">
       Показание спидометра при возвращении в гаража <span class="blank"></span> км.<br><br>
@@ -7244,8 +7243,8 @@ function printWaybillIntl(w){
   <div class="two-col">
     <div class="left-pane">
       <p>Срок командировки <b><i>${w.days||45}</i></b> (дней) до <b><i>${untilStr}</i></b> г.</p>
-      <p>Основание заявки № _____________ от _____________ 20____ г.</p>
-      <p>Выезд разрешен приказом _________ от _________ 20____ г.</p>
+      <p>Основание заявки № ______ от ______ 20___ г.</p>
+      <p>Выезд разрешен приказом _____ от _____ 20___ г.</p>
       <table class="box" style="margin-top:8px">
         <colgroup><col style="width:28.4%"><col style="width:22%"><col style="width:26%"><col style="width:23.7%"></colgroup>
         <tr><th>Марка автомобили</th><th>№ колонны</th><th>Шифр марки автомобиля</th><th>Номерной знак</th></tr>
@@ -7268,8 +7267,8 @@ function printWaybillIntl(w){
         <tr><td colspan="2"></td><td></td></tr>
         <tr><td colspan="2" class="fill">${drv1Name||'—'}</td><td class="fill">${drv1Lic}</td></tr>
         ${drv2Name?`<tr><td colspan="2" class="fill">${drv2Name}</td><td class="fill">${drv2Lic}</td></tr>`:''}
-        <tr><th>Табельный номер водителя</th><td colspan="2"></td></tr>
-        <tr><th>Маршрут следования</th><td colspan="2"></td></tr>
+        <tr><th colspan="2">Табельный номер водителя</th><td></td></tr>
+        <tr><th colspan="2">Маршрут следования</th><td></td></tr>
         <tr><td>Пункты отдыха</td><td colspan="2">В прямом направления</td></tr>
         <tr><td></td><td colspan="2">в обратном направления</td></tr>
       </table>
