@@ -7193,10 +7193,10 @@ function printWaybillIntl(w){
   win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Путевой лист № ${w.fullNum||w.num}</title>
   <style>
     body{font-family:Arial,Helvetica,sans-serif;margin:10mm;font-size:10pt;color:#000}
-    .title{text-align:center;font-size:16pt;margin-bottom:2px}
+    .title{text-align:center;font-size:13.6pt;margin-bottom:2px}
     .title b{text-decoration:underline}
-    .subtitle{text-align:center;font-size:16pt;color:#333;margin-bottom:2px}
-    .warn{text-align:center;font-size:12pt;font-weight:bold;margin-bottom:8px}
+    .subtitle{text-align:center;font-size:13.6pt;color:#333;margin-bottom:2px}
+    .warn{text-align:center;font-size:10.2pt;font-weight:bold;margin-bottom:8px}
     .co-box{text-align:center;padding:4px}
     .co-box .co-name{font-size:11pt;font-weight:bold;text-decoration:underline}
     .co-box .co-addr{font-size:11pt;margin-top:4px}
@@ -7251,7 +7251,6 @@ function printWaybillIntl(w){
         <tr><td class="fill veh-val">${truckBrand}</td><td></td><td class="fill veh-val">${truckModel}</td><td class="fill veh-val">${truckPlate}</td></tr>
         <tr><td></td><td></td><td></td><td></td></tr>
         <tr><td></td><td style="font-weight:bold;text-align:center">${isSemi?'':'Прицеп'}</td><td></td><td></td></tr>
-        <tr><td></td><td></td><td></td><td></td></tr>
         <tr><td></td><td style="font-weight:bold;text-align:center">${isSemi?'Полуприцеп':''}</td><td></td><td></td></tr>
         <tr><td class="fill veh-val">${trailerBrand}</td><td></td><td class="fill veh-val">${trailerModel}</td><td class="fill veh-val">${trailerPlate}</td></tr>
       </table>
@@ -7277,9 +7276,9 @@ function printWaybillIntl(w){
   <table class="box" style="margin-top:8px">
     <tr><th colspan="6" style="text-align:center">Задания водителю (заполняется перевозчиком в пути следования в диспетчерских пунктах)</th></tr>
     <tr><th>В чью распоряжение</th><th>Место взятия груза</th><th>Место доставки груза</th><th>Расстояние, км.</th><th>Наименование груза</th><th>Количество груза, тонн или штук</th></tr>
-    <tr><td></td><td></td><td></td><td></td><td></td><td></td></tr>
-    <tr><td></td><td></td><td></td><td></td><td></td><td></td></tr>
-    <tr><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+    <tr style="height:10mm"><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+    <tr style="height:10mm"><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+    <tr style="height:10mm"><td></td><td></td><td></td><td></td><td></td><td></td></tr>
   </table>
   <div style="margin-top:6px;font-size:8.5pt">Опоздания, простой в пути, заезды в гараж и прочие отметки <span class="foot-line"></span></div>
   <div style="margin-top:3px"><span class="foot-line" style="width:100%;min-width:100%"></span></div>
