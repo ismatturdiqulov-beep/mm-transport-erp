@@ -435,6 +435,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
         <div class="form-row"><label>МФО</label><input type="text" id="cr-mfo"></div>
         <div class="form-row"><label>ОКЭД</label><input type="text" id="cr-oked"></div>
       </div>
+      <div class="form-row"><label>Код АСМАП</label><input type="text" id="cr-asmap-code" placeholder="UZB/074/1472"></div>
       <button class="btn primary" onclick="saveCompanyRequisites()">💾 Сохранить реквизиты</button>
     </div>
     <div class="section" style="padding:20px;margin-top:14px;">
@@ -2901,6 +2902,7 @@ function mapCompanyFromDb(r) {
     id: r.id, name: r.name||'', address: r.address||'', phone: r.phone||'', email: r.email||'',
     bankAccount: r.bank_account||'', bankName: r.bank_name||'', inn: r.inn||'', mfo: r.mfo||'',
     oked: r.oked||'', directorName: r.director_name||'', logoUrl: r.logo_url||'',
+    asmapCode: r.asmap_code||'',
   };
 }
 
@@ -4448,7 +4450,8 @@ function saveDozCountry(){
 function renderSettings(){
   // Реквизиты компании
   const crFields={'cr-name':'name','cr-director':'directorName','cr-address':'address','cr-phone':'phone',
-    'cr-email':'email','cr-bank-account':'bankAccount','cr-bank-name':'bankName','cr-inn':'inn','cr-mfo':'mfo','cr-oked':'oked'};
+    'cr-email':'email','cr-bank-account':'bankAccount','cr-bank-name':'bankName','cr-inn':'inn','cr-mfo':'mfo','cr-oked':'oked',
+    'cr-asmap-code':'asmapCode'};
   Object.entries(crFields).forEach(([id,key])=>{ const el=document.getElementById(id); if(el) el.value=COMPANY[key]||''; });
 
   const tbody=document.getElementById('tir-prices-tbody');
@@ -7190,10 +7193,15 @@ function printWaybillIntl(w){
   win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Путевой лист № ${w.fullNum||w.num}</title>
   <style>
     body{font-family:Arial,Helvetica,sans-serif;margin:10mm;font-size:10pt;color:#000}
-    .title{text-align:center;font-size:13.5pt;margin-bottom:2px}
+    .title{text-align:center;font-size:16pt;margin-bottom:2px}
     .title b{text-decoration:underline}
-    .subtitle{text-align:center;font-size:9pt;color:#333;margin-bottom:2px}
-    .warn{text-align:center;font-size:8.5pt;font-weight:bold;margin-bottom:8px}
+    .subtitle{text-align:center;font-size:16pt;color:#333;margin-bottom:2px}
+    .warn{text-align:center;font-size:12pt;font-weight:bold;margin-bottom:8px}
+    .co-box{text-align:center;padding:4px}
+    .co-box .co-name{font-size:11pt;font-weight:bold;text-decoration:underline}
+    .co-box .co-addr{font-size:11pt;margin-top:4px}
+    .co-box .co-asmap{font-size:14pt;font-weight:bold;text-decoration:underline;margin-top:6px}
+    .veh-val{font-size:12pt}
     table{width:100%;border-collapse:collapse}
     .box{table-layout:fixed}
     .box td{border:1px solid #000;padding:5px 7px;vertical-align:top;font-size:9pt;word-wrap:break-word}
@@ -7211,11 +7219,10 @@ function printWaybillIntl(w){
   <div class="subtitle">Грузового автомобиля в международном сообщении</div>
   <div class="warn">ДЕЙСТВИТЕЛЬНО ПО ПРЕДЪЯВЛЕНИЮ ВОДИТЕЛЬСКОГО УДОСТОВЕРЕНИЯ</div>
   <table class="box"><tr>
-    <td style="width:22%;padding:0">
-      <table style="width:100%;height:100%;border-collapse:collapse">
-        <tr><td style="border:none;border-bottom:1px solid #000;font-size:7.5pt;color:#555;text-align:center;height:50%;">Место для углового штампа</td></tr>
-        <tr><td style="border:none;font-size:7.5pt;color:#555;text-align:center;height:50%;">М.П.</td></tr>
-      </table>
+    <td style="width:22%" class="co-box">
+      <div class="co-name">${COMPANY.name||'—'}</div>
+      <div class="co-addr">Адрес: ${COMPANY.address||'—'}</div>
+      ${COMPANY.asmapCode?`<div class="co-asmap">${COMPANY.asmapCode}</div>`:''}
     </td>
     <td style="width:39%">
       Показание спидометра при выезде из гаража <span class="blank">${mileageStr}</span> км.<br><br>
@@ -7238,10 +7245,10 @@ function printWaybillIntl(w){
       <p>Выезд разрешен приказом _________ от _________ 20____ г.</p>
       <table class="box" style="margin-top:8px">
         <tr><th>Марка автомобили</th><th>№ колонны</th><th>Шифр марки автомобиля</th><th>Номерной знак</th></tr>
-        <tr><td class="fill">${truckBrand}</td><td></td><td class="fill">${truckModel}</td><td class="fill">${truckPlate}</td></tr>
+        <tr><td class="fill veh-val">${truckBrand}</td><td></td><td class="fill veh-val">${truckModel}</td><td class="fill veh-val">${truckPlate}</td></tr>
         <tr><td></td><td style="font-weight:bold;text-align:center">${isSemi?'':'Прицеп'}</td><td></td><td></td></tr>
         <tr><td></td><td style="font-weight:bold;text-align:center">${isSemi?'Полуприцеп':''}</td><td></td><td></td></tr>
-        <tr><td class="fill">${trailerBrand}</td><td></td><td class="fill">${trailerModel}</td><td class="fill">${trailerPlate}</td></tr>
+        <tr><td class="fill veh-val">${trailerBrand}</td><td></td><td class="fill veh-val">${trailerModel}</td><td class="fill veh-val">${trailerPlate}</td></tr>
       </table>
     </div>
     <div>
@@ -8567,6 +8574,7 @@ async function saveCompanyRequisites(){
     inn: document.getElementById('cr-inn').value.trim(),
     mfo: document.getElementById('cr-mfo').value.trim(),
     oked: document.getElementById('cr-oked').value.trim(),
+    asmap_code: document.getElementById('cr-asmap-code').value.trim(),
   };
   const { data, error } = await sbClient.from('companies').update(record).eq('id', COMPANY.id).select().single();
   if (error) { alert('Не удалось сохранить реквизиты: '+error.message); return; }
