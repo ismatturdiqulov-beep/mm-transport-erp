@@ -7215,15 +7215,18 @@ function printWaybillIntl(w){
     @page{size:landscape}
     @media print{button{display:none!important}}
   </style></head><body>
-  <div class="title">Путевой лист №&nbsp;&nbsp;<b>${w.fullNum||w.num}</b>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;от <b>${dateStr}</b> г.</div>
-  <div class="subtitle">Грузового автомобиля в международном сообщении</div>
-  <div class="warn">ДЕЙСТВИТЕЛЬНО ПО ПРЕДЪЯВЛЕНИЮ ВОДИТЕЛЬСКОГО УДОСТОВЕРЕНИЯ</div>
+  <div style="margin-left:22%">
+    <div class="title">Путевой лист №&nbsp;&nbsp;<b>${w.fullNum||w.num}</b>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;от <b>${dateStr}</b> г.</div>
+    <div class="subtitle">Грузового автомобиля в международном сообщении</div>
+    <div class="warn">ДЕЙСТВИТЕЛЬНО ПО ПРЕДЪЯВЛЕНИЮ ВОДИТЕЛЬСКОГО УДОСТОВЕРЕНИЯ</div>
+  </div>
   <table class="box"><tr>
-    <td style="width:22%" class="co-box">
+    <td style="width:14%" class="co-box">
       <div class="co-name">${COMPANY.name||'—'}</div>
       <div class="co-addr">Адрес: ${COMPANY.address||'—'}</div>
       ${COMPANY.asmapCode?`<div class="co-asmap">${COMPANY.asmapCode}</div>`:''}
     </td>
+    <td style="width:8%"></td>
     <td style="width:39%">
       Показание спидометра при выезде из гаража <span class="blank">${mileageStr}</span> км.<br><br>
       автомобиль технический исправлен,<br>
