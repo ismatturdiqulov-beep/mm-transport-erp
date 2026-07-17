@@ -7204,8 +7204,8 @@ function printWaybillIntl(w){
     .veh-val{font-size:12pt}
     table{width:100%;border-collapse:collapse}
     .box{table-layout:fixed}
-    .box td{border:1px solid #000;padding:5px 7px;vertical-align:top;font-size:10pt;word-wrap:break-word}
-    .box th{border:1px solid #000;padding:4px 5px;font-size:10pt;font-weight:bold;background:#fafafa;word-wrap:break-word}
+    .box td{border:1px solid #000;padding:1px 7px;vertical-align:top;font-size:10pt;line-height:1.15;word-wrap:break-word}
+    .box th{border:1px solid #000;padding:1px 5px;font-size:10pt;font-weight:bold;background:#fafafa;line-height:1.15;word-wrap:break-word}
     .fill{font-style:italic}
     .blank{border-bottom:1px solid #000;display:inline-block;min-width:60px}
     .two-col{display:grid;grid-template-columns:47.8% 52.2%;gap:10px;margin-top:8px}
@@ -7249,9 +7249,7 @@ function printWaybillIntl(w){
         <colgroup><col style="width:28.4%"><col style="width:22%"><col style="width:26%"><col style="width:23.7%"></colgroup>
         <tr><th>Марка автомобили</th><th>№ колонны</th><th>Шифр марки автомобиля</th><th>Номерной знак</th></tr>
         <tr><td class="fill veh-val">${truckBrand}</td><td></td><td class="fill veh-val">${truckModel}</td><td class="fill veh-val">${truckPlate}</td></tr>
-        <tr><td></td><td></td><td></td><td></td></tr>
         <tr><td></td><td style="font-weight:bold;text-align:center">${isSemi?'':'Прицеп'}</td><td></td><td></td></tr>
-        <tr><td></td><td></td><td></td><td></td></tr>
         <tr><td></td><td style="font-weight:bold;text-align:center">${isSemi?'Полуприцеп':''}</td><td></td><td></td></tr>
         <tr><td class="fill veh-val">${trailerBrand}</td><td></td><td class="fill veh-val">${trailerModel}</td><td class="fill veh-val">${trailerPlate}</td></tr>
       </table>
@@ -7264,7 +7262,6 @@ function printWaybillIntl(w){
         <tr><td>Выезд из гаража</td><td class="fill" style="text-align:center">${dateStr}, ${depTime}</td><td></td></tr>
         <tr><td>Возвращение в гараж</td><td></td><td></td></tr>
         <tr><th colspan="2">Фамилия, имя, отчество водителя</th><th>Номер водительского удостоверения</th></tr>
-        <tr><td colspan="2"></td><td></td></tr>
         <tr><td colspan="2" class="fill">${drv1Name||'—'}</td><td class="fill">${drv1Lic}</td></tr>
         ${drv2Name?`<tr><td colspan="2" class="fill">${drv2Name}</td><td class="fill">${drv2Lic}</td></tr>`:''}
         <tr><th colspan="2">Табельный номер водителя</th><td></td></tr>
