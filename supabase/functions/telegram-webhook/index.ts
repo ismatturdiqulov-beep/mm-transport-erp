@@ -6,9 +6,12 @@
 // хотя бы на одном активном подвижном составе (fleet.kontragent_id), не у любого контрагента —
 // решение пользователя 2026-07-20.
 //
-// Этап 4 (2026-07-20): команды "Мой баланс" / "Мои документы" — привязанный контрагент
-// сам спрашивает у бота, без диспетчера. Приём произвольных сообщений (текст/фото/голос)
-// диспетчеру на рассмотрение — этап 5, ещё не реализован.
+// Этап 5 (2026-07-20): приём произвольных сообщений (текст/фото/голос) от контрагента —
+// сохраняются в driver_messages со статусом 'new', диспетчер обрабатывает их на сайте
+// (не в Telegram — решение пользователя: Telegram только для оповещения/подачи, решение
+// диспетчер принимает на сайте, где виден весь контекст). Если за контрагентом закреплено
+// больше одной машины — сначала спрашиваем, по какой именно, через inline-кнопки
+// (callback_query), чтобы не путать сообщения между несколькими ПС одного человека.
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
 
@@ -25,14 +28,19 @@ const mainKeyboard = {
   resize_keyboard: true,
 };
 
+async function tg(method: string, payload: any) {
+  const resp = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/${method}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  return resp.json();
+}
+
 async function sendMessage(chatId: number, text: string, withKeyboard = false) {
   const body: any = { chat_id: chatId, text, parse_mode: 'HTML' };
   if (withKeyboard) body.reply_markup = mainKeyboard;
-  await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
+  await tg('sendMessage', body);
 }
 
 function fmtDate(dateStr: string): string {
@@ -85,6 +93,35 @@ async function getDocumentsText(kontragentId: string): Promise<string> {
   return lines.length ? lines.join('\n') : 'На руках сейчас нет ни ТИР, ни Дозволов.';
 }
 
+// Скачивает файл у Telegram (нужен токен бота — поэтому только на сервере) и
+// перезаливает в приватное хранилище Supabase, чтобы токен бота никогда не попал
+// в браузер диспетчера через прямую ссылку на api.telegram.org.
+async function relayTelegramFile(fileId: string, companyId: string): Promise<string | null> {
+  const info = await tg('getFile', { file_id: fileId });
+  if (!info.ok) return null;
+  const filePath = info.result.file_path as string;
+  const ext = filePath.includes('.') ? filePath.split('.').pop() : 'bin';
+  const fileResp = await fetch(`https://api.telegram.org/file/bot${TELEGRAM_BOT_TOKEN}/${filePath}`);
+  const bytes = new Uint8Array(await fileResp.arrayBuffer());
+  const storagePath = `${companyId}/${crypto.randomUUID()}.${ext}`;
+  const { error } = await supabase.storage.from('driver-messages').upload(storagePath, bytes, {
+    contentType: fileResp.headers.get('content-type') || undefined,
+  });
+  if (error) return null;
+  return storagePath;
+}
+
+async function createDriverMessage(opts: {
+  companyId: string; telegramLinkId: string; fleetId: string | null;
+  messageText: string | null; photoPath: string | null; voicePath: string | null;
+}) {
+  const { data, error } = await supabase.from('driver_messages').insert({
+    company_id: opts.companyId, telegram_link_id: opts.telegramLinkId, fleet_id: opts.fleetId,
+    message_text: opts.messageText, photo_url: opts.photoPath, voice_url: opts.voicePath, status: 'new',
+  }).select().single();
+  return { data, error };
+}
+
 Deno.serve(async (req) => {
   if (req.method !== 'POST') return new Response('ok');
 
@@ -95,12 +132,29 @@ Deno.serve(async (req) => {
     return new Response('ok');
   }
 
+  // --- Нажатие inline-кнопки выбора машины ---
+  if (update.callback_query) {
+    const cq = update.callback_query;
+    const chatId: number = cq.message.chat.id;
+    const m = /^docveh:([0-9a-f-]+):([0-9a-f-]+)$/.exec(cq.data || '');
+    if (m) {
+      const [, msgId, fleetId] = m;
+      const { data: fleet } = await supabase.from('fleet').select('label').eq('id', fleetId).single();
+      await supabase.from('driver_messages').update({ fleet_id: fleetId }).eq('id', msgId);
+      await tg('answerCallbackQuery', { callback_query_id: cq.id, text: 'Принято' });
+      await sendMessage(chatId, `✅ Сообщение принято по машине ${fleet?.label || ''} и передано диспетчеру.`, true);
+    } else {
+      await tg('answerCallbackQuery', { callback_query_id: cq.id });
+    }
+    return new Response('ok');
+  }
+
   const message = update.message;
-  if (!message || !message.text) return new Response('ok');
+  if (!message) return new Response('ok');
 
   const chatId: number = message.chat.id;
   const username: string | null = message.from?.username ?? null;
-  const text: string = message.text.trim();
+  const text: string = (message.text || message.caption || '').trim();
 
   // Уже привязан?
   const { data: existingLink } = await supabase
@@ -112,19 +166,68 @@ Deno.serve(async (req) => {
 
   if (existingLink) {
     const kgId = (existingLink as any).kontragent_id;
-    if (text === BTN_BALANCE || /баланс/i.test(text)) {
+    const companyId = (existingLink as any).company_id;
+    const linkId = (existingLink as any).id;
+
+    if (text === BTN_BALANCE || (message.text && /баланс/i.test(text))) {
       const bal = await getBalance(kgId);
       const label = bal < 0 ? `Долг: ${fmtN(-bal)} сум` : bal > 0 ? `Переплата: ${fmtN(bal)} сум` : 'Баланс: 0';
       await sendMessage(chatId, `💰 <b>${label}</b>`, true);
-    } else if (text === BTN_DOCS || /документ/i.test(text)) {
+      return new Response('ok');
+    }
+    if (text === BTN_DOCS || (message.text && /документ/i.test(text))) {
       const docsText = await getDocumentsText(kgId);
       await sendMessage(chatId, docsText, true);
+      return new Response('ok');
+    }
+
+    // --- Произвольное сообщение: текст, фото или голос ---
+    const hasPhoto = Array.isArray(message.photo) && message.photo.length > 0;
+    const hasVoice = !!message.voice;
+    if (!hasPhoto && !hasVoice && !text) {
+      await sendMessage(chatId, 'Выберите действие ниже.', true);
+      return new Response('ok');
+    }
+
+    let photoPath: string | null = null;
+    let voicePath: string | null = null;
+    if (hasPhoto) {
+      const best = message.photo[message.photo.length - 1]; // самое большое разрешение — последнее в массиве
+      photoPath = await relayTelegramFile(best.file_id, companyId);
+    }
+    if (hasVoice) {
+      voicePath = await relayTelegramFile(message.voice.file_id, companyId);
+    }
+
+    const { data: fleets } = await supabase.from('fleet').select('id, label').eq('kontragent_id', kgId).neq('active', false);
+    const fleetList = fleets || [];
+
+    if (fleetList.length > 1) {
+      // Сохраняем сообщение сразу (fleet_id пока пуст), спрашиваем какая машина
+      const { data: dm } = await createDriverMessage({
+        companyId, telegramLinkId: linkId, fleetId: null,
+        messageText: text || null, photoPath, voicePath,
+      });
+      if (dm) {
+        await tg('sendMessage', {
+          chat_id: chatId,
+          text: 'По какой машине это сообщение?',
+          reply_markup: {
+            inline_keyboard: fleetList.map((f: any) => [{ text: f.label, callback_data: `docveh:${dm.id}:${f.id}` }]),
+          },
+        });
+      }
     } else {
-      const kgName = (existingLink as any).kontragenty?.name || '';
-      await sendMessage(chatId, `Вы подключены как <b>${kgName}</b>. Выберите действие ниже.`, true);
+      await createDriverMessage({
+        companyId, telegramLinkId: linkId, fleetId: fleetList[0]?.id || null,
+        messageText: text || null, photoPath, voicePath,
+      });
+      await sendMessage(chatId, '✅ Сообщение получено и передано диспетчеру.', true);
     }
     return new Response('ok');
   }
+
+  if (!message.text) return new Response('ok');
 
   if (text === '/start') {
     await sendMessage(chatId,
