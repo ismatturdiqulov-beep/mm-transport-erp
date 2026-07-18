@@ -3476,20 +3476,25 @@ function populateModal(id) {
 
   const allPersons=KONTRAGENTY.filter(k=>k.active!==false).map(k=>k.name);
   const plates=[...new Set(TRANSPORT.map(t=>t.callsign).concat(TIRS.map(t=>t.plate)).concat(DOZV.map(d=>d.plate)).filter(Boolean))].sort();
-  // ТИР свободен = не передан ИЛИ уже в офисе (можно передать снова) ИЛИ возвращён в АСМАП — НЕТ
-  // Передавать можно: state=='free' || state=='office' (нельзя если на руках или в АСМАП)
+  // ТИР свободен = не передан ИЛИ вернулся в офис неиспользованным (можно передать снова
+  // любому другому ПС) ИЛИ возвращён в АСМАП — НЕТ. Раньше код проверял только 'free',
+  // хотя этот же комментарий всегда требовал ещё и 'office' — возвращённый неиспользованный
+  // документ фактически невозможно было передать заново (баг найден пользователем 2026-07-20).
+  // Передавать можно: state=='free' || (state=='office' && не использован)
   // ВАЖНО: если просрочен — передавать НЕЛЬЗЯ
   const tirForTransfer = TIRS.filter(t => {
     const s = tirGetState(t);
-    return (s==='free') && !isExp(t.expires);
+    return (s==='free' || (s==='office' && t.used===false)) && !isExp(t.expires);
   });
   // Вернуть в офис — только те что на руках
   const tirForReturnOffice = TIRS.filter(t => tirGetState(t)==='issued');
   // Сдать в АСМАП — только те что в офисе или свободны (были переданы и вернулись)
   const tirForAsmaf = TIRS.filter(t => tirGetState(t)==='office' || (tirGetState(t)==='free' && t.transferred));
 
-  // ДОЗВОЛ: передавать можно если свободен (бумажный — даже просроченный, но с санкцией)
-  const dozForTransfer = DOZV.filter(d => dozGetState(d)==='free');
+  // ДОЗВОЛ: передавать можно если свободен, ИЛИ бумажный вернулся в офис неиспользованным
+  // (та же логика, что и для ТИР — можно передать заново любому другому ПС) — даже
+  // просроченный, но с санкцией.
+  const dozForTransfer = DOZV.filter(d => dozGetState(d)==='free' || (dozGetState(d)==='office' && d.used===false && !d.epermit));
   // Вернуть в офис — только на руках (и только бумажный, Е-ПЕРМИТ закрывают через "использован")
   const dozForReturnOffice = DOZV.filter(d => dozGetState(d)==='issued' && !d.epermit);
   // Закрыть Е-ПЕРМИТ — на руках и epermit
