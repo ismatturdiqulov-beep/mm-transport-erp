@@ -3184,7 +3184,15 @@ function getFleetTruck(f){ return TRANSPORT.find(t=>t.id===f.truckId); }
 function getFleetTrailer(f){ return TRANSPORT.find(t=>t.id===f.trailerId); }
 function getFleetBalance(f){ return f.balance; }
 function getKontragentBalance(kgId){
-  return FLEET.filter(f=>f.kontragentId===kgId).reduce((s,f)=>s+f.balance,0);
+  const fleetBal = FLEET.filter(f=>f.kontragentId===kgId).reduce((s,f)=>s+f.balance,0);
+  // Операции без привязки к конкретному ПС (кнопка "+Операция" в списке контрагентов —
+  // fleet_id всегда null) не отражаются в fleet.balance, добавляем отдельно, иначе баланс
+  // в списке контрагентов и Акт сверки (который берёт всё из finance) расходятся —
+  // баг найден пользователем 2026-07-20.
+  const genericOps = FINANCE.filter(f=>f.kontragentId===kgId && !f.fleetId);
+  const genericCharged = genericOps.filter(f=>f.type==='charge').reduce((s,f)=>s+f.amount,0);
+  const genericPaid = genericOps.filter(f=>f.type==='payment'||f.type==='vacation').reduce((s,f)=>s+f.paid,0);
+  return fleetBal - genericCharged + genericPaid;
 }
 function addFleetOp(fleetId, op){
   const f=FLEET.find(x=>x.id===fleetId); if(!f) return;
@@ -4772,7 +4780,7 @@ function renderDashboardAnalytics(){
   const rankTypeLabel={mm:'Водитель ММ', tenant:'Арендатор'};
   const peopleRank = KONTRAGENTY.filter(k=>k.type==='tenant'||k.type==='mm').map(k=>{
     const charged=FINANCE.filter(f=>f.kontragentId===k.id&&f.type==='charge').reduce((s,f)=>s+f.amount,0);
-    const paid=FINANCE.filter(f=>f.kontragentId===k.id&&(f.type==='payment'||f.type==='vacation')).reduce((s,f)=>s+f.amount,0);
+    const paid=FINANCE.filter(f=>f.kontragentId===k.id&&(f.type==='payment'||f.type==='vacation')).reduce((s,f)=>s+f.paid,0);
     return {k, charged, paid};
   }).filter(x=>x.charged>0).sort((a,b)=>b.charged-a.charged).slice(0,6);
   const peopleRankEl=document.getElementById('dash-people-rank');
@@ -4988,7 +4996,7 @@ function renderTenants(){
       col2 = '—';
     } else {
       const charged = FINANCE.filter(f=>f.kontragentId===k.id&&f.type==='charge').reduce((s,f)=>s+f.amount,0);
-      const paid    = FINANCE.filter(f=>f.kontragentId===k.id&&(f.type==='payment'||f.type==='vacation')).reduce((s,f)=>s+f.amount,0);
+      const paid    = FINANCE.filter(f=>f.kontragentId===k.id&&(f.type==='payment'||f.type==='vacation')).reduce((s,f)=>s+f.paid,0);
       col1 = charged>0?`<span class="amount-neg">${fmtN(charged)}</span>`:'—';
       col2 = paid>0?`<span class="amount-pos">${fmtN(paid)}</span>`:'—';
     }
@@ -6001,10 +6009,25 @@ async function _saveKontragentOpImpl(){
   const k=KONTRAGENTY.find(x=>x.id===_kopId); if(!k) return;
   const amount=numVal('kop-amount');
   if(!amount){alert('Укажите сумму');return;}
-  const newOps = [...(k.ops||[]), {id:genId(),type:document.getElementById('kop-type').value,amount,date:document.getElementById('kop-date').value,desc:document.getElementById('kop-desc').value}];
-  const { error } = await sbClient.from('kontragenty').update({ ops: newOps }).eq('id', k.id);
+  const opType=document.getElementById('kop-type').value; // 'charge' | 'income'
+  const date=document.getElementById('kop-date').value||todayStr;
+  const desc=document.getElementById('kop-desc').value;
+  // Раньше писало в kontragenty.ops — отдельное, никем не читаемое поле (Акт сверки и
+  // баланс контрагента берут данные из finance, см. renderAktSverki/printAktSverki).
+  // Из-за этого "Приход"/"Начисление" через эту кнопку никогда не попадали в акт сверки —
+  // баг найден пользователем 2026-07-20. Теперь пишем туда же, куда и остальные операции.
+  const isIncome=opType==='income';
+  const financeRecord={
+    company_id:CURRENT_PROFILE.company_id, date, fleet_id:null, kontragent_id:k.id, person_name:k.name,
+    type:isIncome?'payment':'charge', category:'manual', description:desc,
+    amount:isIncome?0:amount, paid:isIncome?amount:0,
+  };
+  const { data, error } = await sbClient.from('finance').insert(financeRecord).select().single();
   if (error) { alert('Не удалось сохранить операцию: '+error.message); return; }
-  k.ops = newOps;
+  FINANCE.push(mapFinanceFromDb(data));
+  notifyKontragent(k.id, isIncome
+    ? `✅ Учтён ваш приход: ${fmtN(amount)} сум${desc?' ('+desc+')':''}.`
+    : `💸 Вам начислено: ${fmtN(amount)} сум${desc?' ('+desc+')':''}.`);
   closeModal('modal-kontragent-op');
   toast('Операция сохранена'); renderTenants();
 }
