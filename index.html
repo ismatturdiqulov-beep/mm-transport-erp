@@ -5471,8 +5471,10 @@ async function updatePerson(id){
     const changedDocs=[];
     Object.keys(docs||{}).forEach(key=>{
       const oldD=oldDocs[key]||{}, newD=docs[key]||{};
-      if((oldD.num||'')!==(newD.num||'') || (oldD.to||'')!==(newD.to||'')){
-        if(newD.num||newD.to) changedDocs.push(`${DOC_TYPE_LABELS[key]||key}: №${newD.num||'—'}${newD.to?' до '+fmt(newD.to):''}`);
+      const changed=(oldD.num||'')!==(newD.num||'') || (oldD.to||'')!==(newD.to||'')
+        || (oldD.from||'')!==(newD.from||'') || (oldD.org||'')!==(newD.org||'');
+      if(changed && (newD.num||newD.to||newD.from||newD.org)){
+        changedDocs.push(`${DOC_TYPE_LABELS[key]||key}: №${newD.num||'—'}${newD.from?' от '+fmt(newD.from):''}${newD.to?' до '+fmt(newD.to):''}${newD.org?' ('+newD.org+')':''}`);
       }
     });
     if(changedDocs.length) notifyKontragent(updates.kontragent_id, `📝 Обновлены ваши данные (${p.name}):\n${changedDocs.join('\n')}`);
