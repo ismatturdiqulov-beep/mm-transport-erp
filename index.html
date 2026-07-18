@@ -3048,6 +3048,23 @@ async function loadAllData() {
   TELEGRAM_LINKS = byTable.telegram_links.map(mapTelegramLinkFromDb);
 }
 
+// Отправка Telegram-уведомления контрагенту (если у него есть активная привязка).
+// Необязательная часть действия — ошибку показывать пользователю не нужно, просто
+// логируем в консоль, чтобы не отправка уведомления никогда не мешала основному
+// сохранению (передача ТИР, начисление и т.д. должны пройти в любом случае).
+async function notifyKontragent(kontragentId, message){
+  if(!kontragentId) return;
+  try{
+    const { data: { session } } = await sbClient.auth.getSession();
+    if(!session) return;
+    await fetch(SUPABASE_URL+'/functions/v1/telegram-notify', {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json', 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer '+session.access_token },
+      body: JSON.stringify({ kontragentId, message }),
+    });
+  }catch(e){ console.error('Telegram notify failed', e); }
+}
+
 // При открытии страницы проверяем, нет ли уже активного входа (чтобы не спрашивать
 // логин/пароль заново при каждой перезагрузке страницы).
 (async function initAuth() {
@@ -3909,8 +3926,15 @@ function transferTir() {
           }
         }
         toast(`ТИР передан: ${t.num} → ${kg.name} (${fl.label}). Начислено: ${fmtN(price)}${tripId?' · Расход добавлен в рейс':''}`);
-      } else { toast(`ТИР передан: ${t.num} → ${fl.label}`); }
-    } else { toast(`ТИР передан: ${t.num} → ${fl.label}`); }
+        notifyKontragent(kg.id, `📋 Вам передан ТИР № ${t.num} (${t.type}), действителен до ${fmt(t.expires)}.\nНачислено на баланс: ${fmtN(price)} сум.`);
+      } else {
+        toast(`ТИР передан: ${t.num} → ${fl.label}`);
+        notifyKontragent(kg.id, `📋 Вам передан ТИР № ${t.num} (${t.type}), действителен до ${fmt(t.expires)}.`);
+      }
+    } else {
+      toast(`ТИР передан: ${t.num} → ${fl.label}`);
+      notifyKontragent(kg.id, `📋 Вам передан ТИР № ${t.num} (${t.type}), действителен до ${fmt(t.expires)}.`);
+    }
     closeModal('modal-transfer-tir'); renderTir();
   });
   if(daysLeft<=10&&daysLeft>0){
@@ -3930,6 +3954,7 @@ async function _returnTirToOfficeImpl() {
   const { error } = await sbClient.from('tirs').update({ returned_office:returnedOffice, used, comp }).eq('id', t.id);
   if (error) { alert('Не удалось сохранить возврат ТИР: '+error.message); return; }
   t.returnedOffice=returnedOffice; t.used=used; t.comp=comp;
+  const flForNotify=FLEET.find(f=>{const kg=getFleetKontragent(f);return kg.name===t.person||kg.short===t.person;});
   if(!used && comp>0){
     const desc=document.getElementById('rt-comp-note').value||'Возврат неиспользованного ТИР '+t.num;
     const { data:finData, error:finErr } = await sbClient.from('finance').insert({
@@ -3938,11 +3963,14 @@ async function _returnTirToOfficeImpl() {
     }).select().single();
     if (!finErr) FINANCE.push(mapFinanceFromDb(finData));
     // Update FLEET balance
-    const fl=FLEET.find(f=>{const kg=getFleetKontragent(f);return kg.name===t.person||kg.short===t.person;});
-    if(fl){
-      const { error:flErr } = await sbClient.from('fleet').update({ balance: fl.balance+comp }).eq('id', fl.id);
-      if (!flErr) fl.balance+=comp;
+    if(flForNotify){
+      const { error:flErr } = await sbClient.from('fleet').update({ balance: flForNotify.balance+comp }).eq('id', flForNotify.id);
+      if (!flErr) flForNotify.balance+=comp;
     }
+  }
+  if(flForNotify){
+    const kgForNotify=getFleetKontragent(flForNotify);
+    notifyKontragent(kgForNotify.id, `↩️ Вы сдали ТИР № ${t.num} в офис.${used?' Отмечен как использованный.':(comp>0?` Зачёт на баланс: ${fmtN(comp)} сум.`:' Неиспользованный.')}`);
   }
   closeModal('modal-return-tir');
   toast('ТИР '+t.num+' принят в офис. '+(used?'Использован.':'Неиспользован'+(t.comp>0?', зачёт: '+fmtN(t.comp):'.')));
@@ -4046,7 +4074,11 @@ function transferDozv() {
           }
         }
         toast(`Дозвол выдан: ${d.num} → ${fl.label}. Начислено: ${fmtN(price)}${tripId?' · Расход добавлен в рейс':''}`);
-      } else { toast(`Дозвол выдан: ${d.num} → ${fl.label} (цена не задана)`); }
+        notifyKontragent(kg.id, `📄 Вам передан Дозвол № ${d.num} (${d.country}${d.epermit?', Е-ПЕРМИТ':''}).\nНачислено на баланс: ${fmtN(price)} сум.`);
+      } else {
+        toast(`Дозвол выдан: ${d.num} → ${fl.label} (цена не задана)`);
+        notifyKontragent(kg.id, `📄 Вам передан Дозвол № ${d.num} (${d.country}${d.epermit?', Е-ПЕРМИТ':''}).`);
+      }
     }
     closeModal('modal-transfer-dozv'); renderDozv();
   });
@@ -4067,6 +4099,7 @@ async function _returnDozToOfficeImpl() {
   const { error } = await sbClient.from('dozv').update({ returned_office:returnedOffice, used, comp }).eq('id', d.id);
   if (error) { alert('Не удалось сохранить возврат дозвола: '+error.message); return; }
   d.returnedOffice=returnedOffice; d.used=used; d.comp=comp;
+  const flcForNotify=FLEET.find(f=>{const kg=getFleetKontragent(f);return kg.name===d.person||kg.short===d.person;});
   if(!used && comp>0){
     const desc=document.getElementById('rd-comp-note').value||'Возврат неиспользованного дозвола '+d.num;
     const { data:finData, error:finErr } = await sbClient.from('finance').insert({
@@ -4074,8 +4107,11 @@ async function _returnDozToOfficeImpl() {
       type:'payment', category:'comp-dozv', description:desc, amount:0, paid:comp,
     }).select().single();
     if (!finErr) FINANCE.push(mapFinanceFromDb(finData));
-    const flc=FLEET.find(f=>{const kg=getFleetKontragent(f);return kg.name===d.person||kg.short===d.person;});
-    if(flc) await addFleetOpAndSave(flc.id,{type:'payment',cat:'comp-dozv',desc:'Возврат ДОЗВОЛ '+d.num,amount:comp,date:d.returnedOffice||todayStr,person:d.person});
+    if(flcForNotify) await addFleetOpAndSave(flcForNotify.id,{type:'payment',cat:'comp-dozv',desc:'Возврат ДОЗВОЛ '+d.num,amount:comp,date:d.returnedOffice||todayStr,person:d.person});
+  }
+  if(flcForNotify){
+    const kgForNotify=getFleetKontragent(flcForNotify);
+    notifyKontragent(kgForNotify.id, `↩️ Вы сдали Дозвол № ${d.num} в офис.${used?' Отмечен как использованный.':(comp>0?` Зачёт на баланс: ${fmtN(comp)} сум.`:' Неиспользованный.')}`);
   }
   closeModal('modal-return-dozv');
   toast('Дозвол '+d.num+' принят в офис.'+(d.comp>0?' Зачёт: '+fmtN(d.comp):''));
