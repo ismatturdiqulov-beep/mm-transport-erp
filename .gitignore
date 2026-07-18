@@ -16,3 +16,8 @@ mm_transport_export_*.sql
 ОБРАЗЕЦ*.doc
 ОБРАЗЕЦ*.docx
 ОБРАЗЕЦ*.xlsx
+ОБРАЗЕЦ*.pdf
+
+# Working copies derived from the ОБРАЗЕЦ samples — still carry the other
+# company's real data (address/phone/INN/driver names) inherited from the source
+Путевой лист - для правки*.docx
