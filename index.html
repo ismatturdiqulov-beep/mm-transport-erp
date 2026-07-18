@@ -307,6 +307,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
   <div class="nav">
     <div class="nav-lbl">Главное</div>
     <div class="nav-item active" onclick="showPage('dashboard')"><span class="ico">⬛</span><span>Дашборд</span></div>
+    <div class="nav-item" onclick="showPage('driver-messages')"><span class="ico">💬</span><span>Сообщения от водителей</span><span id="dm-badge" style="display:none;background:var(--red);color:#fff;border-radius:10px;font-size:10px;font-weight:700;padding:1px 6px;margin-left:auto;"></span></div>
     <div class="nav-item" onclick="showPage('settings')"><span class="ico">⚙️</span><span>Настройки цен</span></div>
     <div class="nav-lbl">Документы</div>
     <div class="nav-item" onclick="showPage('tir')"><span class="ico">📋</span><span>ТИР Карнет</span></div>
@@ -641,6 +642,16 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
         </tr></thead>
         <tbody id="dozv-tbody"></tbody>
       </table>
+    </div>
+  </div>
+
+  <!-- ===== СООБЩЕНИЯ ОТ ВОДИТЕЛЕЙ (Telegram-бот) ===== -->
+  <div class="page" id="page-driver-messages">
+    <div class="page-hdr">
+      <div><h2>Сообщения от водителей</h2><div class="ph-sub">Входящие через Telegram-бот — примите, отклоните или отметьте как «не по работе»</div></div>
+    </div>
+    <div class="section" style="padding:20px;">
+      <div id="dm-list"></div>
     </div>
   </div>
 
@@ -1754,6 +1765,20 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
     <div class="modal-foot">
       <button class="btn" onclick="closeModal('modal-add-kontragent')">Отмена</button>
       <button class="btn primary" onclick="saveKontragent()">Сохранить</button>
+    </div>
+  </div>
+</div>
+
+<!-- ОТВЕТ ДИСПЕТЧЕРА НА СООБЩЕНИЕ ВОДИТЕЛЯ -->
+<div class="overlay" id="modal-dm-response">
+  <div class="modal">
+    <div class="modal-head"><h3 id="dm-resp-title">Ответ</h3><span class="modal-close" onclick="closeModal('modal-dm-response')">×</span></div>
+    <div class="modal-body">
+      <div class="form-row"><label id="dm-resp-label">Комментарий</label><textarea id="dm-resp-text" rows="3" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:var(--radius);font-family:inherit;"></textarea></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeModal('modal-dm-response')">Отмена</button>
+      <button class="btn primary" onclick="saveDmResponse()">Отправить</button>
     </div>
   </div>
 </div>
@@ -2940,6 +2965,14 @@ function mapTelegramLinkFromDb(r) {
     active: r.active };
 }
 
+function mapDriverMessageFromDb(r) {
+  return { id: r.id, telegramLinkId: r.telegram_link_id||'', tripId: r.trip_id||'', fleetId: r.fleet_id||'',
+    text: r.message_text||'', photoPath: r.photo_url||'', voicePath: r.voice_url||'',
+    status: r.status||'new', processedExpenseId: r.processed_expense_id||'',
+    responseText: r.response_text||'', processedBy: r.processed_by||'', processedAt: r.processed_at||'',
+    createdAt: r.created_at||'', photoSignedUrl:'', voiceSignedUrl:'' };
+}
+
 function mapTripFromDb(t, legs, expenses, payments, surcharges) {
   const myLegs = legs.filter(l => l.trip_id === t.id).sort((a, b) => (a.leg_num||0) - (b.leg_num||0));
   const legIdOrder = myLegs.map(l => l.id); // позиция в этом массиве = тот самый legIdx, который использует остальной код
@@ -2983,7 +3016,7 @@ function mapTripFromDb(t, legs, expenses, payments, surcharges) {
 async function loadAllData() {
   const tables = ['companies','company_settings','kontragenty','people','person_docs','transport','fleet','trips','trip_legs',
     'trip_expenses','trip_payments','trip_surcharges','tirs','dozv','finance','kassa',
-    'kassa_wallets','maintenance','waybills','poa','labor','telegram_links'];
+    'kassa_wallets','maintenance','waybills','poa','labor','telegram_links','driver_messages'];
   const results = await Promise.all(tables.map(t => sbClient.from(t).select('*')));
   const byTable = {};
   tables.forEach((t, i) => {
@@ -3046,6 +3079,20 @@ async function loadAllData() {
   LABOR = byTable.labor.map(mapLaborFromDb);
   TRIPS = byTable.trips.map(t => mapTripFromDb(t, byTable.trip_legs, byTable.trip_expenses, byTable.trip_payments, byTable.trip_surcharges));
   TELEGRAM_LINKS = byTable.telegram_links.map(mapTelegramLinkFromDb);
+  DRIVER_MESSAGES = byTable.driver_messages.map(mapDriverMessageFromDb);
+  // Подписанные ссылки на фото/голос — bucket приватный, обычный публичный URL не
+  // сработает. Генерируем один раз при загрузке (на час), не при каждом рендере.
+  await Promise.all(DRIVER_MESSAGES.filter(m=>m.photoPath||m.voicePath).map(async m=>{
+    if(m.photoPath){
+      const { data } = await sbClient.storage.from('driver-messages').createSignedUrl(m.photoPath, 3600);
+      if(data) m.photoSignedUrl=data.signedUrl;
+    }
+    if(m.voicePath){
+      const { data } = await sbClient.storage.from('driver-messages').createSignedUrl(m.voicePath, 3600);
+      if(data) m.voiceSignedUrl=data.signedUrl;
+    }
+  }));
+  updateDmBadge();
 }
 
 // Отправка Telegram-уведомления контрагенту (если у него есть активная привязка).
@@ -3067,6 +3114,108 @@ async function notifyKontragent(kontragentId, message){
       console.error('Telegram notify failed:', resp.status, text);
     }
   }catch(e){ console.error('Telegram notify failed', e); }
+}
+
+function escapeHtml(s){
+  return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function updateDmBadge(){
+  const badge=document.getElementById('dm-badge'); if(!badge) return;
+  const n=DRIVER_MESSAGES.filter(m=>m.status==='new').length;
+  badge.textContent=n; badge.style.display=n>0?'inline-block':'none';
+}
+
+const DM_STATUS_LABEL={new:'Ожидает',accepted:'Принято',rejected:'Отклонено',irrelevant:'Не по работе'};
+const DM_STATUS_COLOR={new:'amber',accepted:'green',rejected:'red',irrelevant:'gray'};
+
+function renderDriverMessages(){
+  const list=document.getElementById('dm-list'); if(!list) return;
+  const sorted=[...DRIVER_MESSAGES].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
+  const pending=sorted.filter(m=>m.status==='new');
+  const done=sorted.filter(m=>m.status!=='new');
+
+  const cardHtml=(m)=>{
+    const link=TELEGRAM_LINKS.find(l=>l.id===m.telegramLinkId);
+    const kg=link?KONTRAGENTY.find(k=>k.id===link.kontragentId):null;
+    const fleet=m.fleetId?FLEET.find(f=>f.id===m.fleetId):null;
+    const dt=m.createdAt?new Date(m.createdAt):null;
+    const dtStr=dt?`${fmt(dt.toISOString().split('T')[0])} ${String(dt.getHours()).padStart(2,'0')}:${String(dt.getMinutes()).padStart(2,'0')}`:'';
+    return `<div class="section" style="margin-bottom:10px;padding:14px;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:6px;">
+        <div><b>${kg?kg.name:'—'}</b>${fleet?' · '+fleet.label:''} <span style="color:var(--text3);font-size:11px;">${dtStr}</span></div>
+        <span class="tag ${DM_STATUS_COLOR[m.status]||'gray'}">${DM_STATUS_LABEL[m.status]||m.status}</span>
+      </div>
+      ${m.text?`<div style="margin:8px 0;white-space:pre-wrap;">${escapeHtml(m.text)}</div>`:''}
+      ${m.photoSignedUrl?`<div style="margin:8px 0;"><img src="${m.photoSignedUrl}" style="max-width:280px;max-height:280px;border-radius:8px;display:block;"></div>`:''}
+      ${m.voiceSignedUrl?`<div style="margin:8px 0;"><audio controls src="${m.voiceSignedUrl}" style="max-width:280px;"></audio></div>`:''}
+      ${m.status==='new'?`
+      <div style="display:flex;gap:8px;margin-top:8px;">
+        <button class="btn xs green-btn" onclick="openDmAccept('${m.id}')">✅ Принять</button>
+        <button class="btn xs danger" onclick="openDmReject('${m.id}')">🚫 Отклонить</button>
+        <button class="btn xs" onclick="dmIrrelevant('${m.id}')">💬 Не по работе</button>
+      </div>`:(m.responseText?`<div style="margin-top:6px;font-size:12px;color:var(--text2);">Ответ: ${escapeHtml(m.responseText)}</div>`:'')}
+    </div>`;
+  };
+
+  let html='';
+  if(pending.length) html+=pending.map(cardHtml).join('');
+  else html+='<div style="text-align:center;padding:30px;color:var(--text3)">Нет новых сообщений</div>';
+  if(done.length){
+    html+=`<div style="font-size:12px;font-weight:600;color:var(--text3);margin:18px 0 8px;">История (${done.length})</div>`;
+    html+=done.map(cardHtml).join('');
+  }
+  list.innerHTML=html;
+}
+
+let _dmRespId=null, _dmRespAction=null;
+function openDmAccept(id){
+  _dmRespId=id; _dmRespAction='accept';
+  document.getElementById('dm-resp-title').textContent='✅ Принять — укажите срок выполнения';
+  document.getElementById('dm-resp-label').textContent='Например: «Сделаем сегодня до 18:00» или «Займёмся завтра утром»';
+  document.getElementById('dm-resp-text').value='';
+  openModal('modal-dm-response');
+}
+function openDmReject(id){
+  _dmRespId=id; _dmRespAction='reject';
+  document.getElementById('dm-resp-title').textContent='🚫 Отклонить — укажите причину';
+  document.getElementById('dm-resp-label').textContent='Например: «Нет дозвола на эту страну» или «Отрицательный баланс»';
+  document.getElementById('dm-resp-text').value='';
+  openModal('modal-dm-response');
+}
+async function saveDmResponse(){
+  const text=document.getElementById('dm-resp-text').value.trim();
+  if(!text){alert('Укажите текст ответа');return;}
+  const m=DRIVER_MESSAGES.find(x=>x.id===_dmRespId); if(!m) return;
+  const status=_dmRespAction==='accept'?'accepted':'rejected';
+  const { error } = await sbClient.from('driver_messages').update({
+    status, response_text:text, processed_by:CURRENT_PROFILE?.full_name||CURRENT_PROFILE?.id||'', processed_at:new Date().toISOString(),
+  }).eq('id', m.id);
+  if(error){ alert('Не удалось сохранить: '+error.message); return; }
+  m.status=status; m.responseText=text;
+  const link=TELEGRAM_LINKS.find(l=>l.id===m.telegramLinkId);
+  if(link){
+    const msg = status==='accepted'
+      ? `✅ Ваше сообщение принято в работу.\nСрок: ${text}`
+      : `🚫 Ваше сообщение отклонено.\nПричина: ${text}`;
+    notifyKontragent(link.kontragentId, msg);
+  }
+  closeModal('modal-dm-response');
+  toast(status==='accepted'?'Принято':'Отклонено');
+  renderDriverMessages(); updateDmBadge();
+}
+async function dmIrrelevant(id){
+  const m=DRIVER_MESSAGES.find(x=>x.id===id); if(!m) return;
+  const fixedText='Это рабочий бот для передачи сообщений по эксплуатации транспорта. Пожалуйста, напишите диспетчеру лично.';
+  const { error } = await sbClient.from('driver_messages').update({
+    status:'irrelevant', response_text:fixedText, processed_by:CURRENT_PROFILE?.full_name||CURRENT_PROFILE?.id||'', processed_at:new Date().toISOString(),
+  }).eq('id', m.id);
+  if(error){ alert('Не удалось сохранить: '+error.message); return; }
+  m.status='irrelevant'; m.responseText=fixedText;
+  const link=TELEGRAM_LINKS.find(l=>l.id===m.telegramLinkId);
+  if(link) notifyKontragent(link.kontragentId, `ℹ️ ${fixedText}`);
+  toast('Отмечено как «не по работе»');
+  renderDriverMessages(); updateDmBadge();
 }
 
 // При открытии страницы проверяем, нет ли уже активного входа (чтобы не спрашивать
@@ -3248,6 +3397,7 @@ let LABOR = ld('mm_labor', []);
 // т.к. в реальном рабочем процессе контрагент заводится первым в любом случае
 // (и на наёмного водителя, и на арендатора), а "Водители" — уже производная от него.
 let TELEGRAM_LINKS = [];
+let DRIVER_MESSAGES = [];
 
 // FINANCE — глобальная история всех операций
 // Поля: date, fleetId (на какую ед.ПС), kontragentId, type ('charge'/'payment'/'vacation'), cat, desc, amount, wallet
@@ -3433,7 +3583,7 @@ function showPage(id) {
   document.getElementById('page-'+id).classList.add('active');
   const nav=document.querySelector(`.nav-item[onclick="showPage('${id}')"]`);
   if(nav) nav.classList.add('active');
-  const titles={dashboard:'Дашборд',settings:'Настройки цен',tir:'ТИР Карнет',dozvol:'Дозволы',tenants:'Контрагенты',kassa:'Касса',fleet:'Подвижной состав',trips:'Рейсы',people:'Водители',transport:'Транспорт',maintenance:'ТО и Ремонты',waybills:'Путёвки',poa:'Доверенности',labor:'Трудовые договоры',finance:'История операций',reports:'Отчёты'};
+  const titles={dashboard:'Дашборд',settings:'Настройки цен',tir:'ТИР Карнет',dozvol:'Дозволы',tenants:'Контрагенты',kassa:'Касса',fleet:'Подвижной состав',trips:'Рейсы',people:'Водители',transport:'Транспорт',maintenance:'ТО и Ремонты',waybills:'Путёвки',poa:'Доверенности',labor:'Трудовые договоры',finance:'История операций',reports:'Отчёты','driver-messages':'Сообщения от водителей'};
   document.getElementById('pageTitle').textContent=titles[id]||'';
   renderPage(id);
 }
@@ -4678,7 +4828,7 @@ function deleteDozCountry(id){ if(!confirm('Удалить страну?')) retu
 
 // ============ RENDER FUNCTIONS ============
 function renderPage(id){
-  const map={dashboard:renderDashboard,settings:renderSettings,tir:renderTir,dozvol:renderDozv,tenants:renderTenants,kassa:renderKassa,fleet:renderFleet,trips:renderTrips,people:renderPeople,transport:renderTransport,maintenance:renderMaintenance,waybills:renderWaybills,poa:renderPoa,labor:renderLabor,finance:renderFinance,reports:renderReports};
+  const map={dashboard:renderDashboard,settings:renderSettings,tir:renderTir,dozvol:renderDozv,tenants:renderTenants,kassa:renderKassa,fleet:renderFleet,trips:renderTrips,people:renderPeople,transport:renderTransport,maintenance:renderMaintenance,waybills:renderWaybills,poa:renderPoa,labor:renderLabor,finance:renderFinance,reports:renderReports,'driver-messages':renderDriverMessages};
   if(map[id]) map[id]();
 }
 
