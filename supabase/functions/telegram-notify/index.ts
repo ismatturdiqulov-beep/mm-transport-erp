@@ -41,13 +41,19 @@ Deno.serve(async (req) => {
   if (req.method !== 'POST') return new Response('Method not allowed', { status: 405, headers: corsHeaders });
 
   const authHeader = req.headers.get('Authorization');
-  if (!authHeader) return new Response('Unauthorized', { status: 401, headers: corsHeaders });
+  if (!authHeader) return new Response('Unauthorized: no auth header', { status: 401, headers: corsHeaders });
+  const jwt = authHeader.replace(/^Bearer\s+/i, '');
 
-  const supabaseUser = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-    global: { headers: { Authorization: authHeader } },
-  });
-  const { data: userData, error: userErr } = await supabaseUser.auth.getUser();
-  if (userErr || !userData.user) return new Response('Unauthorized', { status: 401, headers: corsHeaders });
+  // Явно передаём JWT в getUser(jwt) — полагаться на то, что global.headers.Authorization
+  // подхватится автоматически, оказалось ненадёжно (баг найден пользователем 2026-07-20:
+  // стабильный 401 из браузера при рабочем токене; в curl-тестах с тем же паттерном
+  // почему-то проходило — судя по всему, версия supabase-js в Deno не всегда форвардит
+  // global-заголовок именно в auth-клиент).
+  const supabaseUser = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  const { data: userData, error: userErr } = await supabaseUser.auth.getUser(jwt);
+  if (userErr || !userData.user) {
+    return new Response('Unauthorized: ' + (userErr?.message || 'no user'), { status: 401, headers: corsHeaders });
+  }
 
   const { data: profile } = await supabaseAdmin
     .from('profiles')
