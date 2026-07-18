@@ -3056,12 +3056,16 @@ async function notifyKontragent(kontragentId, message){
   if(!kontragentId) return;
   try{
     const { data: { session } } = await sbClient.auth.getSession();
-    if(!session) return;
-    await fetch(SUPABASE_URL+'/functions/v1/telegram-notify', {
+    if(!session){ console.error('Telegram notify: нет активной сессии'); return; }
+    const resp = await fetch(SUPABASE_URL+'/functions/v1/telegram-notify', {
       method:'POST',
       headers:{ 'Content-Type':'application/json', 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer '+session.access_token },
       body: JSON.stringify({ kontragentId, message }),
     });
+    if(!resp.ok){
+      const text=await resp.text().catch(()=>'');
+      console.error('Telegram notify failed:', resp.status, text);
+    }
   }catch(e){ console.error('Telegram notify failed', e); }
 }
 
