@@ -4193,6 +4193,7 @@ async function _saveChargeImpl(){
   const { data, error } = await sbClient.from('finance').insert(financeRecord).select().single();
   if (error) { alert('Не удалось сохранить начисление: '+error.message); return; }
   FINANCE.push(mapFinanceFromDb(data));
+  if(f) notifyKontragent(f.kontragentId, `💸 Вам начислено: ${fmtN(amount)} сум${desc?' ('+desc+')':''}.`);
   if(modal) delete modal.dataset.fleetId;
   closeModal('modal-charge');
   document.getElementById('ch-amount').value='';
@@ -4229,6 +4230,7 @@ async function _savePaymentImpl(){
     from_name:person, description:desc||('Оплата от '+person), amount, finance_id:data.id,
   }).select().single();
   if (!kErr) KASSA.push(mapKassaFromDb(kData));
+  if(f) notifyKontragent(f.kontragentId, `✅ Учтён ваш приход: ${fmtN(amount)} сум${desc?' ('+desc+')':''}.`);
   if(modal) delete modal.dataset.fleetId;
   closeModal('modal-payment');
   document.getElementById('pay-amount').value='';
@@ -5442,8 +5444,10 @@ let _fleetEditId=null,_fleetEditSrc=null;
 
 // ============ SAVE PERSON / TRANSPORT ============
 
+const DOC_TYPE_LABELS = {pass:'Паспорт', inter:'Загранпаспорт', lic:'Водительское удостоверение', mnp:'Медсправка', tacho:'Карта тахографа', adr:'ADR-сертификат'};
 async function updatePerson(id){
   const p=PEOPLE.find(x=>x.id===id); if(!p) return;
+  const oldDocs=p.docs||{};
   const docs=getPersonDocsFromModal();
   const updates = {
     name: (document.getElementById('ap-name')?.value||'').trim()||p.name,
@@ -5463,6 +5467,16 @@ async function updatePerson(id){
   Object.assign(p, { name:updates.name, short:updates.short, pinfl:updates.pinfl, birth:updates.birth||'',
     phone:updates.phone, passport:updates.passport, address:updates.address, note:updates.note,
     kontragentId: updates.kontragent_id||'', docs, mehnatRegistered: updates.mehnat_registered });
+  if(updates.kontragent_id){
+    const changedDocs=[];
+    Object.keys(docs||{}).forEach(key=>{
+      const oldD=oldDocs[key]||{}, newD=docs[key]||{};
+      if((oldD.num||'')!==(newD.num||'') || (oldD.to||'')!==(newD.to||'')){
+        if(newD.num||newD.to) changedDocs.push(`${DOC_TYPE_LABELS[key]||key}: №${newD.num||'—'}${newD.to?' до '+fmt(newD.to):''}`);
+      }
+    });
+    if(changedDocs.length) notifyKontragent(updates.kontragent_id, `📝 Обновлены ваши данные (${p.name}):\n${changedDocs.join('\n')}`);
+  }
   closeModal('modal-add-person');
   document.querySelector('#modal-add-person .modal-head h3').textContent='👤 Добавить водителя';
   document.querySelector('#modal-add-person .modal-foot .btn.primary').onclick=savePerson;
