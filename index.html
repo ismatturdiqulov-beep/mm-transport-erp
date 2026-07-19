@@ -5624,28 +5624,47 @@ async function updatePerson(id){
     kontragent_id: document.getElementById('ap-kontragent-link')?.value||null,
     mehnat_registered: document.getElementById('ap-mehnat-registered')?.checked||false,
   };
-  const { error } = await sbClient.from('people').update(updates).eq('id', id);
-  if (error) { alert('Не удалось сохранить изменения: '+error.message); return; }
-  await savePersonDocsToDb(id, docs);
-  Object.assign(p, { name:updates.name, short:updates.short, pinfl:updates.pinfl, birth:updates.birth||'',
-    phone:updates.phone, passport:updates.passport, address:updates.address, note:updates.note,
-    kontragentId: updates.kontragent_id||'', docs, mehnatRegistered: updates.mehnat_registered });
-  if(updates.kontragent_id){
-    const changedDocs=[];
-    Object.keys(docs||{}).forEach(key=>{
-      const oldD=oldDocs[key]||{}, newD=docs[key]||{};
-      const changed=(oldD.num||'')!==(newD.num||'') || (oldD.to||'')!==(newD.to||'')
-        || (oldD.from||'')!==(newD.from||'') || (oldD.org||'')!==(newD.org||'');
-      if(changed && (newD.num||newD.to||newD.from||newD.org)){
-        changedDocs.push(`${DOC_TYPE_LABELS[key]||key}: №${newD.num||'—'}${newD.from?' от '+fmt(newD.from):''}${newD.to?' до '+fmt(newD.to):''}${newD.org?' ('+newD.org+')':''}`);
+  const doSave=async ()=>{
+    const { error } = await sbClient.from('people').update(updates).eq('id', id);
+    if (error) { alert('Не удалось сохранить изменения: '+error.message); return; }
+    await savePersonDocsToDb(id, docs);
+    Object.assign(p, { name:updates.name, short:updates.short, pinfl:updates.pinfl, birth:updates.birth||'',
+      phone:updates.phone, passport:updates.passport, address:updates.address, note:updates.note,
+      kontragentId: updates.kontragent_id||'', docs, mehnatRegistered: updates.mehnat_registered });
+    if(updates.kontragent_id){
+      // Синхронизация с контрагентом: общие поля (ФИО/позывной/телефон/паспорт/ПИНФЛ)
+      // должны совпадать в обеих карточках, иначе они расходятся молча — баг найден
+      // пользователем 2026-07-20. Специфичные для контрагента поля (тип, договор,
+      // примечание) не трогаем — это его собственные поля, не общие с водителем.
+      const kg=KONTRAGENTY.find(k=>k.id===updates.kontragent_id);
+      if(kg){
+        const kgUpdates={ name:updates.name, short:updates.short, phone:updates.phone, passport:updates.passport, pinfl:updates.pinfl };
+        const { error: kgErr } = await sbClient.from('kontragenty').update(kgUpdates).eq('id', kg.id);
+        if (!kgErr) Object.assign(kg, kgUpdates);
       }
-    });
-    if(changedDocs.length) notifyKontragent(updates.kontragent_id, `📝 Обновлены ваши данные (${p.name}):\n${changedDocs.join('\n')}`);
+      const changedDocs=[];
+      Object.keys(docs||{}).forEach(key=>{
+        const oldD=oldDocs[key]||{}, newD=docs[key]||{};
+        const changed=(oldD.num||'')!==(newD.num||'') || (oldD.to||'')!==(newD.to||'')
+          || (oldD.from||'')!==(newD.from||'') || (oldD.org||'')!==(newD.org||'');
+        if(changed && (newD.num||newD.to||newD.from||newD.org)){
+          changedDocs.push(`${DOC_TYPE_LABELS[key]||key}: №${newD.num||'—'}${newD.from?' от '+fmt(newD.from):''}${newD.to?' до '+fmt(newD.to):''}${newD.org?' ('+newD.org+')':''}`);
+        }
+      });
+      if(changedDocs.length) notifyKontragent(updates.kontragent_id, `📝 Обновлены ваши данные (${p.name}):\n${changedDocs.join('\n')}`);
+    }
+    closeModal('modal-add-person');
+    document.querySelector('#modal-add-person .modal-head h3').textContent='👤 Добавить водителя';
+    document.querySelector('#modal-add-person .modal-foot .btn.primary').onclick=savePerson;
+    toast('Водитель обновлён: '+p.name); renderPeople(); renderTenants();
+  };
+  if(!updates.kontragent_id){
+    showConfirm('⚠️ Без привязки к контрагенту',
+      'Начисления, баланс, передача ТИР/Дозвол и подключение к Telegram-боту работают только через контрагента — без привязки они будут недоступны для этого водителя. Сохранить всё равно?',
+      'Да, сохранить без привязки', doSave);
+    return;
   }
-  closeModal('modal-add-person');
-  document.querySelector('#modal-add-person .modal-head h3').textContent='👤 Добавить водителя';
-  document.querySelector('#modal-add-person .modal-foot .btn.primary').onclick=savePerson;
-  toast('Водитель обновлён: '+p.name); renderPeople();
+  await doSave();
 }
 
 async function _saveTransportImpl(){
@@ -8251,7 +8270,17 @@ async function saveEditKontragent(){
   const { error } = await sbClient.from('kontragenty').update(updates).eq('id', k.id);
   if (error) { alert('Не удалось сохранить изменения: '+error.message); return; }
   Object.assign(k, updates, { type: document.getElementById('ek-type').value });
-  closeModal('modal-edit-kontragent'); renderTenants();
+  // Синхронизация с карточкой водителя (people.kontragent_id -> сюда) — общие поля
+  // (ФИО/позывной/телефон/паспорт/ПИНФЛ) не должны расходиться между разделами
+  // Контрагенты и Водители — баг найден пользователем 2026-07-20. Обычно связан
+  // ровно один водитель, но на всякий случай обновляем всех, у кого стоит эта привязка.
+  const linkedPeople=PEOPLE.filter(p=>p.kontragentId===k.id);
+  if(linkedPeople.length){
+    const peopleUpdates={ name:updates.name, short:updates.short, phone:updates.phone, passport:updates.passport, pinfl:updates.pinfl };
+    const { error: pErr } = await sbClient.from('people').update(peopleUpdates).in('id', linkedPeople.map(p=>p.id));
+    if (!pErr) linkedPeople.forEach(p=>Object.assign(p, peopleUpdates));
+  }
+  closeModal('modal-edit-kontragent'); renderTenants(); renderPeople();
   toast('Контрагент обновлён: '+k.name);
 }
 
@@ -8276,26 +8305,39 @@ async function _savePersonImpl(){
   const name=document.getElementById('ap-name').value.trim();
   if(!name){alert('Укажите ФИО');return;}
   const kgId=document.getElementById('ap-kontragent-link')?.value||'';
-  const docs=getPersonDocsFromModal();
-  const record = {
-    company_id: CURRENT_PROFILE.company_id, name,
-    short: document.getElementById('ap-short').value,
-    kontragent_id: kgId||null, pinfl: document.getElementById('ap-pinfl')?.value||'',
-    birth: document.getElementById('ap-birth').value || null,
-    phone: document.getElementById('ap-phone').value,
-    passport: document.getElementById('ap-passport')?.value||'',
-    address: document.getElementById('ap-address')?.value||'', active:true,
-    note: document.getElementById('ap-note').value,
-    mehnat_registered: document.getElementById('ap-mehnat-registered')?.checked||false,
+  const doSave=async ()=>{
+    const docs=getPersonDocsFromModal();
+    const record = {
+      company_id: CURRENT_PROFILE.company_id, name,
+      short: document.getElementById('ap-short').value,
+      kontragent_id: kgId||null, pinfl: document.getElementById('ap-pinfl')?.value||'',
+      birth: document.getElementById('ap-birth').value || null,
+      phone: document.getElementById('ap-phone').value,
+      passport: document.getElementById('ap-passport')?.value||'',
+      address: document.getElementById('ap-address')?.value||'', active:true,
+      note: document.getElementById('ap-note').value,
+      mehnat_registered: document.getElementById('ap-mehnat-registered')?.checked||false,
+    };
+    const { data, error } = await sbClient.from('people').insert(record).select().single();
+    if (error) { alert('Не удалось сохранить водителя: '+error.message); return; }
+    await savePersonDocsToDb(data.id, docs);
+    PEOPLE.push(mapPersonFromDb(data, [])); // документы подставляем сразу из формы, без повторного запроса
+    PEOPLE[PEOPLE.length-1].docs = docs;
+    closeModal('modal-add-person');
+    resetPersonModal();
+    toast('Водитель добавлен: '+name); renderPeople();
   };
-  const { data, error } = await sbClient.from('people').insert(record).select().single();
-  if (error) { alert('Не удалось сохранить водителя: '+error.message); return; }
-  await savePersonDocsToDb(data.id, docs);
-  PEOPLE.push(mapPersonFromDb(data, [])); // документы подставляем сразу из формы, без повторного запроса
-  PEOPLE[PEOPLE.length-1].docs = docs;
-  closeModal('modal-add-person');
-  resetPersonModal();
-  toast('Водитель добавлен: '+name); renderPeople();
+  // Без привязки к контрагенту у водителя не будет ни баланса, ни начислений
+  // (ТИР/Дозвол/аренда), ни подключения к Telegram-боту — все эти связи идут через
+  // kontragent_id, не через person напрямую. Предупреждаем, но не блокируем — иногда
+  // запись всё же нужна без привязки (баг/пожелание пользователя 2026-07-20).
+  if(!kgId){
+    showConfirm('⚠️ Без привязки к контрагенту',
+      'Начисления, баланс, передача ТИР/Дозвол и подключение к Telegram-боту работают только через контрагента — без привязки они будут недоступны для этого водителя. Сохранить всё равно?',
+      'Да, сохранить без привязки', doSave);
+    return;
+  }
+  await doSave();
 }
 
 function resetPersonModal(){
