@@ -3212,8 +3212,8 @@ function renderDriverMessages(){
 let _dmRespId=null, _dmRespAction=null;
 function openDmAccept(id){
   _dmRespId=id; _dmRespAction='accept';
-  document.getElementById('dm-resp-title').textContent='✅ Принять — укажите срок выполнения';
-  document.getElementById('dm-resp-label').textContent='Например: «Сделаем сегодня до 18:00» или «Займёмся завтра утром»';
+  document.getElementById('dm-resp-title').textContent='✅ Принять — срок выполнения (необязательно)';
+  document.getElementById('dm-resp-label').textContent='Например: «Сделаем сегодня до 18:00» или «Займёмся завтра утром». Если оставить пустым — контрагенту придёт стандартное сообщение о принятии.';
   document.getElementById('dm-resp-text').value='';
   openModal('modal-dm-response');
 }
@@ -3225,8 +3225,13 @@ function openDmReject(id){
   openModal('modal-dm-response');
 }
 async function saveDmResponse(){
-  const text=document.getElementById('dm-resp-text').value.trim();
-  if(!text){alert('Укажите текст ответа');return;}
+  let text=document.getElementById('dm-resp-text').value.trim();
+  // Срок выполнения при принятии — необязателен (по просьбе пользователя,
+  // 2026-07-20): пустое поле шлёт контрагенту стандартное сообщение о принятии,
+  // без выдуманного срока. Причина отказа при отклонении остаётся обязательной.
+  if(_dmRespAction==='reject' && !text){alert('Укажите причину отказа');return;}
+  const isDefaultAccept = _dmRespAction==='accept' && !text;
+  if(isDefaultAccept) text='Приняли в работу.';
   const m=DRIVER_MESSAGES.find(x=>x.id===_dmRespId); if(!m) return;
   const status=_dmRespAction==='accept'?'accepted':'rejected';
   const { error } = await sbClient.from('driver_messages').update({
@@ -3238,7 +3243,7 @@ async function saveDmResponse(){
   if(link){
     const quote=dmQuote(m);
     const msg = status==='accepted'
-      ? `✅ Сообщение ${quote} принято в работу.\nСрок: ${text}`
+      ? (isDefaultAccept ? `✅ Сообщение ${quote} принято в работу.` : `✅ Сообщение ${quote} принято в работу.\nСрок: ${text}`)
       : `🚫 Сообщение ${quote} отклонено.\nПричина: ${text}`;
     notifyKontragent(link.kontragentId, msg);
   }
