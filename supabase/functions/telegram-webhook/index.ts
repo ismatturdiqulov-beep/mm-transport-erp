@@ -23,10 +23,23 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
 const BTN_BALANCE = '💰 Мой баланс';
 const BTN_DOCS = '📋 Мои документы';
-const mainKeyboard = {
-  keyboard: [[{ text: BTN_BALANCE }, { text: BTN_DOCS }]],
+const BTN_OPS = '📊 Последние операции';
+// Полный доступ (баланс, документы на машину, последние операции) — только у
+// арендаторов (kontragenty.type = 'tenant', собственник ПС). Наёмные водители
+// (type = 'mm' и любой другой тип) подключаются к тому же боту, но видят только
+// свои личные документы (права/медсправка/АДР/тахограф) — решение пользователя
+// 2026-07-20: финансы и документы на машину наёмному водителю не касаются.
+const tenantKeyboard = {
+  keyboard: [[{ text: BTN_BALANCE }, { text: BTN_DOCS }], [{ text: BTN_OPS }]],
   resize_keyboard: true,
 };
+const driverKeyboard = {
+  keyboard: [[{ text: BTN_DOCS }]],
+  resize_keyboard: true,
+};
+function keyboardFor(kgType: string | null | undefined) {
+  return kgType === 'tenant' ? tenantKeyboard : driverKeyboard;
+}
 
 async function tg(method: string, payload: any) {
   const resp = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/${method}`, {
@@ -37,9 +50,9 @@ async function tg(method: string, payload: any) {
   return resp.json();
 }
 
-async function sendMessage(chatId: number, text: string, withKeyboard = false) {
+async function sendMessage(chatId: number, text: string, keyboard: any = null) {
   const body: any = { chat_id: chatId, text, parse_mode: 'HTML' };
-  if (withKeyboard) body.reply_markup = mainKeyboard;
+  if (keyboard) body.reply_markup = keyboard;
   await tg('sendMessage', body);
 }
 
@@ -93,6 +106,39 @@ async function getDocumentsText(kontragentId: string): Promise<string> {
   return lines.length ? lines.join('\n') : 'На руках сейчас нет ни ТИР, ни Дозволов.';
 }
 
+const PERSON_DOC_LABELS: Record<string, string> = {
+  passport: 'Паспорт', international_passport: 'Загранпаспорт', driver_license: 'Водительское удостоверение',
+  mnp: 'Медсправка', tachograph_card: 'Карта тахографа', adr_cert: 'ADR-сертификат',
+};
+// Личные документы водителя (не машины) — доступны и арендатору, и наёмному водителю,
+// если за контрагентом закреплена карточка в разделе "Водители" (people.kontragent_id).
+async function getPersonalDocsText(kontragentId: string): Promise<string> {
+  const { data: person } = await supabase.from('people').select('id').eq('kontragent_id', kontragentId).maybeSingle();
+  if (!person) return 'Личная карточка водителя не найдена.';
+  const { data: docs } = await supabase.from('person_docs').select('doc_type, doc_number, expires').eq('person_id', person.id);
+  const lines = (docs || [])
+    .filter((d: any) => d.doc_number || d.expires)
+    .map((d: any) => `🪪 ${PERSON_DOC_LABELS[d.doc_type] || d.doc_type}: № ${d.doc_number || '—'}${d.expires ? ', до ' + fmtDate(d.expires) : ''}`);
+  return lines.length ? lines.join('\n') : 'Личные документы пока не заполнены.';
+}
+
+// Последние 10 финансовых операций — только для арендаторов (замена полному Акту
+// сверки, который по-прежнему нужно запрашивать у диспетчера лично в PDF).
+async function getLastOperationsText(kontragentId: string): Promise<string> {
+  const { data: rows } = await supabase
+    .from('finance')
+    .select('date, type, category, description, amount, paid')
+    .eq('kontragent_id', kontragentId)
+    .order('date', { ascending: false })
+    .limit(10);
+  if (!rows || !rows.length) return 'Операций пока нет.';
+  return rows.map((r: any) => {
+    const isCharge = r.type === 'charge';
+    const val = isCharge ? r.amount : r.paid;
+    return `${isCharge ? '➖' : '➕'} ${fmtDate(r.date)} — ${r.description || r.category || ''}: ${fmtN(Number(val || 0))} сум`;
+  }).join('\n');
+}
+
 // Скачивает файл у Telegram (нужен токен бота — поэтому только на сервере) и
 // перезаливает в приватное хранилище Supabase, чтобы токен бота никогда не попал
 // в браузер диспетчера через прямую ссылку на api.telegram.org.
@@ -142,7 +188,7 @@ Deno.serve(async (req) => {
       const { data: fleet } = await supabase.from('fleet').select('label').eq('id', fleetId).single();
       await supabase.from('driver_messages').update({ fleet_id: fleetId }).eq('id', msgId);
       await tg('answerCallbackQuery', { callback_query_id: cq.id, text: 'Принято' });
-      await sendMessage(chatId, `✅ Сообщение принято по машине ${fleet?.label || ''} и передано диспетчеру.`, true);
+      await sendMessage(chatId, `✅ Сообщение принято по машине ${fleet?.label || ''} и передано диспетчеру.`);
     } else {
       await tg('answerCallbackQuery', { callback_query_id: cq.id });
     }
@@ -159,7 +205,7 @@ Deno.serve(async (req) => {
   // Уже привязан?
   const { data: existingLink } = await supabase
     .from('telegram_links')
-    .select('id, kontragent_id, company_id, kontragenty(name)')
+    .select('id, kontragent_id, company_id, kontragenty(name, type)')
     .eq('telegram_user_id', chatId)
     .eq('active', true)
     .maybeSingle();
@@ -168,16 +214,35 @@ Deno.serve(async (req) => {
     const kgId = (existingLink as any).kontragent_id;
     const companyId = (existingLink as any).company_id;
     const linkId = (existingLink as any).id;
+    const kgType = (existingLink as any).kontragenty?.type;
+    const isTenant = kgType === 'tenant';
+    const kb = keyboardFor(kgType);
 
     if (text === BTN_BALANCE || (message.text && /баланс/i.test(text))) {
+      if (!isTenant) {
+        await sendMessage(chatId, 'Финансовая информация доступна только арендаторам. Если у вас вопрос по балансу — обратитесь к диспетчеру лично.', kb);
+        return new Response('ok');
+      }
       const bal = await getBalance(kgId);
       const label = bal < 0 ? `Долг: ${fmtN(-bal)} сум` : bal > 0 ? `Переплата: ${fmtN(bal)} сум` : 'Баланс: 0';
-      await sendMessage(chatId, `💰 <b>${label}</b>`, true);
+      await sendMessage(chatId, `💰 <b>${label}</b>`, kb);
+      return new Response('ok');
+    }
+    if (text === BTN_OPS || (message.text && /операци/i.test(text))) {
+      if (!isTenant) {
+        await sendMessage(chatId, 'Акт сверки через бот доступен только арендаторам. Для полного акта сверки обратитесь к диспетчеру лично.', kb);
+        return new Response('ok');
+      }
+      const opsText = await getLastOperationsText(kgId);
+      await sendMessage(chatId, `📊 <b>Последние операции:</b>\n${opsText}`, kb);
       return new Response('ok');
     }
     if (text === BTN_DOCS || (message.text && /документ/i.test(text))) {
-      const docsText = await getDocumentsText(kgId);
-      await sendMessage(chatId, docsText, true);
+      const personalText = await getPersonalDocsText(kgId);
+      const docsText = isTenant
+        ? `🚚 <b>Документы на машину:</b>\n${await getDocumentsText(kgId)}\n\n🪪 <b>Личные документы:</b>\n${personalText}`
+        : `🪪 <b>Личные документы:</b>\n${personalText}`;
+      await sendMessage(chatId, docsText, kb);
       return new Response('ok');
     }
 
@@ -185,7 +250,7 @@ Deno.serve(async (req) => {
     const hasPhoto = Array.isArray(message.photo) && message.photo.length > 0;
     const hasVoice = !!message.voice;
     if (!hasPhoto && !hasVoice && !text) {
-      await sendMessage(chatId, 'Выберите действие ниже.', true);
+      await sendMessage(chatId, 'Выберите действие ниже.', kb);
       return new Response('ok');
     }
 
@@ -222,7 +287,7 @@ Deno.serve(async (req) => {
         companyId, telegramLinkId: linkId, fleetId: fleetList[0]?.id || null,
         messageText: text || null, photoPath, voicePath,
       });
-      await sendMessage(chatId, '✅ Сообщение получено и передано диспетчеру.', true);
+      await sendMessage(chatId, '✅ Сообщение получено и передано диспетчеру.', kb);
     }
     return new Response('ok');
   }
@@ -265,7 +330,7 @@ Deno.serve(async (req) => {
 
   const { data: kg } = await supabase
     .from('kontragenty')
-    .select('name')
+    .select('name, type')
     .eq('id', linkRow.kontragent_id)
     .single();
 
@@ -276,6 +341,6 @@ Deno.serve(async (req) => {
 
   const vehicles = fleetRows.map((f: any) => f.label).join(', ');
   await sendMessage(chatId,
-    `Готово! Вы подключены как <b>${kg?.name || ''}</b>.\nЗакреплённый подвижной состав: ${vehicles}`, true);
+    `Готово! Вы подключены как <b>${kg?.name || ''}</b>.\nЗакреплённый подвижной состав: ${vehicles}`, keyboardFor(kg?.type));
   return new Response('ok');
 });
