@@ -2824,6 +2824,7 @@ async function enterApp(session) {
 
   renderDashboard();
   showPage('dashboard');
+  subscribeDriverMessages();
 }
 
 // ============ ЗАГРУЗКА ДАННЫХ ИЗ SUPABASE ============
@@ -3126,8 +3127,48 @@ function updateDmBadge(){
   badge.textContent=n; badge.style.display=n>0?'inline-block':'none';
 }
 
+// Раньше новое сообщение от контрагента появлялось у диспетчера только после
+// перезагрузки страницы (список грузился один раз при входе) — баг найден
+// пользователем 2026-07-20. Подписка на Postgres Changes показывает его сразу.
+// RLS-политики таблицы (0025/0029) применяются и к realtime-трафику — чужая
+// компания это событие не получит.
+function subscribeDriverMessages(){
+  if(!COMPANY?.id || _dmChannel) return;
+  _dmChannel = sbClient.channel('driver-messages-live')
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'driver_messages', filter: `company_id=eq.${COMPANY.id}` }, payload=>{
+      const m=mapDriverMessageFromDb(payload.new);
+      DRIVER_MESSAGES.push(m);
+      (async()=>{
+        if(m.photoPath){ const {data}=await sbClient.storage.from('driver-messages').createSignedUrl(m.photoPath,3600); if(data) m.photoSignedUrl=data.signedUrl; }
+        if(m.voicePath){ const {data}=await sbClient.storage.from('driver-messages').createSignedUrl(m.voicePath,3600); if(data) m.voiceSignedUrl=data.signedUrl; }
+        updateDmBadge(); renderDriverMessages();
+      })();
+      toast('📨 Новое сообщение от контрагента');
+    })
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'driver_messages', filter: `company_id=eq.${COMPANY.id}` }, payload=>{
+      const m=DRIVER_MESSAGES.find(x=>x.id===payload.new.id); if(!m) return;
+      Object.assign(m, mapDriverMessageFromDb(payload.new), { photoSignedUrl:m.photoSignedUrl, voiceSignedUrl:m.voiceSignedUrl });
+      updateDmBadge(); renderDriverMessages();
+    })
+    .subscribe();
+}
+
 const DM_STATUS_LABEL={new:'Ожидает',accepted:'Принято',rejected:'Отклонено',irrelevant:'Не по работе'};
 const DM_STATUS_COLOR={new:'amber',accepted:'green',rejected:'red',irrelevant:'gray'};
+
+// Короткая цитата исходного сообщения — чтобы контрагент, приславший несколько
+// сообщений подряд, понимал, к какому из них относится ответ диспетчера
+// (баг найден пользователем 2026-07-20: ответы были неотличимы друг от друга).
+function dmQuote(m){
+  const dt=m.createdAt?new Date(m.createdAt):null;
+  const dtStr=dt?`${String(dt.getDate()).padStart(2,'0')}.${String(dt.getMonth()+1).padStart(2,'0')} ${String(dt.getHours()).padStart(2,'0')}:${String(dt.getMinutes()).padStart(2,'0')}`:'';
+  let body;
+  if(m.text) body='«'+(m.text.length>60?m.text.slice(0,60)+'…':m.text)+'»';
+  else if(m.photoPath) body='[Фото]';
+  else if(m.voicePath) body='[Голосовое сообщение]';
+  else body='[сообщение]';
+  return dtStr?`${body} от ${dtStr}`:body;
+}
 
 function renderDriverMessages(){
   const list=document.getElementById('dm-list'); if(!list) return;
@@ -3195,9 +3236,10 @@ async function saveDmResponse(){
   m.status=status; m.responseText=text;
   const link=TELEGRAM_LINKS.find(l=>l.id===m.telegramLinkId);
   if(link){
+    const quote=dmQuote(m);
     const msg = status==='accepted'
-      ? `✅ Ваше сообщение принято в работу.\nСрок: ${text}`
-      : `🚫 Ваше сообщение отклонено.\nПричина: ${text}`;
+      ? `✅ Сообщение ${quote} принято в работу.\nСрок: ${text}`
+      : `🚫 Сообщение ${quote} отклонено.\nПричина: ${text}`;
     notifyKontragent(link.kontragentId, msg);
   }
   closeModal('modal-dm-response');
@@ -3213,7 +3255,7 @@ async function dmIrrelevant(id){
   if(error){ alert('Не удалось сохранить: '+error.message); return; }
   m.status='irrelevant'; m.responseText=fixedText;
   const link=TELEGRAM_LINKS.find(l=>l.id===m.telegramLinkId);
-  if(link) notifyKontragent(link.kontragentId, `ℹ️ ${fixedText}`);
+  if(link) notifyKontragent(link.kontragentId, `ℹ️ Сообщение ${dmQuote(m)}:\n${fixedText}`);
   toast('Отмечено как «не по работе»');
   renderDriverMessages(); updateDmBadge();
 }
@@ -3398,6 +3440,7 @@ let LABOR = ld('mm_labor', []);
 // (и на наёмного водителя, и на арендатора), а "Водители" — уже производная от него.
 let TELEGRAM_LINKS = [];
 let DRIVER_MESSAGES = [];
+let _dmChannel = null;
 
 // FINANCE — глобальная история всех операций
 // Поля: date, fleetId (на какую ед.ПС), kontragentId, type ('charge'/'payment'/'vacation'), cat, desc, amount, wallet
