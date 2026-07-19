@@ -5625,6 +5625,14 @@ async function updatePerson(id){
     mehnat_registered: document.getElementById('ap-mehnat-registered')?.checked||false,
   };
   const doSave=async ()=>{
+    // Снимок простых полей ДО перезаписи p — нужен для уведомления об изменении
+    // (номер водителя/паспорт/телефон), баг найден пользователем 2026-07-20.
+    const FIELD_LABELS={name:'ФИО',phone:'Телефон',passport:'Паспорт',pinfl:'ПИНФЛ'};
+    const fieldChanges=[];
+    Object.keys(FIELD_LABELS).forEach(key=>{
+      const oldV=p[key]||'', newV=updates[key]||'';
+      if(oldV!==newV) fieldChanges.push(`${FIELD_LABELS[key]}: ${newV||'—'}`);
+    });
     const { error } = await sbClient.from('people').update(updates).eq('id', id);
     if (error) { alert('Не удалось сохранить изменения: '+error.message); return; }
     await savePersonDocsToDb(id, docs);
@@ -5651,7 +5659,8 @@ async function updatePerson(id){
           changedDocs.push(`${DOC_TYPE_LABELS[key]||key}: №${newD.num||'—'}${newD.from?' от '+fmt(newD.from):''}${newD.to?' до '+fmt(newD.to):''}${newD.org?' ('+newD.org+')':''}`);
         }
       });
-      if(changedDocs.length) notifyKontragent(updates.kontragent_id, `📝 Обновлены ваши данные (${p.name}):\n${changedDocs.join('\n')}`);
+      const allChanges=[...fieldChanges, ...changedDocs];
+      if(allChanges.length) notifyKontragent(updates.kontragent_id, `📝 Обновлены ваши данные (${p.name}):\n${allChanges.join('\n')}`);
     }
     closeModal('modal-add-person');
     document.querySelector('#modal-add-person .modal-head h3').textContent='👤 Добавить водителя';
@@ -8267,6 +8276,15 @@ async function saveEditKontragent(){
     contract_end: document.getElementById('ek-end').value || null,
     note: document.getElementById('ek-note').value,
   };
+  // Снимок простых полей ДО перезаписи k — нужен для уведомления об изменении данных
+  // (телефон/паспорт/ПИНФЛ/ФИО), баг найден пользователем 2026-07-20: раньше эти поля
+  // синхронизировались молча, без уведомления контрагента в Telegram.
+  const FIELD_LABELS={name:'ФИО',phone:'Телефон',passport:'Паспорт',pinfl:'ПИНФЛ'};
+  const fieldChanges=[];
+  Object.keys(FIELD_LABELS).forEach(key=>{
+    const oldV=k[key]||'', newV=updates[key]||'';
+    if(oldV!==newV) fieldChanges.push(`${FIELD_LABELS[key]}: ${newV||'—'}`);
+  });
   const { error } = await sbClient.from('kontragenty').update(updates).eq('id', k.id);
   if (error) { alert('Не удалось сохранить изменения: '+error.message); return; }
   Object.assign(k, updates, { type: document.getElementById('ek-type').value });
@@ -8280,6 +8298,7 @@ async function saveEditKontragent(){
     const { error: pErr } = await sbClient.from('people').update(peopleUpdates).in('id', linkedPeople.map(p=>p.id));
     if (!pErr) linkedPeople.forEach(p=>Object.assign(p, peopleUpdates));
   }
+  if(fieldChanges.length) notifyKontragent(k.id, `📝 Обновлены ваши данные (${k.name}):\n${fieldChanges.join('\n')}`);
   closeModal('modal-edit-kontragent'); renderTenants(); renderPeople();
   toast('Контрагент обновлён: '+k.name);
 }
