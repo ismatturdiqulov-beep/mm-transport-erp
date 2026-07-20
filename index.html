@@ -574,7 +574,15 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
   <!-- ===== TIR PAGE ===== -->
   <div class="page" id="page-tir">
     <div class="page-hdr">
-      <div><h2>ТИР Карнет (Книжки МДП)</h2><div class="ph-sub" id="tir-sub"></div></div>
+      <div>
+        <h2>ТИР Карнет (Книжки МДП)</h2>
+        <div class="ph-sub" id="tir-sub"></div>
+        <div style="display:flex;gap:6px;margin-top:6px;">
+          <button id="tir-tab-active" class="btn primary" onclick="switchTirTab('active')" style="font-size:12px;padding:4px 12px;">Активные</button>
+          <button id="tir-tab-used" class="btn" onclick="switchTirTab('used')" style="font-size:12px;padding:4px 12px;">Использованные</button>
+          <button id="tir-tab-archive" class="btn" onclick="switchTirTab('archive')" style="font-size:12px;padding:4px 12px;">📦 Архив (сдан в АСМАП)</button>
+        </div>
+      </div>
       <div style="display:flex;gap:8px;">
         <button class="btn primary" onclick="openModal('modal-new-tir')">+ Получить новый ТИР</button>
         <button class="btn" onclick="openModal('modal-asmaf-registry')">📋 Сдать в АСМАП (реестр)</button>
@@ -583,11 +591,9 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
     <div class="filter-bar">
       <input type="text" placeholder="Поиск по номеру, водителю..." id="tir-search" oninput="renderTir()">
       <select onchange="renderTir()" id="tir-f-status">
-        <option value="">Все статусы</option>
+        <option value="">Все</option>
         <option value="active">На руках</option>
         <option value="free">Свободна</option>
-        <option value="office">В офисе</option>
-        <option value="returned">Возвращена в АСМАП</option>
         <option value="expired">Просрочена</option>
       </select>
       <select onchange="renderTir()" id="tir-f-type">
@@ -610,7 +616,15 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
   <!-- ===== DOZVOL PAGE ===== -->
   <div class="page" id="page-dozvol">
     <div class="page-hdr">
-      <div><h2>Дозволы</h2><div class="ph-sub" id="dozv-sub"></div></div>
+      <div>
+        <h2>Дозволы</h2>
+        <div class="ph-sub" id="dozv-sub"></div>
+        <div style="display:flex;gap:6px;margin-top:6px;">
+          <button id="dozv-tab-active" class="btn primary" onclick="switchDozvTab('active')" style="font-size:12px;padding:4px 12px;">Активные</button>
+          <button id="dozv-tab-used" class="btn" onclick="switchDozvTab('used')" style="font-size:12px;padding:4px 12px;">Использованные</button>
+          <button id="dozv-tab-archive" class="btn" onclick="switchDozvTab('archive')" style="font-size:12px;padding:4px 12px;">📦 Архив (сдан/закрыт)</button>
+        </div>
+      </div>
       <div style="display:flex;gap:8px;">
         <button class="btn primary" onclick="openModal('modal-new-dozv')">+ Получить новый дозвол</button>
         <button class="btn" onclick="openModal('modal-mintrans-registry')">📋 Сдать в МИНТРАНС (реестр)</button>
@@ -625,10 +639,9 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
         <option value="paper">Бумажный</option>
       </select>
       <select onchange="renderDozv()" id="dozv-f-status">
-        <option value="">Все статусы</option>
+        <option value="">Все</option>
         <option value="active">На руках</option>
         <option value="free">Свободен</option>
-        <option value="returned">Возвращён</option>
         <option value="expired">Просрочен ⚠️</option>
       </select>
       <select onchange="renderDozv()" id="dozv-f-year"><option value="">Все годы</option></select>
@@ -1118,6 +1131,10 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
       <div class="form-grid-2">
         <div class="form-row"><label>Дата получения *</label><input type="date" id="nd-rec" onchange="autoDozExpiry()"></div>
         <div class="form-row" id="nd-exp-row"><label>Срок возврата</label><input type="date" id="nd-exp"></div>
+      </div>
+      <div class="form-row" id="nd-fleet-row">
+        <label>Подвижной состав * (Е-ПЕРМИТ сразу закрепляется за машиной)</label>
+        <select id="nd-fleet"></select>
       </div>
       <div style="padding:10px 14px;background:var(--surface2);border-radius:var(--radius-lg);border-left:3px solid var(--accent2);margin-top:8px;">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;font-weight:500;margin-bottom:8px;">
@@ -3727,6 +3744,7 @@ function populateModal(id) {
     'rm-dozv': dozForMintrans.map(d=>({v:d.id,l:`${d.num} — ${d.country} (вернулся ${fmt(d.returnedOffice)})`})),
     'tt-fleet': FLEET.filter(f=>f.active!==false).map(f=>{const kg=getFleetKontragent(f);return {v:f.id,l:f.label+' — '+kg.name};}),
     'td-fleet': FLEET.filter(f=>f.active!==false).map(f=>{const kg=getFleetKontragent(f);return {v:f.id,l:f.label+' — '+kg.name};}),
+    'nd-fleet': FLEET.filter(f=>f.active!==false).map(f=>{const kg=getFleetKontragent(f);return {v:f.id,l:f.label+' — '+kg.name};}),
     'ch-person': allPersons.map(p=>({v:p,l:p})),
     'pay-person': allPersons.map(p=>({v:p,l:p})),
     'vac-person': KONTRAGENTY.filter(k=>k.active!==false).map(k=>({v:k.name,l:k.name})),
@@ -4024,6 +4042,11 @@ function setDozType(val){
   if(paCard) paCard.style.background=val==='no'?'var(--amber-bg)':'var(--surface2)';
   if(warn) warn.style.display=val==='no'?'block':'none';
   if(expRow) expRow.style.display=val==='no'?'block':'none';
+  // Е-ПЕРМИТ в реальности сразу привязывается к конкретной машине при получении от
+  // МИНТРАНС (не лежит "свободным", как бумажный, который может ждать в офисе) —
+  // решение пользователя 2026-07-20.
+  const fleetRow=document.getElementById('nd-fleet-row');
+  if(fleetRow) fleetRow.style.display=val==='yes'?'block':'none';
   // Show buy price preview
   const buyP=val==='yes'?(BUY_PRICES.epermit||0):(BUY_PRICES.paper||0);
   if(preview){
@@ -4199,6 +4222,11 @@ async function _saveDozNewImpl() {
   const epermit=document.getElementById('nd-epermit').value==='yes';
   const rec=document.getElementById('nd-rec').value;
   if(!num||!rec){alert('Заполните обязательные поля');return;}
+  // Е-ПЕРМИТ в реальности сразу закрепляется за конкретной машиной при получении
+  // от МИНТРАНС (не лежит "свободным" в офисе, как бумажный) — решение пользователя
+  // 2026-07-20.
+  const ndFleetId=document.getElementById('nd-fleet')?.value||'';
+  if(epermit && !ndFleetId){ alert('Для Е-ПЕРМИТ укажите подвижной состав, за которым он закрепляется'); return; }
   let exp='';
   if(!epermit){
     const c=DOZ_COUNTRIES.find(x=>x.name===country);
@@ -4222,7 +4250,8 @@ async function _saveDozNewImpl() {
   };
   const { data, error } = await sbClient.from('dozv').insert(record).select().single();
   if (error) { alert('Не удалось сохранить дозвол: '+error.message); return; }
-  DOZV.push(mapDozvFromDb(data));
+  const newDoz=mapDozvFromDb(data);
+  DOZV.push(newDoz);
   if(buyPrice>0){
     const kassaRecord = { company_id:CURRENT_PROFILE.company_id, wallet:buyWallet, type:'expense', date:rec,
       category:'dozv_buy', to_name:'МИНТРАНС', description:`Покупка дозвола ${num} (${country}${epermit?' Е-ПЕРМИТ':''})`, amount:buyPrice };
@@ -4232,12 +4261,67 @@ async function _saveDozNewImpl() {
   } else {
     toast(`Дозвол ${num} (${country}${epermit?' Е-ПЕРМИТ':' до '+fmt(exp)}) добавлен`);
   }
+  if(epermit && ndFleetId){
+    const fl=FLEET.find(f=>f.id===ndFleetId);
+    if(fl) await performDozvTransfer(newDoz, fl, '', rec);
+  }
   closeModal('modal-new-dozv');
   document.getElementById('nd-num').value='';
   document.getElementById('nd-buy-price').value='';
   document.getElementById('nd-custom-price-check').checked=false;
   toggleDozvCustomPrice(false);
   renderDozv();
+}
+
+// Общая логика "привязать дозвол к ПС + начислить" — используется и при обычной
+// передаче (transferDozv), и при получении Е-ПЕРМИТ (сразу закрепляется за машиной
+// при получении от МИНТРАНС, в отличие от бумажного — решение пользователя 2026-07-20).
+async function performDozvTransfer(d, fl, tripId, date){
+  const kg=getFleetKontragent(fl);
+  const { error } = await sbClient.from('dozv').update({
+    person_name:kg.name, plate:fl.label, fleet_id:fl.id,
+    issued:date, returned_office:null, returned_mt:null, used:null, comp:0,
+    trip_id: tripId||null,
+  }).eq('id', d.id);
+  if (error) { alert('Не удалось привязать дозвол: '+error.message); return false; }
+  d.person=kg.name; d.plate=fl.label; d.fleetId=fl.id;
+  d.issued=date; d.returnedOffice=''; d.returnedMt=''; d.used=null; d.comp=0; d.tripId=tripId;
+  const priceKey=d.epermit?'epermitRent':'paperRent';
+  const priceMMKey=d.epermit?'epermitMM':'paperMM';
+  if(DOZ_PRICES){
+    const price=kg.type==='mm'?DOZ_PRICES[priceMMKey]||0:DOZ_PRICES[priceKey]||0;
+    if(price>0){
+      const desc=`Дозвол ${d.num} (${d.country}${d.epermit?' Е-ПЕРМИТ':''})`;
+      await addFleetOpAndSave(fl.id,{type:'charge',cat:'dozv',desc,amount:price,date,person:kg.name});
+      const { data:finData, error:finErr } = await sbClient.from('finance').insert({
+        company_id:CURRENT_PROFILE.company_id, date, fleet_id:fl.id, kontragent_id:fl.kontragentId,
+        person_name:kg.name, type:'charge', category:'dozv', description:desc, amount:price, paid:0,
+      }).select().single();
+      if (!finErr) FINANCE.push(mapFinanceFromDb(finData));
+      // Добавляем в расходы рейса если привязан
+      if(tripId){
+        const trip=TRIPS.find(x=>x.id===tripId);
+        if(trip){
+          const { data:expData, error:expErr } = await sbClient.from('trip_expenses').insert({
+            trip_id:tripId, date, category:'dozv', country:d.country, wallet:'bank',
+            note:desc, amount:price, currency:'UZS', liters:0, source:'manual',
+          }).select().single();
+          if (!expErr) {
+            trip.expenses=trip.expenses||[];
+              trip.expenses.push({id:expData.id,date,cat:'dozv',country:d.country,wallet:'bank',desc,amount:price,currency:'UZS',liters:0});
+            }
+            trip.dozvIds=trip.dozvIds||[];
+            if(!trip.dozvIds.includes(d.id)) trip.dozvIds.push(d.id);
+          }
+        }
+      toast(`Дозвол выдан: ${d.num} → ${fl.label}. Начислено: ${fmtN(price)}${tripId?' · Расход добавлен в рейс':''}`);
+      notifyKontragent(kg.id, `📄 Вам передан Дозвол № ${d.num} (${d.country}${d.epermit?', Е-ПЕРМИТ':''}).\nНачислено на баланс: ${fmtN(price)} сум.`);
+    } else {
+      toast(`Дозвол выдан: ${d.num} → ${fl.label} (цена не задана)`);
+      notifyKontragent(kg.id, `📄 Вам передан Дозвол № ${d.num} (${d.country}${d.epermit?', Е-ПЕРМИТ':''}).`);
+    }
+  }
+  return true;
 }
 
 function transferDozv() {
@@ -4248,54 +4332,11 @@ function transferDozv() {
   const d=DOZV.find(x=>x.id===dozId);
   const fl=FLEET.find(x=>x.id===fleetId);
   if(!d||!fl) return;
-  const kg=getFleetKontragent(fl);
   const tripId=document.getElementById('td-trip')?.value||'';
   const doTransfer=guardDoubleSubmit('transferDozv', async ()=>{
     const date=document.getElementById('td-date').value||todayStr;
-    const { error } = await sbClient.from('dozv').update({
-      person_name:kg.name, plate:fl.label, fleet_id:fl.id,
-      issued:date, returned_office:null, returned_mt:null, used:null, comp:0,
-      trip_id: tripId||null,
-    }).eq('id', dozId);
-    if (error) { alert('Не удалось передать дозвол: '+error.message); return; }
-    d.person=kg.name; d.plate=fl.label; d.fleetId=fl.id;
-    d.issued=date; d.returnedOffice=''; d.returnedMt=''; d.used=null; d.comp=0; d.tripId=tripId;
-    const priceKey=d.epermit?'epermitRent':'paperRent';
-    const priceMMKey=d.epermit?'epermitMM':'paperMM';
-    if(DOZ_PRICES){
-      const price=kg.type==='mm'?DOZ_PRICES[priceMMKey]||0:DOZ_PRICES[priceKey]||0;
-      if(price>0){
-        const desc=`Дозвол ${d.num} (${d.country}${d.epermit?' Е-ПЕРМИТ':''})`;
-        await addFleetOpAndSave(fl.id,{type:'charge',cat:'dozv',desc,amount:price,date,person:kg.name});
-        const { data:finData, error:finErr } = await sbClient.from('finance').insert({
-          company_id:CURRENT_PROFILE.company_id, date, fleet_id:fl.id, kontragent_id:fl.kontragentId,
-          person_name:kg.name, type:'charge', category:'dozv', description:desc, amount:price, paid:0,
-        }).select().single();
-        if (!finErr) FINANCE.push(mapFinanceFromDb(finData));
-        // Добавляем в расходы рейса если привязан
-        if(tripId){
-          const trip=TRIPS.find(x=>x.id===tripId);
-          if(trip){
-            const { data:expData, error:expErr } = await sbClient.from('trip_expenses').insert({
-              trip_id:tripId, date, category:'dozv', country:d.country, wallet:'bank',
-              note:desc, amount:price, currency:'UZS', liters:0, source:'manual',
-            }).select().single();
-            if (!expErr) {
-              trip.expenses=trip.expenses||[];
-              trip.expenses.push({id:expData.id,date,cat:'dozv',country:d.country,wallet:'bank',desc,amount:price,currency:'UZS',liters:0});
-            }
-            trip.dozvIds=trip.dozvIds||[];
-            if(!trip.dozvIds.includes(dozId)) trip.dozvIds.push(dozId);
-          }
-        }
-        toast(`Дозвол выдан: ${d.num} → ${fl.label}. Начислено: ${fmtN(price)}${tripId?' · Расход добавлен в рейс':''}`);
-        notifyKontragent(kg.id, `📄 Вам передан Дозвол № ${d.num} (${d.country}${d.epermit?', Е-ПЕРМИТ':''}).\nНачислено на баланс: ${fmtN(price)} сум.`);
-      } else {
-        toast(`Дозвол выдан: ${d.num} → ${fl.label} (цена не задана)`);
-        notifyKontragent(kg.id, `📄 Вам передан Дозвол № ${d.num} (${d.country}${d.epermit?', Е-ПЕРМИТ':''}).`);
-      }
-    }
-    closeModal('modal-transfer-dozv'); renderDozv();
+    const ok=await performDozvTransfer(d, fl, tripId, date);
+    if(ok){ closeModal('modal-transfer-dozv'); renderDozv(); }
   });
   if(!d.epermit&&isExp(d.expires)){
     showConfirm('⚠️ Просрочен!',`Дозвол ${d.num} просрочен. Санкция. Передать?`,'Да',doTransfer);
@@ -5015,6 +5056,15 @@ function populateYearFilter(selectId, dates){
 }
 
 // TIR
+let _tirTab = 'active'; // 'active' | 'used' | 'archive'
+function switchTirTab(tab){
+  _tirTab = tab;
+  ['active','used','archive'].forEach(t=>{
+    const btn=document.getElementById('tir-tab-'+t);
+    if(btn) btn.className = t===tab?'btn primary':'btn';
+  });
+  renderTir();
+}
 function renderTir(){
   const search=(document.getElementById('tir-search')||{}).value||'';
   const fSt=(document.getElementById('tir-f-status')||{}).value||'';
@@ -5022,11 +5072,16 @@ function renderTir(){
   populateYearFilter('tir-f-year', TIRS.map(t=>t.transferred));
   const fYear=(document.getElementById('tir-f-year')||{}).value||'';
   let data=TIRS;
+  // Вкладки: Активные (свободна/на руках/в офисе-неиспользована) · Использованные
+  // (в офисе, использована) · Архив (сдана в АСМАП) — раньше всё было одним списком
+  // и со временем засорялось старыми закрытыми записями, тот же приём, что уже
+  // применён к Рейсам (Активные/Архив) — пожелание пользователя 2026-07-20.
+  if(_tirTab==='active') data=data.filter(t=>{const st=tirGetState(t); return st==='free'||st==='issued'||(st==='office'&&t.used!==true);});
+  else if(_tirTab==='used') data=data.filter(t=>tirGetState(t)==='office'&&t.used===true);
+  else data=data.filter(t=>tirGetState(t)==='asmaf');
   if(search) data=data.filter(t=>(t.num+t.person+t.plate).toLowerCase().includes(search.toLowerCase()));
   if(fSt==='active') data=data.filter(t=>tirGetState(t)==='issued');
   else if(fSt==='free') data=data.filter(t=>tirGetState(t)==='free');
-  else if(fSt==='office') data=data.filter(t=>tirGetState(t)==='office');
-  else if(fSt==='returned') data=data.filter(t=>tirGetState(t)==='asmaf');
   else if(fSt==='expired') data=data.filter(t=>isExp(t.expires)&&tirGetState(t)!=='asmaf');
   if(fTy) data=data.filter(t=>t.type===fTy);
   // Отчётный период ТИР — дата передачи водителю (не дата получения от АСМАП).
@@ -5034,7 +5089,7 @@ function renderTir(){
   if(fYear) data=data.filter(t=>!t.transferred || new Date(t.transferred).getFullYear()===parseInt(fYear));
 
   const sub=document.getElementById('tir-sub');
-  if(sub) sub.textContent=`Всего: ${TIRS.length} | На руках: ${TIRS.filter(t=>tirGetState(t)==='issued').length} | В офисе: ${TIRS.filter(t=>tirGetState(t)==='office').length} | В АСМАП: ${TIRS.filter(t=>tirGetState(t)==='asmaf').length}`;
+  if(sub) sub.textContent=`Всего: ${TIRS.length} | На руках: ${TIRS.filter(t=>tirGetState(t)==='issued').length} | Использовано: ${TIRS.filter(t=>tirGetState(t)==='office'&&t.used===true).length} | В АСМАП: ${TIRS.filter(t=>tirGetState(t)==='asmaf').length}`;
 
   document.getElementById('tir-tbody').innerHTML=data.map((t,i)=>{
     const s=tirStatus(t);
@@ -5043,7 +5098,7 @@ function renderTir(){
     let actions='';
     if(state==='free') actions=`<button class="btn xs primary" onclick="openTirTransfer('${t.id}')">Передать</button>`;
     if(state==='issued') actions=`<button class="btn xs amber-btn" onclick="openTirReturnOffice('${t.id}')">В офис ↩</button> <button class="btn xs" onclick="cancelTirTransfer('${t.id}')" title="Отменить передачу">↺ Откат</button>`;
-    if(state==='office') actions=`<button class="btn xs primary" onclick="openTirTransfer('${t.id}')">Передать</button>`;
+    if(state==='office'&&t.used!==true) actions=`<button class="btn xs primary" onclick="openTirTransfer('${t.id}')">Передать</button>`;
     const canDelete=state==='free'&&!FINANCE.some(f=>f.desc&&f.desc.includes(`ТИР ${t.num} (`));
     const editBtn=`<button class="btn xs" onclick="openEditTir('${t.id}')" title="Редактировать">✏️</button>`;
     const delBtn=canDelete?`<button class="btn xs danger" onclick="deleteTir('${t.id}')" title="Удалить">🗑</button>`:`<button class="btn xs" style="opacity:.3;cursor:not-allowed" title="Нельзя удалить — есть транзакции или передавался">🗑</button>`;
@@ -5061,6 +5116,15 @@ function renderTir(){
 }
 
 // DOZVOL
+let _dozvTab = 'active'; // 'active' | 'used' | 'archive'
+function switchDozvTab(tab){
+  _dozvTab = tab;
+  ['active','used','archive'].forEach(t=>{
+    const btn=document.getElementById('dozv-tab-'+t);
+    if(btn) btn.className = t===tab?'btn primary':'btn';
+  });
+  renderDozv();
+}
 function renderDozv(){
   const search=(document.getElementById('dozv-search')||{}).value||'';
   const fC=(document.getElementById('dozv-f-country')||{}).value||'';
@@ -5069,19 +5133,24 @@ function renderDozv(){
   populateYearFilter('dozv-f-year', DOZV.map(d=>d.received));
   const fYear=(document.getElementById('dozv-f-year')||{}).value||'';
   let data=DOZV;
+  // Вкладки: Активные (свободен/на руках/в офисе-неиспользован) · Использованные
+  // (в офисе, использован бумажный) · Архив (сдан в МИНТРАНС / закрытый Е-ПЕРМИТ) —
+  // тот же приём, что и у ТИР/Рейсов — пожелание пользователя 2026-07-20.
+  if(_dozvTab==='active') data=data.filter(d=>{const st=dozGetState(d); return st==='free'||st==='issued'||(st==='office'&&d.used!==true);});
+  else if(_dozvTab==='used') data=data.filter(d=>dozGetState(d)==='office'&&d.used===true);
+  else data=data.filter(d=>dozGetState(d)==='mintrans'||dozGetState(d)==='closed');
   if(search) data=data.filter(d=>(d.num+d.person+d.plate+d.country).toLowerCase().includes(search.toLowerCase()));
   if(fC) data=data.filter(d=>d.country===fC);
   if(fT==='epermit') data=data.filter(d=>d.epermit);
   else if(fT==='paper') data=data.filter(d=>!d.epermit);
   if(fS==='active') data=data.filter(d=>dozGetState(d)==='issued');
   else if(fS==='free') data=data.filter(d=>dozGetState(d)==='free');
-  else if(fS==='returned') data=data.filter(d=>dozGetState(d)==='mintrans'||dozGetState(d)==='closed');
   else if(fS==='expired') data=data.filter(d=>!d.epermit&&isExp(d.expires)&&dozGetState(d)!=='mintrans');
   // Отчётный период дозвола — дата получения от МИНТРАНСА (у дозвола она есть всегда).
   if(fYear) data=data.filter(d=>d.received && new Date(d.received).getFullYear()===parseInt(fYear));
 
   const sub=document.getElementById('dozv-sub');
-  if(sub) sub.textContent=`Всего: ${DOZV.length} | На руках: ${DOZV.filter(d=>dozGetState(d)==='issued').length} | В офисе: ${DOZV.filter(d=>dozGetState(d)==='office').length} | Закрыто: ${DOZV.filter(d=>dozGetState(d)==='mintrans'||dozGetState(d)==='closed').length} | Бумажных ⚠️: ${DOZV.filter(d=>!d.epermit&&isExp(d.expires)&&dozGetState(d)!=='mintrans').length}`;
+  if(sub) sub.textContent=`Всего: ${DOZV.length} | На руках: ${DOZV.filter(d=>dozGetState(d)==='issued').length} | Использовано: ${DOZV.filter(d=>dozGetState(d)==='office'&&d.used===true).length} | Закрыто: ${DOZV.filter(d=>dozGetState(d)==='mintrans'||dozGetState(d)==='closed').length} | Бумажных ⚠️: ${DOZV.filter(d=>!d.epermit&&isExp(d.expires)&&dozGetState(d)!=='mintrans').length}`;
 
   document.getElementById('dozv-tbody').innerHTML=data.map((d,i)=>{
     const s=dozStatus(d);
