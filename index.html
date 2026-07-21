@@ -1268,6 +1268,24 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
   </div>
 </div>
 
+<!-- Массовое начисление плана арендаторам за месяц (полуавтомат — решение
+     пользователя 2026-07-21: список с суммами на проверку, снять галочку у тех,
+     кто не работал, начислить остальным одной кнопкой) -->
+<div class="overlay" id="modal-plan-charge">
+  <div class="modal">
+    <div class="modal-head"><h3 id="plan-charge-title">📅 Начисление плана</h3><span class="modal-close" onclick="closeModal('modal-plan-charge')">×</span></div>
+    <div class="modal-body">
+      <div class="form-row"><label>Дата начисления</label><input type="date" id="plan-charge-date"></div>
+      <div style="font-size:11.5px;color:var(--text3);margin-bottom:10px;">Проверьте суммы, снимите галочку у тех, кто не работал в этом месяце</div>
+      <div id="plan-charge-list"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeModal('modal-plan-charge')">Отмена</button>
+      <button class="btn primary" onclick="savePlanCharges()">💾 Начислить выбранным</button>
+    </div>
+  </div>
+</div>
+
 <!-- Payment -->
 <div class="overlay" id="modal-payment">
   <div class="modal">
@@ -4472,6 +4490,64 @@ async function _saveChargeImpl(){
   renderFleet();
 }
 
+// Массовое начисление плана арендаторам (полуавтомат) — решение пользователя
+// 2026-07-21: раньше начисляли вручную по одному в конце месяца; теперь с 1-го
+// числа дашборд показывает баннер со списком ещё не начисленных, диспетчер
+// проверяет/правит суммы, снимает галочку у тех, кто не работал, и начисляет
+// всем отмеченным одной кнопкой.
+const RU_MONTHS=['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'];
+function monthLabelFromDateStr(dateStr){
+  const [y,m]=(dateStr||todayStr).split('-');
+  return `${RU_MONTHS[parseInt(m,10)-1]} ${y}`;
+}
+function getPendingPlanFleets(){
+  const ym=todayStr.slice(0,7);
+  return FLEET.filter(f=>{
+    if(f.active===false||f.planType!=='paid'||!(f.plan>0)) return false;
+    const kg=getFleetKontragent(f);
+    if(!kg||kg.type!=='tenant') return false;
+    return !FINANCE.some(fin=>fin.fleetId===f.id&&fin.cat==='plan'&&(fin.date||'').slice(0,7)===ym);
+  }).map(f=>({fleet:f, kg:getFleetKontragent(f)}));
+}
+function openPlanChargeModal(){
+  const pending=getPendingPlanFleets();
+  document.getElementById('plan-charge-title').textContent=`📅 Начисление плана — ${monthLabelFromDateStr(todayStr)}`;
+  document.getElementById('plan-charge-date').value=todayStr.slice(0,8)+'01';
+  document.getElementById('plan-charge-list').innerHTML = pending.length ? pending.map(({fleet:f,kg})=>`
+    <div class="form-row" style="display:flex;align-items:center;gap:8px;">
+      <input type="checkbox" class="plan-charge-check" data-fleet="${f.id}" checked style="width:16px;height:16px;flex-shrink:0;">
+      <div style="flex:1;font-size:13px;">${kg.name} <span style="color:var(--text3);">— ${f.label}</span></div>
+      <input type="text" inputmode="numeric" class="fmt-money plan-charge-amount" data-fleet="${f.id}" style="width:130px;padding:5px 8px;border:1px solid var(--border2);border-radius:var(--radius);font-family:var(--mono);font-size:13px;" value="${formatNumberSpaces(String(f.plan))}">
+    </div>`).join('') : '<div style="text-align:center;padding:20px;color:var(--text3);">Все арендаторы уже начислены за этот месяц</div>';
+  openModal('modal-plan-charge');
+}
+async function savePlanCharges(){
+  const date=document.getElementById('plan-charge-date').value||todayStr;
+  const desc=monthLabelFromDateStr(date);
+  const rows=[...document.querySelectorAll('.plan-charge-check')].filter(c=>c.checked);
+  if(!rows.length){ toast('Ничего не выбрано'); return; }
+  let count=0;
+  for(const chk of rows){
+    const fleetId=chk.dataset.fleet;
+    const f=FLEET.find(x=>x.id===fleetId); if(!f) continue;
+    const amountEl=document.querySelector(`.plan-charge-amount[data-fleet="${fleetId}"]`);
+    const amount=parseFloat(unformatNumber(amountEl?.value||'0'))||0;
+    if(amount<=0) continue;
+    const kg=getFleetKontragent(f);
+    await addFleetOpAndSave(f.id,{type:'charge',cat:'plan',desc,amount,date,person:kg.name});
+    const { data, error } = await sbClient.from('finance').insert({
+      company_id:CURRENT_PROFILE.company_id, date, fleet_id:f.id, kontragent_id:f.kontragentId,
+      person_name:kg.name, type:'charge', category:'plan', description:desc, amount, paid:0,
+    }).select().single();
+    if (!error) FINANCE.push(mapFinanceFromDb(data));
+    notifyKontragent(f.kontragentId, `📅 Начислен ежемесячный план: ${fmtN(amount)} сум (${desc}).\n💰 ${kgBalanceLine(f.kontragentId)}`);
+    count++;
+  }
+  closeModal('modal-plan-charge');
+  toast(`План начислен: ${count} арендатор(ов)`);
+  renderFleet(); renderTenants(); renderDashboard();
+}
+
 async function _savePaymentImpl(){
   const person=document.getElementById('pay-person').value;
   const amount=numVal('pay-amount');
@@ -4965,6 +5041,11 @@ function renderDashboard(){
   TIRS.filter(t=>!t.returnedAsmaf&&t.transferred&&!t.returnedDriver&&expSoon(t.expires,10)).forEach(t=>{
     alerts+=`<div class="alert amber"><span class="ai">⚠️</span><span class="at">ТИР истекает через ${daysDiff(t.expires,todayStr)} дн.: <b>${t.num}</b> — у <b>${t.person}</b></span><span class="ad">${fmt(t.expires)}</span></div>`;
   });
+  // Начисление плана арендаторам за месяц — баннер с 1-го числа, пока не начислено всем
+  const pendingPlan=getPendingPlanFleets();
+  if(pendingPlan.length){
+    alerts+=`<div class="alert amber"><span class="ai">📅</span><span class="at">Пора начислить ежемесячный план — ${pendingPlan.length} арендатор(ов) ещё не начислено</span><span class="ad"><button class="btn xs primary" onclick="openPlanChargeModal()">Начислить</button></span></div>`;
+  }
   // Договоры аренды истекли
   FLEET.filter(f=>f.contract_end&&isExp(f.contract_end)).forEach(t=>{
     alerts+=`<div class="alert red"><span class="ai">!</span><span class="at">Договор аренды истёк: <b>${t.name}</b> (${t.callsign})</span><span class="ad">${fmt(t.contract_end)}</span></div>`;
