@@ -494,12 +494,14 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
         <div style="background:var(--surface2);border-radius:var(--radius);padding:14px;">
           <div style="font-size:12px;font-weight:600;margin-bottom:10px;">📋 Покупные цены ТИР</div>
           <div id="tir-buy-prices-block"></div>
+          <div class="form-row"><label style="font-size:11px">Списывать с кошелька</label><select id="buy-tir-wallet" style="width:100%;padding:6px 8px;border:1px solid var(--border2);border-radius:var(--radius);font-size:13px"></select></div>
           <button class="btn sm green-btn" style="margin-top:8px" onclick="saveTirBuyPrices()">💾 Сохранить</button>
         </div>
         <div style="background:var(--surface2);border-radius:var(--radius);padding:14px;">
           <div style="font-size:12px;font-weight:600;margin-bottom:10px;">📄 Покупные цены ДОЗВОЛ</div>
           <div class="form-row"><label style="font-size:11px">Е-ПЕРМИТ (покупная, сум)</label><input type="text" inputmode="numeric" class="fmt-money" id="buy-epermit" style="width:100%;padding:6px 8px;border:1px solid var(--border2);border-radius:var(--radius);font-family:var(--mono);font-size:13px"></div>
           <div class="form-row"><label style="font-size:11px">Бумажный (покупная, сум)</label><input type="text" inputmode="numeric" class="fmt-money" id="buy-paper" style="width:100%;padding:6px 8px;border:1px solid var(--border2);border-radius:var(--radius);font-family:var(--mono);font-size:13px"></div>
+          <div class="form-row"><label style="font-size:11px">Списывать с кошелька</label><select id="buy-dozv-wallet" style="width:100%;padding:6px 8px;border:1px solid var(--border2);border-radius:var(--radius);font-size:13px"></select></div>
           <button class="btn sm green-btn" onclick="saveDozBuyPrices()">💾 Сохранить</button>
         </div>
       </div>
@@ -1019,7 +1021,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
       <div style="padding:10px 14px;background:var(--surface2);border-radius:var(--radius-lg);border-left:3px solid var(--accent2);">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;font-weight:500;margin-bottom:8px;">
           <input type="checkbox" id="nt-custom-price-check" onchange="toggleTirCustomPrice(this.checked)">
-          Нестандартная цена (иначе спишется по цене из настроек с Р/С)
+          Нестандартная цена (иначе спишется по цене и с кошелька из настроек)
         </label>
         <div id="nt-custom-price-block" style="display:none;">
           <div class="form-grid-2">
@@ -1139,7 +1141,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
       <div style="padding:10px 14px;background:var(--surface2);border-radius:var(--radius-lg);border-left:3px solid var(--accent2);margin-top:8px;">
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;font-weight:500;margin-bottom:8px;">
           <input type="checkbox" id="nd-custom-price-check" onchange="toggleDozvCustomPrice(this.checked)">
-          Нестандартная цена (иначе спишется по цене из настроек с Р/С)
+          Нестандартная цена (иначе спишется по цене и с кошелька из настроек)
         </label>
         <div id="nd-custom-price-block" style="display:none;">
           <div class="form-grid-2">
@@ -3745,6 +3747,8 @@ function populateModal(id) {
     'tt-fleet': FLEET.filter(f=>f.active!==false).map(f=>{const kg=getFleetKontragent(f);return {v:f.id,l:f.label+' — '+kg.name};}),
     'td-fleet': FLEET.filter(f=>f.active!==false).map(f=>{const kg=getFleetKontragent(f);return {v:f.id,l:f.label+' — '+kg.name};}),
     'nd-fleet': FLEET.filter(f=>f.active!==false).map(f=>{const kg=getFleetKontragent(f);return {v:f.id,l:f.label+' — '+kg.name};}),
+    'nt-buy-wallet': KASSA_WALLETS.filter(w=>w.active!==false).sort((a,b)=>(a.order||99)-(b.order||99)).map(w=>({v:w.id,l:(w.icon||'💰')+' '+w.name})),
+    'nd-buy-wallet': KASSA_WALLETS.filter(w=>w.active!==false).sort((a,b)=>(a.order||99)-(b.order||99)).map(w=>({v:w.id,l:(w.icon||'💰')+' '+w.name})),
     'ch-person': allPersons.map(p=>({v:p,l:p})),
     'pay-person': allPersons.map(p=>({v:p,l:p})),
     'vac-person': KONTRAGENTY.filter(k=>k.active!==false).map(k=>({v:k.name,l:k.name})),
@@ -4000,7 +4004,7 @@ async function _saveTirNewImpl() {
     : settingsPrice;
   const buyWallet = useCustom
     ? (document.getElementById('nt-buy-wallet').value||'bank')
-    : 'bank';
+    : (BUY_PRICES.tirWallet||'bank');
   const note=document.getElementById('nt-note').value;
   const records = nums.map(num=>({
     company_id: CURRENT_PROFILE.company_id, num, type, received:rec, expires:exp,
@@ -4020,7 +4024,7 @@ async function _saveTirNewImpl() {
       category:'tir_buy', to_name:'АСМАП', description:`Покупка ${nums.length} ТИР (${type}): ${nums.join(', ')}`, amount:totalPrice };
     const { data:kData, error:kErr } = await sbClient.from('kassa').insert(kassaRecord).select().single();
     if (!kErr) KASSA.push(mapKassaFromDb(kData));
-    toast(`Добавлено ${nums.length} ТИР · Списано с ${({cash:'Нал.',card:'Карты',bank:'Р/С'})[buyWallet]}: ${fmtN(totalPrice)} сум`);
+    toast(`Добавлено ${nums.length} ТИР · Списано с ${walletName(buyWallet)}: ${fmtN(totalPrice)} сум`);
   } else {
     toast(`Добавлено ${nums.length} ТИР (${type}) · срок до ${fmt(exp)}`);
   }
@@ -4242,7 +4246,7 @@ async function _saveDozNewImpl() {
     : settingsPrice;
   const buyWallet = useCustom
     ? (document.getElementById('nd-buy-wallet').value||'bank')
-    : 'bank';
+    : (BUY_PRICES.dozvWallet||'bank');
   const record = {
     company_id: CURRENT_PROFILE.company_id, country, kind, epermit, num, received:rec, expires:exp||null,
     issued:null, plate:'', person_name:'', fleet_id:null, returned_office:null, returned_mt:null,
@@ -4257,7 +4261,7 @@ async function _saveDozNewImpl() {
       category:'dozv_buy', to_name:'МИНТРАНС', description:`Покупка дозвола ${num} (${country}${epermit?' Е-ПЕРМИТ':''})`, amount:buyPrice };
     const { data:kData, error:kErr } = await sbClient.from('kassa').insert(kassaRecord).select().single();
     if (!kErr) KASSA.push(mapKassaFromDb(kData));
-    toast(`Дозвол ${num} добавлен · Списано с ${({cash:'Нал.',card:'Карты',bank:'Р/С'})[buyWallet]}: ${fmtN(buyPrice)} сум`);
+    toast(`Дозвол ${num} добавлен · Списано с ${walletName(buyWallet)}: ${fmtN(buyPrice)} сум`);
   } else {
     toast(`Дозвол ${num} (${country}${epermit?' Е-ПЕРМИТ':' до '+fmt(exp)}) добавлен`);
   }
@@ -8263,7 +8267,17 @@ async function _saveKassaTransferImpl(){
 }
 
 // ============ PURCHASE PRICES ============
-let BUY_PRICES = ld('mm_buy_prices', {tir:{}, epermit:0, paper:0});
+let BUY_PRICES = ld('mm_buy_prices', {tir:{}, epermit:0, paper:0, tirWallet:'bank', dozvWallet:'bank'});
+
+// Список кошельков для выбора "куда списывать" — берётся из реального перечня
+// кошельков компании (включая созданные вручную, например "АСМАП"/"МИНТРАНС" для
+// учёта лицевого счёта), а не зашитых cash/card/bank — пожелание пользователя
+// 2026-07-21: покупка ТИР/Дозвола должна списываться с отдельного кошелька,
+// чтобы примерно видеть остаток на ЛС в этих организациях.
+function walletOptionsHtml(selected){
+  return KASSA_WALLETS.filter(w=>w.active!==false).sort((a,b)=>(a.order||99)-(b.order||99))
+    .map(w=>`<option value="${w.id}"${w.id===selected?' selected':''}>${w.icon||'💰'} ${w.name}</option>`).join('');
+}
 
 function renderTirBuyPrices(){
   const block=document.getElementById('tir-buy-prices-block');
@@ -8274,16 +8288,22 @@ function renderTirBuyPrices(){
     style="width:100%;padding:6px 8px;border:1px solid var(--border2);border-radius:var(--radius);font-family:var(--mono);font-size:13px"></div>`).join('');
   setNumVal('buy-epermit', BUY_PRICES.epermit||0);
   setNumVal('buy-paper', BUY_PRICES.paper||0);
+  const tirWEl=document.getElementById('buy-tir-wallet');
+  if(tirWEl) tirWEl.innerHTML=walletOptionsHtml(BUY_PRICES.tirWallet||'bank');
+  const dozvWEl=document.getElementById('buy-dozv-wallet');
+  if(dozvWEl) dozvWEl.innerHTML=walletOptionsHtml(BUY_PRICES.dozvWallet||'bank');
 }
 
 function saveTirBuyPrices(){
   if(!BUY_PRICES.tir) BUY_PRICES.tir={};
   TIR_TYPES.forEach(t=>{ const el=document.getElementById('buy-tir-'+t.id); if(el) BUY_PRICES.tir[t.id]=parseFloat(unformatNumber(el.value))||0; });
+  BUY_PRICES.tirWallet=document.getElementById('buy-tir-wallet')?.value||'bank';
   sv('mm_buy_prices',BUY_PRICES); saveCompanySettings(); toast('Покупные цены ТИР сохранены');
 }
 function saveDozBuyPrices(){
   BUY_PRICES.epermit=numVal('buy-epermit');
   BUY_PRICES.paper=numVal('buy-paper');
+  BUY_PRICES.dozvWallet=document.getElementById('buy-dozv-wallet')?.value||'bank';
   sv('mm_buy_prices',BUY_PRICES); saveCompanySettings(); toast('Покупные цены ДОЗВОЛ сохранены');
 }
 
