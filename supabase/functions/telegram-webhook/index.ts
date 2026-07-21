@@ -2,9 +2,10 @@
 // Один общий бот на всю платформу (не по одному на компанию — изоляция по company_id,
 // как и везде в базе).
 //
-// Доступ к диалогу с ботом — только у контрагента, закреплённого как "Ответственное лицо"
-// хотя бы на одном активном подвижном составе (fleet.kontragent_id), не у любого контрагента —
-// решение пользователя 2026-07-20.
+// Доступ к диалогу с ботом — только у контрагента, имеющего отношение хотя бы к одному
+// активному подвижному составу: либо как ответственное лицо (fleet.kontragent_id —
+// Арендатор/Собственник), либо как назначенный водитель (fleet.driver_id — Наёмный
+// водитель, не отвечает за финансы) — решение пользователя 2026-07-20, уточнено 2026-07-21.
 //
 // Этап 5 (2026-07-20): приём произвольных сообщений (текст/фото/голос) от контрагента —
 // сохраняются в driver_messages со статусом 'new', диспетчер обрабатывает их на сайте
@@ -24,11 +25,14 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 const BTN_BALANCE = '💰 Мой баланс';
 const BTN_DOCS = '📋 Мои документы';
 const BTN_OPS = '📊 Последние операции';
-// Полный доступ (баланс, документы на машину, последние операции) — только у
-// арендаторов (kontragenty.type = 'tenant', собственник ПС). Наёмные водители
-// (type = 'mm' и любой другой тип) подключаются к тому же боту, но видят только
-// свои личные документы (права/медсправка/АДР/тахограф) — решение пользователя
-// 2026-07-20: финансы и документы на машину наёмному водителю не касаются.
+// Полный доступ (баланс, документы на машину, последние операции) — у Арендаторов
+// (type='tenant') и Собственников (type='mm' в базе — под "driver_mm" исторически
+// хранится тип, переименованный из "Водитель ММ" в "Собственник" на уровне
+// интерфейса 2026-07-21, сама финансовая роль не менялась). Наёмный водитель
+// (type='hired_driver', добавлен 2026-07-21) подключается к тому же боту, но видит
+// только свои личные документы (права/медсправка/АДР/тахограф) — он не отвечает
+// за финансы и не может быть "ответственным лицом" за ПС (fleet.kontragent_id),
+// только фактическим водителем (fleet.driver_id) — решение пользователя 2026-07-21.
 const tenantKeyboard = {
   keyboard: [[{ text: BTN_BALANCE }, { text: BTN_DOCS }], [{ text: BTN_OPS }]],
   resize_keyboard: true,
@@ -37,8 +41,11 @@ const driverKeyboard = {
   keyboard: [[{ text: BTN_DOCS }]],
   resize_keyboard: true,
 };
+function hasFullAccess(kgType: string | null | undefined) {
+  return kgType === 'tenant' || kgType === 'mm';
+}
 function keyboardFor(kgType: string | null | undefined) {
-  return kgType === 'tenant' ? tenantKeyboard : driverKeyboard;
+  return hasFullAccess(kgType) ? tenantKeyboard : driverKeyboard;
 }
 
 async function tg(method: string, payload: any) {
@@ -62,6 +69,23 @@ function fmtDate(dateStr: string): string {
 }
 function fmtN(n: number): string {
   return Math.round(n).toLocaleString('ru-RU').replace(/,/g, ' ');
+}
+
+// ПС, к которым имеет отношение контрагент — либо как финансово ответственный
+// (fleet.kontragent_id: Арендатор/Собственник), либо как фактический водитель
+// (fleet.driver_id, через его карточку в people) — Наёмный водитель попадает в бот
+// именно вторым путём, решение пользователя 2026-07-21.
+async function getKgFleets(kontragentId: string): Promise<{ id: string; label: string }[]> {
+  const { data: byKg } = await supabase.from('fleet').select('id, label').eq('kontragent_id', kontragentId).neq('active', false);
+  const { data: person } = await supabase.from('people').select('id').eq('kontragent_id', kontragentId).maybeSingle();
+  let byDriver: any[] = [];
+  if (person) {
+    const { data } = await supabase.from('fleet').select('id, label').eq('driver_id', person.id).neq('active', false);
+    byDriver = data || [];
+  }
+  const all = [...(byKg || []), ...byDriver];
+  const seen = new Set<string>();
+  return all.filter((f: any) => (seen.has(f.id) ? false : (seen.add(f.id), true)));
 }
 
 // Тот же расчёт, что и getKontragentBalance() в приложении: баланс по ПС + операции
@@ -215,12 +239,12 @@ Deno.serve(async (req) => {
     const companyId = (existingLink as any).company_id;
     const linkId = (existingLink as any).id;
     const kgType = (existingLink as any).kontragenty?.type;
-    const isTenant = kgType === 'tenant';
+    const isFullAccess = hasFullAccess(kgType);
     const kb = keyboardFor(kgType);
 
     if (text === BTN_BALANCE || (message.text && /баланс/i.test(text))) {
-      if (!isTenant) {
-        await sendMessage(chatId, 'Финансовая информация доступна только арендаторам. Если у вас вопрос по балансу — обратитесь к диспетчеру лично.', kb);
+      if (!isFullAccess) {
+        await sendMessage(chatId, 'Финансовая информация доступна только арендаторам и собственникам. Если у вас вопрос по балансу — обратитесь к диспетчеру лично.', kb);
         return new Response('ok');
       }
       const bal = await getBalance(kgId);
@@ -229,8 +253,8 @@ Deno.serve(async (req) => {
       return new Response('ok');
     }
     if (text === BTN_OPS || (message.text && /операци/i.test(text))) {
-      if (!isTenant) {
-        await sendMessage(chatId, 'Акт сверки через бот доступен только арендаторам. Для полного акта сверки обратитесь к диспетчеру лично.', kb);
+      if (!isFullAccess) {
+        await sendMessage(chatId, 'Акт сверки через бот доступен только арендаторам и собственникам. Для полного акта сверки обратитесь к диспетчеру лично.', kb);
         return new Response('ok');
       }
       const opsText = await getLastOperationsText(kgId);
@@ -239,7 +263,7 @@ Deno.serve(async (req) => {
     }
     if (text === BTN_DOCS || (message.text && /документ/i.test(text))) {
       const personalText = await getPersonalDocsText(kgId);
-      const docsText = isTenant
+      const docsText = isFullAccess
         ? `🚚 <b>Документы на машину:</b>\n${await getDocumentsText(kgId)}\n\n🪪 <b>Личные документы:</b>\n${personalText}`
         : `🪪 <b>Личные документы:</b>\n${personalText}`;
       await sendMessage(chatId, docsText, kb);
@@ -264,8 +288,7 @@ Deno.serve(async (req) => {
       voicePath = await relayTelegramFile(message.voice.file_id, companyId);
     }
 
-    const { data: fleets } = await supabase.from('fleet').select('id, label').eq('kontragent_id', kgId).neq('active', false);
-    const fleetList = fleets || [];
+    const fleetList = await getKgFleets(kgId);
 
     if (fleetList.length > 1) {
       // Сохраняем сообщение сразу (fleet_id пока пуст), спрашиваем какая машина
@@ -315,16 +338,15 @@ Deno.serve(async (req) => {
     return new Response('ok');
   }
 
-  // Проверяем: контрагент должен быть "Ответственное лицо" хотя бы на одном активном ПС
-  const { data: fleetRows } = await supabase
-    .from('fleet')
-    .select('id, label')
-    .eq('kontragent_id', linkRow.kontragent_id)
-    .neq('active', false);
+  // Проверяем: контрагент должен иметь отношение хотя бы к одному активному ПС —
+  // либо как ответственное лицо (Арендатор/Собственник), либо как фактический
+  // водитель (Наёмный водитель, через fleet.driver_id) — решение пользователя
+  // 2026-07-21.
+  const fleetRows = await getKgFleets(linkRow.kontragent_id);
 
   if (!fleetRows || fleetRows.length === 0) {
     await sendMessage(chatId,
-      'Этот код привязан к контрагенту, за которым не закреплён ни один подвижной состав. Диалог с ботом доступен только ответственным лицам за ПС — обратитесь к диспетчеру.');
+      'Этот код привязан к контрагенту, за которым не закреплён ни один подвижной состав. Диалог с ботом доступен только ответственным лицам или назначенным водителям ПС — обратитесь к диспетчеру.');
     return new Response('ok');
   }
 

@@ -678,7 +678,8 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
         <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;">
           <button class="btn primary" id="kt-tab-all"      onclick="switchKtTab('all')"     style="font-size:12px;padding:4px 10px;">Все</button>
           <button class="btn"         id="kt-tab-tenant"   onclick="switchKtTab('tenant')"  style="font-size:12px;padding:4px 10px;">Арендаторы</button>
-          <button class="btn"         id="kt-tab-mm"       onclick="switchKtTab('mm')"      style="font-size:12px;padding:4px 10px;">Водители ММ</button>
+          <button class="btn"         id="kt-tab-mm"       onclick="switchKtTab('mm')"      style="font-size:12px;padding:4px 10px;">Собственники</button>
+          <button class="btn"         id="kt-tab-hired_driver" onclick="switchKtTab('hired_driver')" style="font-size:12px;padding:4px 10px;">Наёмные водители</button>
           <button class="btn"         id="kt-tab-client"   onclick="switchKtTab('client')"  style="font-size:12px;padding:4px 10px;">🤝 Заказчики</button>
           <button class="btn"         id="kt-tab-service"  onclick="switchKtTab('service')" style="font-size:12px;padding:4px 10px;">🔧 Сервисы</button>
           <button class="btn"         id="kt-tab-debt"     onclick="switchKtTab('debt')"    style="font-size:12px;padding:4px 10px;">⚠️ Долги</button>
@@ -721,7 +722,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
       <select onchange="renderFleet()" id="fleet-filter-type">
         <option value="">Все</option>
         <option value="tenant">Арендаторы</option>
-        <option value="mm">Водители ММ</option>
+        <option value="mm">Собственники</option>
       </select>
       <select onchange="renderFleet()" id="fleet-filter-status">
         <option value="">Все</option>
@@ -1738,7 +1739,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
             <select id="af-plantype">
               <option value="paid">Платный</option>
               <option value="tekin">Текин (бесплатно)</option>
-              <option value="mm">Водитель ММ</option>
+              <option value="mm">Собственник</option>
             </select>
           </div>
         </div>
@@ -1761,7 +1762,8 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
       <div class="form-row"><label>Тип контрагента *</label>
         <select id="ak-type">
           <option value="tenant">Арендатор</option>
-          <option value="mm">Водитель ММ</option>
+          <option value="mm">Собственник</option>
+          <option value="hired_driver">Наёмный водитель</option>
           <option value="client">🤝 Заказчик (клиент рейсов)</option>
           <option value="other">Прочий контрагент</option>
           <option value="service">🔧 Сервис / Гараж</option>
@@ -3773,7 +3775,10 @@ function populateModal(id) {
   // Populate add-fleet form
   if(id==='modal-add-fleet'){
     const afPerson=document.getElementById('af-person');
-    if(afPerson) afPerson.innerHTML=KONTRAGENTY.filter(k=>k.active!==false).map(k=>`<option value="${k.id}">${k.name}${k.short&&k.short!==k.name?' ('+k.short+')':''} · ${k.type==='mm'?'ММ':k.type==='tenant'?'Аренда':'Проч.'}</option>`).join('');
+    // Наёмный водитель не может быть "Ответственным лицом" за ПС — иначе начисления
+    // за ТИР/Дозвол уйдут на контрагента, который не отвечает за финансы (решение
+    // пользователя 2026-07-21). Он назначается отдельно, полем "Закреплённый водитель".
+    if(afPerson) afPerson.innerHTML=KONTRAGENTY.filter(k=>k.active!==false&&k.type!=='hired_driver').map(k=>`<option value="${k.id}">${k.name}${k.short&&k.short!==k.name?' ('+k.short+')':''} · ${k.type==='mm'?'Собств.':k.type==='tenant'?'Аренда':'Проч.'}</option>`).join('');
     const afTruck=document.getElementById('af-truck');
     if(afTruck) afTruck.innerHTML='<option value="">— не выбрано —</option>'+TRANSPORT.filter(t=>t.type==='Тягач'&&t.active!==false).map(t=>`<option value="${t.id}">${t.callsign} · ${t.plate} · ${t.brand}</option>`).join('');
     const afTrailer=document.getElementById('af-trailer');
@@ -5025,7 +5030,7 @@ function renderDashboardAnalytics(){
   if(fleetRankEl) fleetRankEl.innerHTML = fleetRank.length ? fleetRank.map(x=>`<tr><td>${x.fleet.label}</td><td>${x.count}</td><td class="${x.profit>=0?'amount-pos':'amount-neg'}">${fmtN(x.profit)}</td></tr>`).join('') : '<tr><td colspan="3" style="color:var(--text3);text-align:center;">Нет данных по рейсам</td></tr>';
 
   // Рейтинг арендаторов/водителей ММ по начислениям (кто больше всего "принёс" компании)
-  const rankTypeLabel={mm:'Водитель ММ', tenant:'Арендатор'};
+  const rankTypeLabel={mm:'Собственник', tenant:'Арендатор'};
   const peopleRank = KONTRAGENTY.filter(k=>k.type==='tenant'||k.type==='mm').map(k=>{
     const charged=FINANCE.filter(f=>f.kontragentId===k.id&&f.type==='charge').reduce((s,f)=>s+f.amount,0);
     const paid=FINANCE.filter(f=>f.kontragentId===k.id&&(f.type==='payment'||f.type==='vacation')).reduce((s,f)=>s+f.paid,0);
@@ -5191,7 +5196,7 @@ function renderDozv(){
 let _ktTab = 'all';
 function switchKtTab(tab){
   _ktTab = tab;
-  ['all','tenant','mm','client','service','debt'].forEach(t=>{
+  ['all','tenant','mm','hired_driver','client','service','debt'].forEach(t=>{
     const btn = document.getElementById('kt-tab-'+t);
     if(btn) btn.className = t===tab?'btn primary':'btn';
     if(btn) btn.style.cssText = 'font-size:12px;padding:4px 10px;';
@@ -5235,6 +5240,7 @@ function renderTenants(){
   // Tab filter
   if(_ktTab==='tenant')  data = data.filter(k=>k.type==='tenant');
   else if(_ktTab==='mm') data = data.filter(k=>k.type==='mm');
+  else if(_ktTab==='hired_driver') data = data.filter(k=>k.type==='hired_driver');
   else if(_ktTab==='client')  data = data.filter(k=>k.type==='client');
   else if(_ktTab==='service') data = data.filter(k=>k.type==='service');
   else if(_ktTab==='debt')    data = data.filter(k=>getUniversalBalance(k)<0);
@@ -5244,13 +5250,14 @@ function renderTenants(){
     all: KONTRAGENTY.length,
     tenant: KONTRAGENTY.filter(k=>k.type==='tenant').length,
     mm:     KONTRAGENTY.filter(k=>k.type==='mm').length,
+    hired_driver: KONTRAGENTY.filter(k=>k.type==='hired_driver').length,
     client: KONTRAGENTY.filter(k=>k.type==='client').length,
     service:KONTRAGENTY.filter(k=>k.type==='service').length,
   };
-  if(sub) sub.textContent=`Всего: ${counts.all} · Арендаторов: ${counts.tenant} · Водителей ММ: ${counts.mm} · Заказчиков: ${counts.client} · Сервисов: ${counts.service}`;
+  if(sub) sub.textContent=`Всего: ${counts.all} · Арендаторов: ${counts.tenant} · Собственников: ${counts.mm} · Наёмных водителей: ${counts.hired_driver} · Заказчиков: ${counts.client} · Сервисов: ${counts.service}`;
 
-  const typeLabel = {mm:'Водитель ММ', tenant:'Арендатор', client:'🤝 Заказчик', other:'Прочий', service:'🔧 Сервис'};
-  const typeColor = {mm:'green', tenant:'blue', client:'amber', other:'gray', service:'red'};
+  const typeLabel = {mm:'Собственник', tenant:'Арендатор', client:'🤝 Заказчик', other:'Прочий', service:'🔧 Сервис', hired_driver:'Наёмный водитель'};
+  const typeColor = {mm:'green', tenant:'blue', client:'amber', other:'gray', service:'red', hired_driver:'purple'};
 
   document.getElementById('kontragent-tbody').innerHTML = data.map((k,i)=>{
     const bal = getUniversalBalance(k);
@@ -5342,7 +5349,7 @@ function renderFleet(){
   if(fs) fs.innerHTML=`
     <div class="bs-card"><div class="bsl">Всего единиц</div><div class="bsv blue">${FLEET.length}</div></div>
     <div class="bs-card"><div class="bsl">Арендаторы</div><div class="bsv">${tenantCount}</div></div>
-    <div class="bs-card"><div class="bsl">Водители ММ</div><div class="bsv">${mmCount}</div></div>
+    <div class="bs-card"><div class="bsl">Собственники</div><div class="bsv">${mmCount}</div></div>
     <div class="bs-card"><div class="bsl">Суммарный долг</div><div class="bsv red">${fmtN(totalDebt)}</div></div>`;
 
   const sub=document.getElementById('fleet-sub');
@@ -5385,7 +5392,7 @@ function fleetCard(f){
       <div class="fc-row"><span class="lbl">Контрагент</span><span class="val">${kg.name}</span></div>
       <div class="fc-row"><span class="lbl">Тягач</span><span class="val">${truck?truck.callsign+' '+truck.plate:'—'}${truck&&truck.active===false?' <span class="tag amber" title="Этот тягач деактивирован — проверьте, актуальна ли привязка">⚠ неактивен</span>':''}</span></div>
       <div class="fc-row"><span class="lbl">Прицеп</span><span class="val">${trailer?trailer.callsign+' '+trailer.plate:'—'}${trailer&&trailer.active===false?' <span class="tag amber" title="Этот прицеп деактивирован — проверьте, актуальна ли привязка">⚠ неактивен</span>':''}</span></div>
-      <div class="fc-row"><span class="lbl">План</span><span class="val">${f.planType==='tekin'?'Текин':f.planType==='mm'?'Водитель ММ':fmtN(f.plan)}</span></div>
+      <div class="fc-row"><span class="lbl">План</span><span class="val">${f.planType==='tekin'?'Текин':f.planType==='mm'?'Собственник':fmtN(f.plan)}</span></div>
       <div class="fc-row"><span class="lbl">Баланс</span><span class="val ${f.balance<0?'amount-neg':f.balance>0?'amount-pos':''}">${fmtN(f.balance)}</span></div>
       ${f.balance<0&&f.plan>0?`<div class="bal-bar"><div class="bal-bar-fill" style="width:${debtPct}%"></div></div>`:''}
     </div>
@@ -5565,7 +5572,7 @@ function openPersonDetail(id){
     <div class="detail-avatar ${p.active?'mm':'inactive'}">${initials}</div>
     <div class="detail-title">
       <h3>${p.name}</h3>
-      <div class="ds">${p.short||''} ${fleetRec?`· <span class="tag ${fleetRec.type==='mm'?'green':'blue'}">${fleetRec.type==='mm'?'Водитель ММ':'Арендатор'}</span>`:''} ${p.active?'':'<span class="tag gray">Неактивен</span>'}</div>
+      <div class="ds">${p.short||''} ${fleetRec?`· <span class="tag ${fleetRec.type==='mm'?'green':'blue'}">${fleetRec.type==='mm'?'Собственник':'Арендатор'}</span>`:''} ${p.active?'':'<span class="tag gray">Неактивен</span>'}</div>
     </div>
     <span class="modal-close" onclick="closeModal('modal-person-detail')">×</span>`;
   document.getElementById('person-detail-body').innerHTML=`
@@ -6190,7 +6197,9 @@ function openFleetEdit(id){
   const trailers=TRANSPORT.filter(t=>(t.type==='Прицеп'||t.type==='Полуприцеп')&&(t.active!==false||t.id===f.trailerId));
   const truckOpts=truck.map(t=>`<option value="${t.id}" ${f.truckId===t.id?'selected':''}>${t.callsign} · ${t.plate}${t.active===false?' (неактивен)':''}</option>`).join('');
   const trailerOpts=trailers.map(t=>`<option value="${t.id}" ${f.trailerId===t.id?'selected':''}>${t.callsign} · ${t.plate}${t.active===false?' (неактивен)':''}</option>`).join('');
-  const kgOpts=KONTRAGENTY.map(k=>`<option value="${k.id}" ${f.kontragentId===k.id?'selected':''}>${k.name} (${k.type==='mm'?'ММ':k.type==='tenant'?'Аренд.':'Проч.'})</option>`).join('');
+  // Наёмный водитель исключён — он не может быть "ответственным лицом" за ПС,
+  // только "Закреплённым водителем" ниже (решение пользователя 2026-07-21).
+  const kgOpts=KONTRAGENTY.filter(k=>k.type!=='hired_driver').map(k=>`<option value="${k.id}" ${f.kontragentId===k.id?'selected':''}>${k.name} (${k.type==='mm'?'Собств.':k.type==='tenant'?'Аренд.':'Проч.'})</option>`).join('');
   const driverOpts='<option value="">— не выбрано —</option>'+PEOPLE.filter(p=>p.active!==false).map(p=>`<option value="${p.id}" ${f.driverId===p.id?'selected':''}>${p.name}</option>`).join('');
   const html=`
     <div class="info-box">Единица ПС: <b>${f.label}</b> · Контрагент: <b>${kg.name}</b></div>
@@ -6204,7 +6213,7 @@ function openFleetEdit(id){
       <select id="fe-plan-type" class="edit-field">
         <option value="paid" ${f.planType==='paid'?'selected':''}>Платный</option>
         <option value="tekin" ${f.planType==='tekin'?'selected':''}>Текин (бесплатно)</option>
-        <option value="mm" ${f.planType==='mm'?'selected':''}>Водитель ММ</option>
+        <option value="mm" ${f.planType==='mm'?'selected':''}>Собственник</option>
       </select></div>
     <div class="form-row"><label>Договор до</label><input type="date" id="fe-contract" value="${f.contract_end||''}" class="edit-field"></div>
     <div class="form-row"><label>Примечание</label><input type="text" id="fe-note" value="${f.note||''}" class="edit-field"></div>`;
@@ -6340,7 +6349,7 @@ let _aktKgId=null;
 function showKontragentHistory(id){
   const k=KONTRAGENTY.find(x=>x.id===id); if(!k) return;
   _aktKgId=id;
-  const typeLabel={mm:'Водитель ММ',tenant:'Арендатор',client:'Заказчик',service:'Сервис',other:'Прочий'};
+  const typeLabel={mm:'Собственник',tenant:'Арендатор',client:'Заказчик',service:'Сервис',other:'Прочий',hired_driver:'Наёмный водитель'};
   document.getElementById('akt-title').textContent=`Акт сверки: ${k.name} (${typeLabel[k.type]||k.type})`;
   const now=new Date(), y=now.getFullYear();
   document.getElementById('akt-from').value=`${y}-01`;
@@ -6465,7 +6474,7 @@ function printAktSverki(){
   const fromM=(document.getElementById('akt-from')||{}).value||'';
   const toM=(document.getElementById('akt-to')||{}).value||'';
   const period=(fromM||'начало')+(toM?' — '+toM:'');
-  const typeLabel={mm:'Водитель ММ',tenant:'Арендатор',client:'Заказчик',service:'Сервис',other:'Прочий'};
+  const typeLabel={mm:'Собственник',tenant:'Арендатор',client:'Заказчик',service:'Сервис',other:'Прочий',hired_driver:'Наёмный водитель'};
 
   let summaryHtml='', tableHtml='';
 
@@ -7104,7 +7113,7 @@ const deleteFinanceEntry = guardDoubleSubmit('deleteFinanceEntry', (...a)=>_dele
 // готовыми выпадающими списками, а не текстом. Поля "Тип" в самом Excel-шаблоне — тоже
 // настоящий выпадающий список (Excel data validation), чтобы не было произвольных
 // формулировок, которые потом придётся вручную разбирать.
-const CONTRAGENT_TYPE_OPTIONS=['Арендатор','Водитель ММ','Заказчик','Прочий','Сервис'];
+const CONTRAGENT_TYPE_OPTIONS=['Арендатор','Собственник','Наёмный водитель','Заказчик','Прочий','Сервис'];
 const TRANSPORT_TYPES=['Тягач','Прицеп','Полуприцеп','Фургон','Легковой'];
 const OWNER_TYPE_OPTIONS=['ММ','Аренда'];
 
@@ -7200,13 +7209,14 @@ const norm=s=>String(s||'').trim().toLowerCase();
 function matchKontragentType(label){
   const l=norm(label);
   if(l.includes('аренд')) return 'tenant';
-  if(l.includes('мм')) return 'mm';
+  if(l.includes('наём')||l.includes('наем')||l.includes('найм')) return 'hired_driver';
+  if(l.includes('мм')||l.includes('собствен')) return 'mm';
   if(l.includes('заказ')) return 'client';
   if(l.includes('серв')||l.includes('гараж')) return 'service';
   if(l.includes('проч')) return 'other';
   return null;
 }
-const KT_TYPE_LABEL={tenant:'Арендатор',mm:'Водитель ММ',client:'Заказчик',service:'Сервис',other:'Прочий'};
+const KT_TYPE_LABEL={tenant:'Арендатор',mm:'Собственник',client:'Заказчик',service:'Сервис',other:'Прочий',hired_driver:'Наёмный водитель'};
 function matchTransportType(label){ return TRANSPORT_TYPES.find(t=>norm(t)===norm(label))||null; }
 function matchOwner(label){ const l=norm(label); if(l==='мм') return 'ММ'; if(l==='аренда') return 'Аренда'; return null; }
 
@@ -8318,7 +8328,8 @@ function openEditKontragent(id){
     <div class="form-row"><label>Тип</label>
       <select id="ek-type" class="edit-field">
         <option value="tenant" ${k.type==='tenant'?'selected':''}>Арендатор</option>
-        <option value="mm" ${k.type==='mm'?'selected':''}>Водитель ММ</option>
+        <option value="mm" ${k.type==='mm'?'selected':''}>Собственник</option>
+        <option value="hired_driver" ${k.type==='hired_driver'?'selected':''}>Наёмный водитель</option>
         <option value="client" ${k.type==='client'?'selected':''}>🤝 Заказчик</option>
         <option value="other" ${k.type==='other'?'selected':''}>Прочий</option>
         <option value="service" ${k.type==='service'?'selected':''}>🔧 Сервис / Гараж</option>
