@@ -3119,6 +3119,14 @@ async function loadAllData() {
   updateDmBadge();
 }
 
+// Строка текущего баланса для дописывания в финансовые уведомления (начисление/
+// оплата) — чтобы контрагент сразу видел итог, не запрашивая его отдельно ботом.
+// Решение пользователя 2026-07-21.
+function kgBalanceLine(kgId){
+  const bal=getKontragentBalance(kgId);
+  return bal<0?`Баланс: ${fmtN(-bal)} сум (долг)`:bal>0?`Баланс: ${fmtN(bal)} сум (переплата)`:'Баланс: 0';
+}
+
 // Отправка Telegram-уведомления контрагенту (если у него есть активная привязка).
 // Необязательная часть действия — ошибку показывать пользователю не нужно, просто
 // логируем в консоль, чтобы не отправка уведомления никогда не мешала основному
@@ -4175,7 +4183,7 @@ function transferTir() {
           }
         }
         toast(`ТИР передан: ${t.num} → ${kg.name} (${fl.label}). Начислено: ${fmtN(price)}${tripId?' · Расход добавлен в рейс':''}`);
-        notifyKontragent(kg.id, `📋 Вам передан ТИР № ${t.num} (${t.type}), действителен до ${fmt(t.expires)}.\nНачислено на баланс: ${fmtN(price)} сум.`);
+        notifyKontragent(kg.id, `📋 Вам передан ТИР № ${t.num} (${t.type}), действителен до ${fmt(t.expires)}.\nНачислено на баланс: ${fmtN(price)} сум.\n💰 ${kgBalanceLine(kg.id)}`);
       } else {
         toast(`ТИР передан: ${t.num} → ${fl.label}`);
         notifyKontragent(kg.id, `📋 Вам передан ТИР № ${t.num} (${t.type}), действителен до ${fmt(t.expires)}.`);
@@ -4219,7 +4227,7 @@ async function _returnTirToOfficeImpl() {
   }
   if(flForNotify){
     const kgForNotify=getFleetKontragent(flForNotify);
-    notifyKontragent(kgForNotify.id, `↩️ Вы сдали ТИР № ${t.num} в офис.${used?' Отмечен как использованный.':(comp>0?` Зачёт на баланс: ${fmtN(comp)} сум.`:' Неиспользованный.')}`);
+    notifyKontragent(kgForNotify.id, `↩️ Вы сдали ТИР № ${t.num} в офис.${used?' Отмечен как использованный.':(comp>0?` Зачёт на баланс: ${fmtN(comp)} сум.\n💰 ${kgBalanceLine(kgForNotify.id)}`:' Неиспользованный.')}`);
   }
   closeModal('modal-return-tir');
   toast('ТИР '+t.num+' принят в офис. '+(used?'Использован.':'Неиспользован'+(t.comp>0?', зачёт: '+fmtN(t.comp):'.')));
@@ -4326,7 +4334,7 @@ async function performDozvTransfer(d, fl, tripId, date){
           }
         }
       toast(`Дозвол выдан: ${d.num} → ${fl.label}. Начислено: ${fmtN(price)}${tripId?' · Расход добавлен в рейс':''}`);
-      notifyKontragent(kg.id, `📄 Вам передан Дозвол № ${d.num} (${d.country}${d.epermit?', Е-ПЕРМИТ':''}).\nНачислено на баланс: ${fmtN(price)} сум.`);
+      notifyKontragent(kg.id, `📄 Вам передан Дозвол № ${d.num} (${d.country}${d.epermit?', Е-ПЕРМИТ':''}).\nНачислено на баланс: ${fmtN(price)} сум.\n💰 ${kgBalanceLine(kg.id)}`);
     } else {
       toast(`Дозвол выдан: ${d.num} → ${fl.label} (цена не задана)`);
       notifyKontragent(kg.id, `📄 Вам передан Дозвол № ${d.num} (${d.country}${d.epermit?', Е-ПЕРМИТ':''}).`);
@@ -4378,7 +4386,7 @@ async function _returnDozToOfficeImpl() {
   }
   if(flcForNotify){
     const kgForNotify=getFleetKontragent(flcForNotify);
-    notifyKontragent(kgForNotify.id, `↩️ Вы сдали Дозвол № ${d.num} в офис.${used?' Отмечен как использованный.':(comp>0?` Зачёт на баланс: ${fmtN(comp)} сум.`:' Неиспользованный.')}`);
+    notifyKontragent(kgForNotify.id, `↩️ Вы сдали Дозвол № ${d.num} в офис.${used?' Отмечен как использованный.':(comp>0?` Зачёт на баланс: ${fmtN(comp)} сум.\n💰 ${kgBalanceLine(kgForNotify.id)}`:' Неиспользованный.')}`);
   }
   closeModal('modal-return-dozv');
   toast('Дозвол '+d.num+' принят в офис.'+(d.comp>0?' Зачёт: '+fmtN(d.comp):''));
@@ -4456,7 +4464,7 @@ async function _saveChargeImpl(){
   const { data, error } = await sbClient.from('finance').insert(financeRecord).select().single();
   if (error) { alert('Не удалось сохранить начисление: '+error.message); return; }
   FINANCE.push(mapFinanceFromDb(data));
-  if(f) notifyKontragent(f.kontragentId, `💸 Вам начислено: ${fmtN(amount)} сум${desc?' ('+desc+')':''}.`);
+  if(f) notifyKontragent(f.kontragentId, `💸 Вам начислено: ${fmtN(amount)} сум${desc?' ('+desc+')':''}.\n💰 ${kgBalanceLine(f.kontragentId)}`);
   if(modal) delete modal.dataset.fleetId;
   closeModal('modal-charge');
   document.getElementById('ch-amount').value='';
@@ -4493,7 +4501,7 @@ async function _savePaymentImpl(){
     from_name:person, description:desc||('Оплата от '+person), amount, finance_id:data.id,
   }).select().single();
   if (!kErr) KASSA.push(mapKassaFromDb(kData));
-  if(f) notifyKontragent(f.kontragentId, `✅ Учтён ваш приход: ${fmtN(amount)} сум${desc?' ('+desc+')':''}.`);
+  if(f) notifyKontragent(f.kontragentId, `✅ Учтён ваш приход: ${fmtN(amount)} сум${desc?' ('+desc+')':''}.\n💰 ${kgBalanceLine(f.kontragentId)}`);
   if(modal) delete modal.dataset.fleetId;
   closeModal('modal-payment');
   document.getElementById('pay-amount').value='';
@@ -6340,9 +6348,9 @@ async function _saveKontragentOpImpl(){
   const { data, error } = await sbClient.from('finance').insert(financeRecord).select().single();
   if (error) { alert('Не удалось сохранить операцию: '+error.message); return; }
   FINANCE.push(mapFinanceFromDb(data));
-  notifyKontragent(k.id, isIncome
+  notifyKontragent(k.id, (isIncome
     ? `✅ Учтён ваш приход: ${fmtN(amount)} сум${desc?' ('+desc+')':''}.`
-    : `💸 Вам начислено: ${fmtN(amount)} сум${desc?' ('+desc+')':''}.`);
+    : `💸 Вам начислено: ${fmtN(amount)} сум${desc?' ('+desc+')':''}.`) + `\n💰 ${kgBalanceLine(k.id)}`);
   closeModal('modal-kontragent-op');
   toast('Операция сохранена'); renderTenants();
 }
