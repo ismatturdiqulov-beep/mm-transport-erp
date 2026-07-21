@@ -307,7 +307,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
   <div class="nav">
     <div class="nav-lbl">Главное</div>
     <div class="nav-item active" onclick="showPage('dashboard')"><span class="ico">⬛</span><span>Дашборд</span></div>
-    <div class="nav-item" onclick="showPage('driver-messages')"><span class="ico">💬</span><span>Сообщения от водителей</span><span id="dm-badge" style="display:none;background:var(--red);color:#fff;border-radius:10px;font-size:10px;font-weight:700;padding:1px 6px;margin-left:auto;"></span></div>
+    <div class="nav-item" onclick="showPage('driver-messages')"><span class="ico">💬</span><span>Диалоги</span><span id="dm-badge" style="display:none;background:var(--red);color:#fff;border-radius:10px;font-size:10px;font-weight:700;padding:1px 6px;margin-left:auto;"></span></div>
     <div class="nav-item" onclick="showPage('settings')"><span class="ico">⚙️</span><span>Настройки цен</span></div>
     <div class="nav-lbl">Документы</div>
     <div class="nav-item" onclick="showPage('tir')"><span class="ico">📋</span><span>ТИР Карнет</span></div>
@@ -662,7 +662,10 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
   <!-- ===== СООБЩЕНИЯ ОТ ВОДИТЕЛЕЙ (Telegram-бот) ===== -->
   <div class="page" id="page-driver-messages">
     <div class="page-hdr">
-      <div><h2>Сообщения от водителей</h2><div class="ph-sub">Входящие через Telegram-бот — примите, отклоните или отметьте как «не по работе»</div></div>
+      <div><h2>Диалоги</h2><div class="ph-sub">Входящие через Telegram-бот и исходящие сообщения контрагентам</div></div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn primary" onclick="openSendMessageModal()">✉️ Написать сообщение</button>
+      </div>
     </div>
     <div class="section" style="padding:20px;">
       <div id="dm-list"></div>
@@ -1821,6 +1824,32 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
     <div class="modal-foot">
       <button class="btn" onclick="closeModal('modal-kontragent-op')">Отмена</button>
       <button class="btn primary" onclick="saveKontragentOp()">Сохранить</button>
+    </div>
+  </div>
+</div>
+
+<!-- Написать сообщение контрагентам (одному или массово) через Telegram-бота —
+     решение пользователя 2026-07-21: раньше бот только принимал сообщения, не было
+     способа написать самому. Список — только те, у кого активна привязка к боту. -->
+<div class="overlay" id="modal-send-message">
+  <div class="modal">
+    <div class="modal-head"><h3>✉️ Написать сообщение</h3><span class="modal-close" onclick="closeModal('modal-send-message')">×</span></div>
+    <div class="modal-body">
+      <input type="text" placeholder="Поиск по имени..." id="sm-search" oninput="renderSendMessageList()" style="width:100%;padding:8px 10px;border:1px solid var(--border2);border-radius:var(--radius);margin-bottom:8px;">
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">
+        <button class="btn xs" onclick="selectSendGroup('tenant')">Все арендаторы</button>
+        <button class="btn xs" onclick="selectSendGroup('mm')">Все собственники</button>
+        <button class="btn xs" onclick="selectSendGroup('hired_driver')">Все наёмные водители</button>
+        <button class="btn xs" onclick="selectSendGroup('all')">Выбрать всех</button>
+        <button class="btn xs" onclick="selectSendGroup('none')">Снять всё</button>
+      </div>
+      <div id="sm-list" style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius);padding:6px;margin-bottom:10px;"></div>
+      <div id="sm-count" style="font-size:11.5px;color:var(--text3);margin-bottom:8px;">Выбрано: 0</div>
+      <div class="form-row"><label>Текст сообщения</label><textarea id="sm-text" rows="4" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:var(--radius);font-family:inherit;"></textarea></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeModal('modal-send-message')">Отмена</button>
+      <button class="btn primary" onclick="sendKontragentBroadcast()">Отправить</button>
     </div>
   </div>
 </div>
@@ -3147,6 +3176,75 @@ function escapeHtml(s){
   return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
+// То же самое, что notifyKontragent, но возвращает результат ({sent, reason}) —
+// нужен для ручной отправки/рассылки, чтобы показать диспетчеру отчёт (скольким
+// реально ушло, у кого нет привязки к боту). Автоматические уведомления (начисление,
+// передача документа и т.д.) по-прежнему используют notifyKontragent — им результат
+// не нужен, они не должны блокировать основное действие. Решение пользователя 2026-07-21.
+async function notifyKontragentWithResult(kontragentId, message){
+  try{
+    const { data: { session } } = await sbClient.auth.getSession();
+    if(!session) return {sent:false, reason:'no_session'};
+    const resp = await fetch(SUPABASE_URL+'/functions/v1/telegram-notify', {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json', 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer '+session.access_token },
+      body: JSON.stringify({ kontragentId, message }),
+    });
+    const json=await resp.json().catch(()=>({sent:false, reason:'bad_response'}));
+    return json;
+  }catch(e){ return {sent:false, reason:'error'}; }
+}
+
+// ============ ОТПРАВКА СООБЩЕНИЙ КОНТРАГЕНТАМ (ручная/массовая) ============
+function getLinkedKontragents(){
+  return KONTRAGENTY.filter(k=>k.active!==false && TELEGRAM_LINKS.some(l=>l.kontragentId===k.id && l.active));
+}
+function openSendMessageModal(){
+  document.getElementById('sm-search').value='';
+  document.getElementById('sm-text').value='';
+  renderSendMessageList();
+  openModal('modal-send-message');
+}
+function renderSendMessageList(){
+  const search=(document.getElementById('sm-search')||{}).value.toLowerCase()||'';
+  const list=getLinkedKontragents().filter(k=>!search||k.name.toLowerCase().includes(search));
+  const cont=document.getElementById('sm-list');
+  const typeLabel={mm:'Собственник',tenant:'Арендатор',client:'Заказчик',service:'Сервис',other:'Прочий',hired_driver:'Наёмный водитель'};
+  cont.innerHTML=list.length ? list.map(k=>`
+    <label style="display:flex;align-items:center;gap:8px;padding:5px 4px;cursor:pointer;font-size:13px;">
+      <input type="checkbox" class="sm-check" value="${k.id}" onchange="updateSendCount()">
+      <span style="flex:1;">${k.name}</span>
+      <span class="tag gray" style="font-size:10px;">${typeLabel[k.type]||k.type}</span>
+    </label>`).join('') : '<div style="padding:12px;text-align:center;color:var(--text3);font-size:12px;">Нет контрагентов, подключённых к боту</div>';
+  updateSendCount();
+}
+function selectSendGroup(type){
+  document.querySelectorAll('.sm-check').forEach(chk=>{
+    const k=KONTRAGENTY.find(x=>x.id===chk.value);
+    if(type==='none') chk.checked=false;
+    else if(type==='all') chk.checked=true;
+    else if(k) chk.checked=k.type===type;
+  });
+  updateSendCount();
+}
+function updateSendCount(){
+  const n=document.querySelectorAll('.sm-check:checked').length;
+  const el=document.getElementById('sm-count'); if(el) el.textContent=`Выбрано: ${n}`;
+}
+async function sendKontragentBroadcast(){
+  const text=document.getElementById('sm-text').value.trim();
+  if(!text){alert('Введите текст сообщения');return;}
+  const ids=[...document.querySelectorAll('.sm-check:checked')].map(c=>c.value);
+  if(!ids.length){alert('Выберите хотя бы одного получателя');return;}
+  let sent=0, failed=0;
+  for(const kgId of ids){
+    const res=await notifyKontragentWithResult(kgId, text);
+    if(res && res.sent) sent++; else failed++;
+  }
+  closeModal('modal-send-message');
+  toast(failed>0?`Отправлено: ${sent} · Не доставлено: ${failed}`:`Отправлено: ${sent}`);
+}
+
 function updateDmBadge(){
   const badge=document.getElementById('dm-badge'); if(!badge) return;
   const n=DRIVER_MESSAGES.filter(m=>m.status==='new').length;
@@ -3657,7 +3755,7 @@ function showPage(id) {
   document.getElementById('page-'+id).classList.add('active');
   const nav=document.querySelector(`.nav-item[onclick="showPage('${id}')"]`);
   if(nav) nav.classList.add('active');
-  const titles={dashboard:'Дашборд',settings:'Настройки цен',tir:'ТИР Карнет',dozvol:'Дозволы',tenants:'Контрагенты',kassa:'Касса',fleet:'Подвижной состав',trips:'Рейсы',people:'Водители',transport:'Транспорт',maintenance:'ТО и Ремонты',waybills:'Путёвки',poa:'Доверенности',labor:'Трудовые договоры',finance:'История операций',reports:'Отчёты','driver-messages':'Сообщения от водителей'};
+  const titles={dashboard:'Дашборд',settings:'Настройки цен',tir:'ТИР Карнет',dozvol:'Дозволы',tenants:'Контрагенты',kassa:'Касса',fleet:'Подвижной состав',trips:'Рейсы',people:'Водители',transport:'Транспорт',maintenance:'ТО и Ремонты',waybills:'Путёвки',poa:'Доверенности',labor:'Трудовые договоры',finance:'История операций',reports:'Отчёты','driver-messages':'Диалоги'};
   document.getElementById('pageTitle').textContent=titles[id]||'';
   renderPage(id);
 }
