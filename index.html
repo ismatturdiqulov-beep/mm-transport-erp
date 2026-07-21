@@ -359,7 +359,6 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
     <div class="topbar-title" id="pageTitle">Дашборд</div>
     <div style="display:flex;gap:10px;align-items:center;">
       <div class="topbar-date" id="todayDate"></div>
-      <button class="btn sm primary" onclick="openModal('modal-op-select')">+ Операция</button>
     </div>
   </div>
 
@@ -728,8 +727,6 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
       </select>
       <select onchange="renderFleet()" id="fleet-filter-status">
         <option value="">Все</option>
-        <option value="debt">Должники</option>
-        <option value="ok">Без долгов</option>
         <option value="active">Активные</option>
         <option value="inactive">Неактивные</option>
       </select>
@@ -1456,26 +1453,6 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
     <div class="modal-foot">
       <button class="btn" onclick="closeModal('modal-add-doz-country')">Отмена</button>
       <button class="btn primary" onclick="saveDozCountry()">Сохранить</button>
-    </div>
-  </div>
-</div>
-
-<!-- Quick op select -->
-<div class="overlay" id="modal-op-select">
-  <div class="modal">
-    <div class="modal-head"><h3>Выберите операцию</h3><span class="modal-close" onclick="closeModal('modal-op-select')">×</span></div>
-    <div class="modal-body">
-      <div class="op-grid" style="grid-template-columns:repeat(3,1fr);">
-        <div class="op-card" onclick="swop('modal-new-tir')"><div class="oi">📥</div><div class="ol">Новый ТИР</div></div>
-        <div class="op-card" onclick="swop('modal-new-dozv')"><div class="oi">📥</div><div class="ol">Новый ДОЗВОЛ</div></div>
-        <div class="op-card" onclick="swop('modal-transfer-tir')"><div class="oi">➡️</div><div class="ol">Передать ТИР</div></div>
-        <div class="op-card" onclick="swop('modal-transfer-dozv')"><div class="oi">➡️</div><div class="ol">Передать ДОЗВОЛ</div></div>
-        <div class="op-card" onclick="swop('modal-return-tir')"><div class="oi">↩️</div><div class="ol">Вернуть ТИР</div></div>
-        <div class="op-card" onclick="swop('modal-return-dozv')"><div class="oi">↩️</div><div class="ol">Вернуть ДОЗВОЛ</div></div>
-        <div class="op-card" onclick="swop('modal-charge')"><div class="oi">📌</div><div class="ol">Начисление</div></div>
-        <div class="op-card" onclick="swop('modal-payment')"><div class="oi">💸</div><div class="ol">Приход</div></div>
-        <div class="op-card" onclick="swop('modal-vacation')"><div class="oi">🏖</div><div class="ol">Отпуск</div></div>
-      </div>
     </div>
   </div>
 </div>
@@ -3696,7 +3673,6 @@ function closeModal(id) {
   // Re-enable any disabled selects for next use
   document.querySelectorAll('#'+id+' select[disabled]').forEach(el=>{el.disabled=false;});
 }
-function swop(id) { closeModal('modal-op-select'); openModal(id); }
 document.querySelectorAll('.overlay').forEach(o=>o.addEventListener('click',e=>{if(e.target===o)o.classList.remove('open');}));
 
 // Общая очистка полей формы "Добавить..." перед показом — иначе в полях остаются
@@ -5021,12 +4997,18 @@ function renderDashboard(){
   const tirOn=TIRS.filter(t=>tirGetState(t)==='issued').length;
   const tirOffice=TIRS.filter(t=>tirGetState(t)==='office').length;
   const dozProb=DOZV.filter(d=>!d.epermit&&!d.returnedMt&&(isExp(d.expires)||expSoon(d.expires,14))).length;
-  const totalDebt=FLEET.reduce((s,f)=>s+Math.abs(Math.min(0,f.balance)),0);
+  // Задолженность считаем по контрагентам-арендаторам (getKontragentBalance — общий баланс
+  // человека по всем его ПС + генерик-операциям), а не суммой fleet.balance по единицам ПС —
+  // баланс на карточке ПС убрали как избыточный/путающий с балансом контрагента, решение
+  // пользователя 2026-07-21.
+  const totalDebt=KONTRAGENTY.filter(k=>k.type==='tenant'&&k.active!==false).reduce((s,k)=>s+Math.abs(Math.min(0,getKontragentBalance(k.id))),0);
+  const fleetTenantCount=FLEET.filter(f=>getFleetKontragent(f).type==='tenant').length;
+  const fleetMmCount=FLEET.filter(f=>getFleetKontragent(f).type==='mm').length;
   document.getElementById('stat-grid').innerHTML=`
     <div class="stat-card blue" onclick="showPage('trips')" style="cursor:pointer"><div class="sl">Активных рейсов</div><div class="sv">${getActiveTripsCount()}</div><div class="ss">Завершено: ${TRIPS.filter(t=>t.status==='done').length} · Всего: ${TRIPS.length}</div></div>
     <div class="stat-card blue"><div class="sl">ТИР на руках</div><div class="sv">${tirOn}</div><div class="ss">В офисе: ${tirOffice} · Всего: ${TIRS.length}</div></div>
     <div class="stat-card red"><div class="sl">Задолженность</div><div class="sv">${Math.round(totalDebt/1e6*10)/10} млн</div><div class="ss">по арендаторам</div></div>
-    <div class="stat-card green"><div class="sl">Подвижной состав</div><div class="sv">${FLEET.length}</div><div class="ss">арендаторов: ${KONTRAGENTY.filter(k=>k.type==='tenant').length} · ММ: ${KONTRAGENTY.filter(k=>k.type==='mm').length}</div></div>`;
+    <div class="stat-card green"><div class="sl">Подвижной состав</div><div class="sv">${FLEET.length}</div><div class="ss">аренда: ${fleetTenantCount} · собственных: ${fleetMmCount}</div></div>`;
 
   let alerts='';
   // CRITICAL: просроченные бумажные дозволы
@@ -5428,31 +5410,31 @@ function renderFleet(){
   });
   if(fType==='tenant') data=data.filter(f=>getFleetKontragent(f).type==='tenant');
   if(fType==='mm') data=data.filter(f=>getFleetKontragent(f).type==='mm');
-  if(fStat==='debt') data=data.filter(f=>f.balance<0);
-  if(fStat==='ok') data=data.filter(f=>f.balance>=0);
   if(fStat==='active') data=data.filter(f=>f.active);
   if(fStat==='inactive') data=data.filter(f=>!f.active);
 
-  const totalDebt=FLEET.reduce((s,f)=>s+Math.abs(Math.min(0,f.balance)),0);
+  // Баланс убран с карточек/списка ПС — он путал с балансом контрагента в разделе
+  // Контрагенты (один и тот же человек мог быть виден с разными "балансами" на двух
+  // экранах, если у него несколько ПС) — решение пользователя 2026-07-21. Реальный
+  // баланс/долг смотреть в Контрагенты → Акт сверки.
   const tenantCount=FLEET.filter(f=>getFleetKontragent(f).type==='tenant').length;
   const mmCount=FLEET.filter(f=>getFleetKontragent(f).type==='mm').length;
   const fs=document.getElementById('fleet-summary');
   if(fs) fs.innerHTML=`
     <div class="bs-card"><div class="bsl">Всего единиц</div><div class="bsv blue">${FLEET.length}</div></div>
     <div class="bs-card"><div class="bsl">Арендаторы</div><div class="bsv">${tenantCount}</div></div>
-    <div class="bs-card"><div class="bsl">Собственники</div><div class="bsv">${mmCount}</div></div>
-    <div class="bs-card"><div class="bsl">Суммарный долг</div><div class="bsv red">${fmtN(totalDebt)}</div></div>`;
+    <div class="bs-card"><div class="bsl">Собственники</div><div class="bsv">${mmCount}</div></div>`;
 
   const sub=document.getElementById('fleet-sub');
-  if(sub) sub.textContent=`${data.length} из ${FLEET.length} · ${FLEET.filter(f=>f.balance<0).length} с долгом`;
+  if(sub) sub.textContent=`${data.length} из ${FLEET.length}`;
 
   const cont=document.getElementById('fleet-container');
   if(fleetView==='card'){
     cont.innerHTML=`<div class="fleet-grid">${data.map(f=>fleetCard(f)).join('')||'<div style="grid-column:1/-1;padding:40px;text-align:center;color:var(--text3)">Нет записей</div>'}</div>`;
   } else {
     cont.innerHTML=`<div class="list-wrap"><table class="list-table">
-      <thead><tr><th>#</th><th>Тип</th><th>Контрагент</th><th>Позывной / ПС</th><th>Тягач</th><th>Прицеп</th><th>Мес. план</th><th>Договор до</th><th>Баланс</th><th>Статус</th><th>Действия</th></tr></thead>
-      <tbody>${data.map((f,i)=>fleetRow(f,i)).join('')||'<tr><td colspan="11" style="text-align:center;padding:30px;color:var(--text3)">Нет записей</td></tr>'}</tbody>
+      <thead><tr><th>#</th><th>Тип</th><th>Контрагент</th><th>Позывной / ПС</th><th>Тягач</th><th>Прицеп</th><th>Мес. план</th><th>Договор до</th><th>Статус</th><th>Действия</th></tr></thead>
+      <tbody>${data.map((f,i)=>fleetRow(f,i)).join('')||'<tr><td colspan="10" style="text-align:center;padding:30px;color:var(--text3)">Нет записей</td></tr>'}</tbody>
     </table></div>`;
   }
 }
@@ -5465,7 +5447,6 @@ function fleetCard(f){
   const isMMtype=kg.type==='mm';
   const expC=f.contract_end&&isExp(f.contract_end);
   const soon=f.contract_end&&expSoon(f.contract_end,60);
-  const debtPct=f.balance<0&&f.plan>0?Math.min(100,Math.abs(f.balance)/(f.plan*3)*100):0;
   return `<div class="fc" style="${!f.active?'opacity:.55':''}">
     <div class="fc-head">
       <div class="fc-avatar ${isMMtype?'mm':'tenant'}">${initials}</div>
@@ -5484,8 +5465,6 @@ function fleetCard(f){
       <div class="fc-row"><span class="lbl">Тягач</span><span class="val">${truck?truck.callsign+' '+truck.plate:'—'}${truck&&truck.active===false?' <span class="tag amber" title="Этот тягач деактивирован — проверьте, актуальна ли привязка">⚠ неактивен</span>':''}</span></div>
       <div class="fc-row"><span class="lbl">Прицеп</span><span class="val">${trailer?trailer.callsign+' '+trailer.plate:'—'}${trailer&&trailer.active===false?' <span class="tag amber" title="Этот прицеп деактивирован — проверьте, актуальна ли привязка">⚠ неактивен</span>':''}</span></div>
       <div class="fc-row"><span class="lbl">План</span><span class="val">${f.planType==='tekin'?'Текин':f.planType==='mm'?'Собственник':fmtN(f.plan)}</span></div>
-      <div class="fc-row"><span class="lbl">Баланс</span><span class="val ${f.balance<0?'amount-neg':f.balance>0?'amount-pos':''}">${fmtN(f.balance)}</span></div>
-      ${f.balance<0&&f.plan>0?`<div class="bal-bar"><div class="bal-bar-fill" style="width:${debtPct}%"></div></div>`:''}
     </div>
     <div class="fc-foot">
       <button class="btn xs" onclick="fleetCharge('${f.id}')">+ Начисл.</button>
@@ -5513,7 +5492,6 @@ function fleetRow(f,i){
     <td class="mono">${trailer?trailer.callsign:'—'}${trailer&&trailer.active===false?' <span class="tag amber" title="Прицеп деактивирован">⚠</span>':''}</td>
     <td>${f.planType==='tekin'?'Текин':f.planType==='mm'?'ММ':fmtN(f.plan)}</td>
     <td>${f.contract_end?`<span class="tag ${expC?'red':''}">${fmt(f.contract_end)}</span>`:'—'}</td>
-    <td class="${f.balance<0?'amount-neg':f.balance>0?'amount-pos':''} mono">${fmtN(f.balance)}</td>
     <td><span class="tag ${f.active?'green':'gray'}">${f.active?'Активен':'Неактив.'}</span></td>
     <td style="white-space:nowrap;">
       <button class="btn xs" onclick="fleetCharge('${f.id}')">+ Нач.</button>
@@ -5680,8 +5658,7 @@ function openPersonDetail(id){
     ${fleetRec?`<div class="ds-block"><h4>Подвижной состав</h4><div class="ds-grid">
       <div class="ds-field"><div class="df-label">Тягач</div><div class="df-val mono">${fleetRec.truckId?(TRANSPORT.find(t=>t.id===fleetRec.truckId)?.callsign||'—'):'—'}</div></div>
       <div class="ds-field"><div class="df-label">Прицеп</div><div class="df-val mono">${fleetRec.trailerId?(TRANSPORT.find(t=>t.id===fleetRec.trailerId)?.callsign||'—'):'—'}</div></div>
-      ${fleetRec.type==='tenant'?`<div class="ds-field"><div class="df-label">Мес. план</div><div class="df-val">${fleetRec.planType==='tekin'?'Текин':fmtN(fleetRec.plan)}</div></div>
-      <div class="ds-field"><div class="df-label">Баланс</div><div class="df-val ${fleetRec.balance<0?'amount-neg':'amount-pos'}">${fmtN(fleetRec.balance)}</div></div>`:''}
+      ${fleetRec.type==='tenant'?`<div class="ds-field"><div class="df-label">Мес. план</div><div class="df-val">${fleetRec.planType==='tekin'?'Текин':fmtN(fleetRec.plan)}</div></div>`:''}
     </div></div>`:''}
     ${laborRec?`<div class="ds-block"><h4>Трудовой договор</h4><div class="ds-grid">
       <div class="ds-field"><div class="df-label">№ / Дата</div><div class="df-val">${laborRec.num} · ${fmt(laborRec.date)}</div></div>
