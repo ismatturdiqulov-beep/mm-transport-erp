@@ -1722,7 +1722,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
       <div class="form-row"><label>Позывной / Метка *</label>
         <input type="text" id="af-label" placeholder="558 / 4674 или просто позывной"></div>
       <div class="form-grid-2">
-        <div class="form-row"><label>Тягач (из списка)</label>
+        <div class="form-row"><label>Тягач / Фургон (из списка)</label>
           <select id="af-truck"><option value="">— не выбрано —</option></select>
         </div>
         <div class="form-row"><label>Прицеп (из списка)</label>
@@ -3882,7 +3882,9 @@ function populateModal(id) {
     // пользователя 2026-07-21). Он назначается отдельно, полем "Закреплённый водитель".
     if(afPerson) afPerson.innerHTML=KONTRAGENTY.filter(k=>k.active!==false&&k.type!=='hired_driver').map(k=>`<option value="${k.id}">${k.name}${k.short&&k.short!==k.name?' ('+k.short+')':''} · ${k.type==='mm'?'Собств.':k.type==='tenant'?'Аренда':'Проч.'}</option>`).join('');
     const afTruck=document.getElementById('af-truck');
-    if(afTruck) afTruck.innerHTML='<option value="">— не выбрано —</option>'+TRANSPORT.filter(t=>t.type==='Тягач'&&t.active!==false).map(t=>`<option value="${t.id}">${t.callsign} · ${t.plate} · ${t.brand}</option>`).join('');
+    // Тягач ИЛИ Фургон — фургон тоже может быть тянущей единицей в связке
+    // Фургон+Прицеп, не только классический тягач (решение пользователя 2026-07-22).
+    if(afTruck) afTruck.innerHTML='<option value="">— не выбрано —</option>'+TRANSPORT.filter(t=>(t.type==='Тягач'||t.type==='Фургон')&&t.active!==false).map(t=>`<option value="${t.id}">${t.callsign} · ${t.plate} · ${t.brand}</option>`).join('');
     const afTrailer=document.getElementById('af-trailer');
     if(afTrailer) afTrailer.innerHTML='<option value="">— не выбрано —</option>'+TRANSPORT.filter(t=>(t.type==='Прицеп'||t.type==='Полуприцеп')&&t.active!==false).map(t=>`<option value="${t.id}">${t.callsign} · ${t.plate} · ${t.brand}</option>`).join('');
     const afDriver=document.getElementById('af-driver');
@@ -6364,7 +6366,9 @@ function openFleetEdit(id){
   const kg=getFleetKontragent(f);
   // В выборе показываем активный транспорт + тот, что уже привязан к этой ед. ПС (даже если
   // его потом деактивировали) — иначе текущий выбор просто пропал бы из списка без объяснений.
-  const truck=TRANSPORT.filter(t=>t.type==='Тягач'&&(t.active!==false||t.id===f.truckId));
+  // Тягач ИЛИ Фургон — фургон тоже может быть тянущей единицей в связке
+  // Фургон+Прицеп, не только классический тягач (решение пользователя 2026-07-22).
+  const truck=TRANSPORT.filter(t=>(t.type==='Тягач'||t.type==='Фургон')&&(t.active!==false||t.id===f.truckId));
   const trailers=TRANSPORT.filter(t=>(t.type==='Прицеп'||t.type==='Полуприцеп')&&(t.active!==false||t.id===f.trailerId));
   const truckOpts=truck.map(t=>`<option value="${t.id}" ${f.truckId===t.id?'selected':''}>${t.callsign} · ${t.plate}${t.active===false?' (неактивен)':''}</option>`).join('');
   const trailerOpts=trailers.map(t=>`<option value="${t.id}" ${f.trailerId===t.id?'selected':''}>${t.callsign} · ${t.plate}${t.active===false?' (неактивен)':''}</option>`).join('');
@@ -6376,7 +6380,7 @@ function openFleetEdit(id){
     <div class="info-box">Единица ПС: <b>${f.label}</b> · Контрагент: <b>${kg.name}</b></div>
     <div class="form-row"><label>Контрагент (ответственный)</label><select id="fe-kontragent" class="edit-field">${kgOpts}</select></div>
     <div class="form-row"><label>Позывной / метка</label><input type="text" id="fe-label" value="${f.label||''}" class="edit-field" placeholder="558 / 4674"></div>
-    <div class="form-row"><label>Тягач</label><select id="fe-truck-id" class="edit-field"><option value="">— не выбрано —</option>${truckOpts}</select></div>
+    <div class="form-row"><label>Тягач / Фургон</label><select id="fe-truck-id" class="edit-field"><option value="">— не выбрано —</option>${truckOpts}</select></div>
     <div class="form-row"><label>Прицеп</label><select id="fe-trailer-id" class="edit-field"><option value="">— не выбрано —</option>${trailerOpts}</select></div>
     <div class="form-row"><label>Закреплённый водитель</label><select id="fe-driver" class="edit-field">${driverOpts}</select></div>
     <div class="form-row"><label>Месячный план (сум)</label><input type="text" inputmode="numeric" class="fmt-money edit-field" id="fe-plan" value="${f.plan?formatNumberSpaces(String(f.plan)):''}"></div>
