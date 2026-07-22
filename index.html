@@ -662,7 +662,14 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
   <!-- ===== СООБЩЕНИЯ ОТ ВОДИТЕЛЕЙ (Telegram-бот) ===== -->
   <div class="page" id="page-driver-messages">
     <div class="page-hdr">
-      <div><h2>Диалоги</h2><div class="ph-sub">Входящие через Telegram-бот и исходящие сообщения контрагентам</div></div>
+      <div>
+        <h2>Диалоги</h2>
+        <div class="ph-sub">Входящие через Telegram-бот и исходящие сообщения контрагентам</div>
+        <div style="display:flex;gap:6px;margin-top:6px;">
+          <button id="dm-tab-new" class="btn primary" onclick="switchDmTab('new')" style="font-size:12px;padding:4px 12px;">Новые</button>
+          <button id="dm-tab-archive" class="btn" onclick="switchDmTab('archive')" style="font-size:12px;padding:4px 12px;">📦 Архив</button>
+        </div>
+      </div>
       <div style="display:flex;gap:8px;">
         <button class="btn primary" onclick="openSendMessageModal()">✉️ Написать сообщение</button>
       </div>
@@ -3129,18 +3136,26 @@ async function loadAllData() {
   TELEGRAM_LINKS = byTable.telegram_links.map(mapTelegramLinkFromDb);
   DRIVER_MESSAGES = byTable.driver_messages.map(mapDriverMessageFromDb);
   // Подписанные ссылки на фото/голос — bucket приватный, обычный публичный URL не
-  // сработает. Генерируем один раз при загрузке (на час), не при каждом рендере.
-  await Promise.all(DRIVER_MESSAGES.filter(m=>m.photoPath||m.voicePath).map(async m=>{
-    if(m.photoPath){
+  // сработает. При каждом входе подписываем только НОВЫЕ (необработанные) сообщения —
+  // архив (уже принятые/отклонённые) подписывается лениво, только когда диспетчер
+  // реально открывает вкладку "Архив" — иначе с ростом истории каждый вход делал бы
+  // всё больше и больше обращений к хранилищу без надобности (баг с производительностью
+  // найден пользователем 2026-07-22, до реальной проблемы, заранее).
+  await signDriverMessageMedia(DRIVER_MESSAGES.filter(m=>m.status==='new'));
+  updateDmBadge();
+}
+
+async function signDriverMessageMedia(messages){
+  await Promise.all(messages.map(async m=>{
+    if(m.photoPath && !m.photoSignedUrl){
       const { data } = await sbClient.storage.from('driver-messages').createSignedUrl(m.photoPath, 3600);
       if(data) m.photoSignedUrl=data.signedUrl;
     }
-    if(m.voicePath){
+    if(m.voicePath && !m.voiceSignedUrl){
       const { data } = await sbClient.storage.from('driver-messages').createSignedUrl(m.voicePath, 3600);
       if(data) m.voiceSignedUrl=data.signedUrl;
     }
   }));
-  updateDmBadge();
 }
 
 // Строка текущего баланса для дописывания в финансовые уведомления (начисление/
@@ -3262,11 +3277,7 @@ function subscribeDriverMessages(){
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'driver_messages', filter: `company_id=eq.${COMPANY.id}` }, payload=>{
       const m=mapDriverMessageFromDb(payload.new);
       DRIVER_MESSAGES.push(m);
-      (async()=>{
-        if(m.photoPath){ const {data}=await sbClient.storage.from('driver-messages').createSignedUrl(m.photoPath,3600); if(data) m.photoSignedUrl=data.signedUrl; }
-        if(m.voicePath){ const {data}=await sbClient.storage.from('driver-messages').createSignedUrl(m.voicePath,3600); if(data) m.voiceSignedUrl=data.signedUrl; }
-        updateDmBadge(); renderDriverMessages();
-      })();
+      signDriverMessageMedia([m]).then(()=>{ updateDmBadge(); renderDriverMessages(); });
       toast('📨 Новое сообщение от контрагента');
     })
     .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'driver_messages', filter: `company_id=eq.${COMPANY.id}` }, payload=>{
@@ -3294,6 +3305,22 @@ function dmQuote(m){
   return dtStr?`${body} от ${dtStr}`:body;
 }
 
+// "Архив" (обработанные сообщения) рисуется только по требованию — не при каждом
+// входе — и подписывает ссылки на фото/голос лениво, тоже только при первом открытии
+// вкладки за сессию, чтобы объём истории не увеличивал время входа и число обращений
+// к хранилищу для всех, кому это сейчас не нужно (решение пользователя 2026-07-22).
+let _dmTab='new', _dmArchiveSigned=false;
+async function switchDmTab(tab){
+  _dmTab=tab;
+  const btnN=document.getElementById('dm-tab-new'), btnA=document.getElementById('dm-tab-archive');
+  if(btnN) btnN.className=tab==='new'?'btn primary':'btn';
+  if(btnA) btnA.className=tab==='archive'?'btn primary':'btn';
+  if(tab==='archive' && !_dmArchiveSigned){
+    _dmArchiveSigned=true;
+    await signDriverMessageMedia(DRIVER_MESSAGES.filter(m=>m.status!=='new'));
+  }
+  renderDriverMessages();
+}
 function renderDriverMessages(){
   const list=document.getElementById('dm-list'); if(!list) return;
   const sorted=[...DRIVER_MESSAGES].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
@@ -3324,11 +3351,10 @@ function renderDriverMessages(){
   };
 
   let html='';
-  if(pending.length) html+=pending.map(cardHtml).join('');
-  else html+='<div style="text-align:center;padding:30px;color:var(--text3)">Нет новых сообщений</div>';
-  if(done.length){
-    html+=`<div style="font-size:12px;font-weight:600;color:var(--text3);margin:18px 0 8px;">История (${done.length})</div>`;
-    html+=done.map(cardHtml).join('');
+  if(_dmTab==='new'){
+    html = pending.length ? pending.map(cardHtml).join('') : '<div style="text-align:center;padding:30px;color:var(--text3)">Нет новых сообщений</div>';
+  } else {
+    html = done.length ? done.map(cardHtml).join('') : '<div style="text-align:center;padding:30px;color:var(--text3)">Архив пуст</div>';
   }
   list.innerHTML=html;
 }
