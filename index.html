@@ -3539,6 +3539,29 @@ async function addFleetOpAndSave(fleetId, op){
 }
 function findFleetByKontragent(kgId){ return FLEET.filter(f=>f.kontragentId===kgId); }
 
+// Проверка занятости тягача/прицепа другой активной единицей ПС — не блокирует,
+// только предупреждает: тягач физически не может быть в двух местах одновременно
+// (жёстче формулировка), а прицеп/полуприцеп законно перецепляют между тягачами
+// (мягче формулировка) — решение пользователя 2026-07-22.
+function findFleetUsingTransport(transportId, excludeFleetId){
+  if(!transportId) return [];
+  return FLEET.filter(f=>f.id!==excludeFleetId && f.active!==false && (f.truckId===transportId||f.trailerId===transportId));
+}
+function transportConflictWarning(truckId, trailerId, excludeFleetId){
+  const parts=[];
+  const truckConflicts=findFleetUsingTransport(truckId, excludeFleetId);
+  if(truckConflicts.length){
+    const t=TRANSPORT.find(x=>x.id===truckId);
+    parts.push(`Тягач/фургон ${t?t.callsign:''} уже числится в другой активной единице ПС (${truckConflicts.map(f=>f.label).join(', ')}) — физически он не может быть в двух местах одновременно, это похоже на ошибку.`);
+  }
+  const trailerConflicts=findFleetUsingTransport(trailerId, excludeFleetId);
+  if(trailerConflicts.length){
+    const t=TRANSPORT.find(x=>x.id===trailerId);
+    parts.push(`Прицеп/полуприцеп ${t?t.callsign:''} уже числится в другой активной единице ПС (${trailerConflicts.map(f=>f.label).join(', ')}) — это нормально, если его просто перецепили, но проверьте.`);
+  }
+  return parts.join(' ');
+}
+
 // Откатывает уже найденный список начислений (баланс ПС + удаление записи из "Финансов").
 // Общий helper для отката передачи ТИР/Дозвола и для удаления рейса, к которому был привязан
 // документ — раньше удаление рейса возвращало ТИР/Дозвол в статус "Свободен", но забывало
@@ -6411,11 +6434,18 @@ async function saveFleetEdit(){
       contract_end: document.getElementById('fe-contract').value || null,
       note: document.getElementById('fe-note').value || '',
     };
-    const { error } = await sbClient.from('fleet').update(updates).eq('id', f.id);
-    if (error) { alert('Не удалось сохранить изменения: '+error.message); return; }
-    f.kontragentId=updates.kontragent_id; f.label=updates.label; f.truckId=updates.truck_id||'';
-    f.trailerId=updates.trailer_id||''; f.driverId=updates.driver_id||''; f.plan=updates.plan;
-    f.planType=updates.plan_type; f.contract_end=updates.contract_end||''; f.note=updates.note;
+    const doSave=async ()=>{
+      const { error } = await sbClient.from('fleet').update(updates).eq('id', f.id);
+      if (error) { alert('Не удалось сохранить изменения: '+error.message); return; }
+      f.kontragentId=updates.kontragent_id; f.label=updates.label; f.truckId=updates.truck_id||'';
+      f.trailerId=updates.trailer_id||''; f.driverId=updates.driver_id||''; f.plan=updates.plan;
+      f.planType=updates.plan_type; f.contract_end=updates.contract_end||''; f.note=updates.note;
+      closeModal('modal-edit-fleet'); renderFleet(); toast('Карточка обновлена');
+    };
+    const warning=transportConflictWarning(updates.truck_id, updates.trailer_id, f.id);
+    if(warning) showConfirm('⚠️ Транспорт уже используется', warning, 'Да, сохранить всё равно', doSave);
+    else await doSave();
+    return;
   }
   closeModal('modal-edit-fleet'); renderFleet(); toast('Карточка обновлена');
 }
@@ -6446,11 +6476,16 @@ async function _saveFleetImpl(){
     contract_end: contract_end||null, balance:0, active:true,
     note: document.getElementById('af-note').value||'', ops:[],
   };
-  const { data, error } = await sbClient.from('fleet').insert(record).select().single();
-  if (error) { alert('Не удалось добавить единицу ПС: '+error.message); return; }
-  FLEET.push(mapFleetFromDb(data));
-  closeModal('modal-add-fleet');
-  toast('Добавлена единица ПС: '+label+' → '+kg.name); renderFleet();
+  const doSave=async ()=>{
+    const { data, error } = await sbClient.from('fleet').insert(record).select().single();
+    if (error) { alert('Не удалось добавить единицу ПС: '+error.message); return; }
+    FLEET.push(mapFleetFromDb(data));
+    closeModal('modal-add-fleet');
+    toast('Добавлена единица ПС: '+label+' → '+kg.name); renderFleet();
+  };
+  const warning=transportConflictWarning(truckId, trailerId, null);
+  if(warning) showConfirm('⚠️ Транспорт уже используется', warning, 'Да, сохранить всё равно', doSave);
+  else await doSave();
 }
 
 // KONTRAGENT
