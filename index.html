@@ -742,7 +742,6 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
         <option value="inactive">Неактивные</option>
       </select>
     </div>
-    <div id="fleet-summary" class="balance-summary"></div>
     <div id="fleet-container"></div>
   </div>
 
@@ -5580,14 +5579,11 @@ function renderFleet(){
   // баланс/долг смотреть в Контрагенты → Акт сверки.
   const tenantCount=FLEET.filter(f=>getFleetKontragent(f).type==='tenant').length;
   const mmCount=FLEET.filter(f=>getFleetKontragent(f).type==='mm').length;
-  const fs=document.getElementById('fleet-summary');
-  if(fs) fs.innerHTML=`
-    <div class="bs-card"><div class="bsl">Всего единиц</div><div class="bsv blue">${FLEET.length}</div></div>
-    <div class="bs-card"><div class="bsl">Арендаторы</div><div class="bsv">${tenantCount}</div></div>
-    <div class="bs-card"><div class="bsl">Собственники</div><div class="bsv">${mmCount}</div></div>`;
-
+  // Раньше здесь были большие плашки-счётчики (.bs-card) — занимали слишком много места
+  // по сравнению с компактной строкой-сводкой в ТИР/Дозвол/Рейсах. Свели к тому же
+  // формату — одна маленькая строка в шапке страницы (решение пользователя 2026-07-22).
   const sub=document.getElementById('fleet-sub');
-  if(sub) sub.textContent=`${data.length} из ${FLEET.length}`;
+  if(sub) sub.textContent=`Показано: ${data.length} из ${FLEET.length} · Арендаторов: ${tenantCount} · Собственников: ${mmCount}`;
 
   const cont=document.getElementById('fleet-container');
   if(fleetView==='card'){
