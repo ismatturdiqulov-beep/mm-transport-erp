@@ -3902,8 +3902,13 @@ function populateModal(id) {
   }
   if(id==='modal-add-person'){
     const kgLink=document.getElementById('ap-kontragent-link');
+    // Раньше метка типа различала только mm/tenant, всё остальное (client/service/
+    // other/hired_driver) всегда показывало "Проч." независимо от реального типа —
+    // из-за этого казалось, что смена типа на "Наёмный водитель" не сохраняется,
+    // хотя на самом деле сохранялась, просто эта метка её не отражала. Баг найден
+    // пользователем 2026-07-22.
     if(kgLink) kgLink.innerHTML='<option value="">— Не связывать —</option>'+
-      KONTRAGENTY.filter(k=>k.active!==false).map(k=>`<option value="${k.id}">${k.name} (${k.type==='mm'?'ММ':k.type==='tenant'?'Аренд.':'Проч.'})</option>`).join('');
+      KONTRAGENTY.filter(k=>k.active!==false).map(k=>`<option value="${k.id}">${k.name} (${KT_TYPE_LABEL[k.type]||k.type})</option>`).join('');
   }
   if(id==='modal-mintrans-registry') populateMintransRegistry();
   if(id==='modal-asmaf-registry') populateAsmafRegistry();
