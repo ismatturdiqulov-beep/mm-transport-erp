@@ -578,30 +578,32 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
       <div>
         <h2>ТИР Карнет (Книжки МДП)</h2>
         <div class="ph-sub" id="tir-sub"></div>
-        <div style="display:flex;gap:6px;margin-top:6px;">
-          <button id="tir-tab-active" class="btn primary" onclick="switchTirTab('active')" style="font-size:12px;padding:4px 12px;">Активные</button>
-          <button id="tir-tab-used" class="btn" onclick="switchTirTab('used')" style="font-size:12px;padding:4px 12px;">Использованные</button>
-          <button id="tir-tab-archive" class="btn" onclick="switchTirTab('archive')" style="font-size:12px;padding:4px 12px;">📦 Архив (сдан в АСМАП)</button>
-        </div>
       </div>
       <div style="display:flex;gap:8px;">
         <button class="btn primary" onclick="openModal('modal-new-tir')">+ Получить новый ТИР</button>
         <button class="btn" onclick="openModal('modal-asmaf-registry')">📋 Сдать в АСМАП (реестр)</button>
       </div>
     </div>
-    <div class="filter-bar">
-      <input type="text" placeholder="Поиск по номеру, водителю..." id="tir-search" oninput="renderTir()">
-      <select onchange="renderTir()" id="tir-f-status">
-        <option value="">Все</option>
-        <option value="active">На руках</option>
-        <option value="free">Свободна</option>
-        <option value="expired">Просрочена</option>
-      </select>
-      <select onchange="renderTir()" id="tir-f-type">
-        <option value="">Все типы</option>
-      </select>
-      <select onchange="renderTir()" id="tir-f-year"><option value="">Все годы</option></select>
-      <button class="btn" onclick="printYearRegistry('tir')">🖨 Реестр за год</button>
+    <div class="filter-bar" style="justify-content:space-between;">
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">
+        <button id="tir-tab-active" class="btn primary" onclick="switchTirTab('active')" style="font-size:12px;padding:4px 12px;">Активные</button>
+        <button id="tir-tab-used" class="btn" onclick="switchTirTab('used')" style="font-size:12px;padding:4px 12px;">Использованные</button>
+        <button id="tir-tab-archive" class="btn" onclick="switchTirTab('archive')" style="font-size:12px;padding:4px 12px;">📦 Архив (сдан в АСМАП)</button>
+      </div>
+      <div style="display:flex;gap:7px;flex-wrap:wrap;">
+        <input type="text" placeholder="Поиск по номеру, водителю..." id="tir-search" oninput="renderTir()">
+        <select onchange="renderTir()" id="tir-f-status">
+          <option value="">Все</option>
+          <option value="active">На руках</option>
+          <option value="free">Свободна</option>
+          <option value="expired">Просрочена</option>
+        </select>
+        <select onchange="renderTir()" id="tir-f-type">
+          <option value="">Все типы</option>
+        </select>
+        <select onchange="renderTir()" id="tir-f-year"><option value="">Все годы</option></select>
+        <button class="btn" onclick="printYearRegistry('tir')">🖨 Реестр за год</button>
+      </div>
     </div>
     <div class="section">
       <table class="tbl">
@@ -620,33 +622,35 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
       <div>
         <h2>Дозволы</h2>
         <div class="ph-sub" id="dozv-sub"></div>
-        <div style="display:flex;gap:6px;margin-top:6px;">
-          <button id="dozv-tab-active" class="btn primary" onclick="switchDozvTab('active')" style="font-size:12px;padding:4px 12px;">Активные</button>
-          <button id="dozv-tab-used" class="btn" onclick="switchDozvTab('used')" style="font-size:12px;padding:4px 12px;">Использованные</button>
-          <button id="dozv-tab-archive" class="btn" onclick="switchDozvTab('archive')" style="font-size:12px;padding:4px 12px;">📦 Архив (сдан/закрыт)</button>
-        </div>
       </div>
       <div style="display:flex;gap:8px;">
         <button class="btn primary" onclick="openModal('modal-new-dozv')">+ Получить новый дозвол</button>
         <button class="btn" onclick="openModal('modal-mintrans-registry')">📋 Сдать в МИНТРАНС (реестр)</button>
       </div>
     </div>
-    <div class="filter-bar">
-      <input type="text" placeholder="Поиск..." id="dozv-search" oninput="renderDozv()">
-      <select onchange="renderDozv()" id="dozv-f-country"><option value="">Все страны</option></select>
-      <select onchange="renderDozv()" id="dozv-f-type">
-        <option value="">Все типы</option>
-        <option value="epermit">Е-ПЕРМИТ (эл.)</option>
-        <option value="paper">Бумажный</option>
-      </select>
-      <select onchange="renderDozv()" id="dozv-f-status">
-        <option value="">Все</option>
-        <option value="active">На руках</option>
-        <option value="free">Свободен</option>
-        <option value="expired">Просрочен ⚠️</option>
-      </select>
-      <select onchange="renderDozv()" id="dozv-f-year"><option value="">Все годы</option></select>
-      <button class="btn" onclick="printYearRegistry('dozv')">🖨 Реестр за год</button>
+    <div class="filter-bar" style="justify-content:space-between;">
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">
+        <button id="dozv-tab-active" class="btn primary" onclick="switchDozvTab('active')" style="font-size:12px;padding:4px 12px;">Активные</button>
+        <button id="dozv-tab-used" class="btn" onclick="switchDozvTab('used')" style="font-size:12px;padding:4px 12px;">Использованные</button>
+        <button id="dozv-tab-archive" class="btn" onclick="switchDozvTab('archive')" style="font-size:12px;padding:4px 12px;">📦 Архив (сдан/закрыт)</button>
+      </div>
+      <div style="display:flex;gap:7px;flex-wrap:wrap;">
+        <input type="text" placeholder="Поиск..." id="dozv-search" oninput="renderDozv()">
+        <select onchange="renderDozv()" id="dozv-f-country"><option value="">Все страны</option></select>
+        <select onchange="renderDozv()" id="dozv-f-type">
+          <option value="">Все типы</option>
+          <option value="epermit">Е-ПЕРМИТ (эл.)</option>
+          <option value="paper">Бумажный</option>
+        </select>
+        <select onchange="renderDozv()" id="dozv-f-status">
+          <option value="">Все</option>
+          <option value="active">На руках</option>
+          <option value="free">Свободен</option>
+          <option value="expired">Просрочен ⚠️</option>
+        </select>
+        <select onchange="renderDozv()" id="dozv-f-year"><option value="">Все годы</option></select>
+        <button class="btn" onclick="printYearRegistry('dozv')">🖨 Реестр за год</button>
+      </div>
     </div>
     <div class="section">
       <table class="tbl">
