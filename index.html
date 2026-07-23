@@ -302,6 +302,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
   <div class="nav">
     <div class="nav-lbl">Главное</div>
     <div class="nav-item active" onclick="showPage('dashboard')"><span class="ico">⬛</span><span>Дашборд</span></div>
+    <div class="nav-item" onclick="showPage('deadlines')"><span class="ico">📅</span><span>Сроки</span></div>
     <div class="nav-item" onclick="showPage('driver-messages')"><span class="ico">💬</span><span>Диалоги</span><span id="dm-badge" style="display:none;background:var(--red);color:#fff;border-radius:10px;font-size:10px;font-weight:700;padding:1px 6px;margin-left:auto;"></span></div>
     <div class="nav-item" onclick="showPage('settings')"><span class="ico">⚙️</span><span>Настройки цен</span></div>
     <div class="nav-lbl">Документы</div>
@@ -404,6 +405,15 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
       <table class="tbl"><thead><tr><th>Клиент</th><th>Рейсов</th><th>Выставлено</th><th>Оплачено</th><th>Долг</th></tr></thead>
       <tbody id="dash-clients-rank"></tbody></table>
     </div>
+  </div>
+
+  <!-- ===== СРОКИ ===== -->
+  <div class="page" id="page-deadlines">
+    <div class="page-hdr">
+      <div><h2>Сроки</h2><div class="ph-sub">Документы транспорта и водителей — 3 ближайших срока по каждому типу. ТИР и Дозвол смотрите в своих разделах.</div></div>
+    </div>
+    <div id="deadlines-overdue"></div>
+    <div id="deadlines-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;"></div>
   </div>
 
   <!-- ===== SETTINGS ===== -->
@@ -3810,7 +3820,7 @@ function showPage(id) {
   document.getElementById('page-'+id).classList.add('active');
   const nav=document.querySelector(`.nav-item[onclick="showPage('${id}')"]`);
   if(nav) nav.classList.add('active');
-  const titles={dashboard:'Дашборд',settings:'Настройки цен',tir:'ТИР Карнет',dozvol:'Дозволы',tenants:'Контрагенты',kassa:'Касса',fleet:'Подвижной состав',trips:'Рейсы',people:'Водители',transport:'Транспорт',maintenance:'ТО и Ремонты',waybills:'Путёвки',poa:'Доверенности',labor:'Трудовые договоры',finance:'История операций',reports:'Отчёты','driver-messages':'Диалоги'};
+  const titles={dashboard:'Дашборд',deadlines:'Сроки',settings:'Настройки цен',tir:'ТИР Карнет',dozvol:'Дозволы',tenants:'Контрагенты',kassa:'Касса',fleet:'Подвижной состав',trips:'Рейсы',people:'Водители',transport:'Транспорт',maintenance:'ТО и Ремонты',waybills:'Путёвки',poa:'Доверенности',labor:'Трудовые договоры',finance:'История операций',reports:'Отчёты','driver-messages':'Диалоги'};
   document.getElementById('pageTitle').textContent=titles[id]||'';
   renderPage(id);
 }
@@ -5148,7 +5158,7 @@ function deleteDozCountry(id){ if(!confirm('Удалить страну?')) retu
 
 // ============ RENDER FUNCTIONS ============
 function renderPage(id){
-  const map={dashboard:renderDashboard,settings:renderSettings,tir:renderTir,dozvol:renderDozv,tenants:renderTenants,kassa:renderKassa,fleet:renderFleet,trips:renderTrips,people:renderPeople,transport:renderTransport,maintenance:renderMaintenance,waybills:renderWaybills,poa:renderPoa,labor:renderLabor,finance:renderFinance,reports:renderReports,'driver-messages':renderDriverMessages};
+  const map={dashboard:renderDashboard,deadlines:renderDeadlines,settings:renderSettings,tir:renderTir,dozvol:renderDozv,tenants:renderTenants,kassa:renderKassa,fleet:renderFleet,trips:renderTrips,people:renderPeople,transport:renderTransport,maintenance:renderMaintenance,waybills:renderWaybills,poa:renderPoa,labor:renderLabor,finance:renderFinance,reports:renderReports,'driver-messages':renderDriverMessages};
   if(map[id]) map[id]();
 }
 
@@ -9173,6 +9183,72 @@ function getDocAlerts(){
     check('Паспорт гражданина',d.pass?.to,p.name,'driver');
   });
   return alerts.sort((a,b)=>new Date(a.date)-new Date(b.date));
+}
+
+// ============ СРОКИ (страница) ============
+// ТИР/Дозвол намеренно не входят — для них уже есть отдельные разделы со своим
+// отслеживанием сроков. Здесь — то, что раньше нигде не показывалось вообще:
+// документы транспорта и личные документы водителей (решение пользователя 2026-07-23).
+const DEADLINE_TYPE_LABELS = {
+  t_lic:'Лицензия транспорта', t_svid:'Свидетельство о допущении', t_tech:'Техосмотр',
+  t_dopog:'ДОПОГ транспорта', t_osago:'ОСАГО', t_techpass:'Техпаспорт', t_rent:'Договор аренды',
+  p_pass:'Паспорт водителя', p_inter:'Загранпаспорт', p_lic:'Водительские права',
+  p_mnp:'Медсправка (МНП)', p_tacho:'Карта тахографа', p_adr:'Карта АДР',
+};
+function getDeadlinesByType(){
+  const byType={};
+  Object.keys(DEADLINE_TYPE_LABELS).forEach(k=>byType[k]=[]);
+  const push=(key,name,date)=>{ if(date) byType[key].push({name,date,daysLeft:daysDiff(date,todayStr)}); };
+  TRANSPORT.filter(t=>t.active!==false).forEach(t=>{
+    const d=t.docs||{};
+    const n=t.callsign+(t.plate?' ('+t.plate+')':'');
+    push('t_lic', n, d.lic?.to);
+    push('t_svid', n, d.svid?.to);
+    push('t_tech', n, d.tech?.to);
+    push('t_dopog', n, d.dopog?.to);
+    (d.osago||[]).forEach(o=>{ if(o.to) push('t_osago', n+(o.country?' ('+o.country+')':''), o.to); });
+    push('t_techpass', n, t.techpass);
+    if(t.owner==='Аренда') push('t_rent', n, t.contract_end);
+  });
+  PEOPLE.filter(p=>p.active!==false).forEach(p=>{
+    const d=p.docs||{};
+    push('p_pass', p.name, d.pass?.to);
+    push('p_inter', p.name, d.inter?.to);
+    push('p_lic', p.name, d.lic?.to);
+    push('p_mnp', p.name, d.mnp?.to);
+    push('p_tacho', p.name, d.tacho?.to);
+    push('p_adr', p.name, d.adr?.to);
+  });
+  Object.keys(byType).forEach(k=>byType[k].sort((a,b)=>new Date(a.date)-new Date(b.date)));
+  return byType;
+}
+function deadlineColor(daysLeft){ return daysLeft<0?'red':daysLeft<=7?'red':daysLeft<=30?'amber':'gray'; }
+function renderDeadlines(){
+  const byType=getDeadlinesByType();
+  const overdueEl=document.getElementById('deadlines-overdue');
+  const gridEl=document.getElementById('deadlines-grid');
+  if(!overdueEl||!gridEl) return;
+
+  const overdue=[];
+  Object.entries(byType).forEach(([key,items])=>{
+    items.filter(i=>i.daysLeft<0).forEach(i=>overdue.push({...i, label:DEADLINE_TYPE_LABELS[key]}));
+  });
+  overdue.sort((a,b)=>a.daysLeft-b.daysLeft);
+  overdueEl.innerHTML = overdue.length ? `<div class="section" style="padding:14px;margin-bottom:14px;border-left:3px solid var(--red);">
+    <div style="font-weight:600;color:var(--red);margin-bottom:8px;">🚨 Просрочено (${overdue.length})</div>
+    ${overdue.map(i=>`<div style="font-size:12.5px;margin-bottom:4px;">${i.label} — <b>${i.name}</b>: ${fmt(i.date)} (${Math.abs(i.daysLeft)} дн. назад)</div>`).join('')}
+  </div>` : '';
+
+  gridEl.innerHTML = Object.keys(DEADLINE_TYPE_LABELS).map(key=>{
+    const items=byType[key].filter(i=>i.daysLeft>=0).slice(0,3);
+    return `<div class="section" style="padding:12px 14px;">
+      <div style="font-size:12px;font-weight:600;color:var(--text3);margin-bottom:8px;">${DEADLINE_TYPE_LABELS[key]}</div>
+      ${items.length ? items.map(i=>`<div style="display:flex;justify-content:space-between;gap:8px;font-size:12.5px;margin-bottom:5px;">
+          <span>${i.name}</span>
+          <span class="tag ${deadlineColor(i.daysLeft)}" style="white-space:nowrap;">${fmt(i.date)} · ${i.daysLeft} дн.</span>
+        </div>`).join('') : '<div style="font-size:12px;color:var(--text3);">Нет данных</div>'}
+    </div>`;
+  }).join('');
 }
 
 function toggleSection(id){
