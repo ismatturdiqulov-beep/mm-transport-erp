@@ -1835,7 +1835,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
     <div class="modal-head"><h3 id="kop-title">Операция</h3><span class="modal-close" onclick="closeModal('modal-kontragent-op')">×</span></div>
     <div class="modal-body">
       <div class="form-row"><label>Тип операции *</label>
-        <select id="kop-type">
+        <select id="kop-type" onchange="toggleKopWallet()">
           <option value="charge">Начисление</option>
           <option value="income">Приход</option>
         </select>
@@ -1844,6 +1844,11 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
         <div class="form-row"><label>Сумма (сум) *</label><input type="text" inputmode="numeric" class="fmt-money" id="kop-amount"></div>
         <div class="form-row"><label>Дата</label><input type="date" id="kop-date"></div>
       </div>
+      <!-- Приход раньше не попадал в Кассу — деньги учитывались только в балансе
+           контрагента, реальный остаток по кошелькам не менялся (баг найден
+           пользователем 2026-07-23). Начисление кассу не трогает — это просто счёт,
+           а не реальное движение денег. -->
+      <div class="form-row" id="kop-wallet-row" style="display:none;"><label>Куда зачислить (кошелёк) *</label><select id="kop-wallet"></select></div>
       <div class="form-row"><label>Описание</label><input type="text" id="kop-desc" placeholder="За что..."></div>
     </div>
     <div class="modal-foot">
@@ -6568,6 +6573,11 @@ async function _saveKontragentImpl(){
 }
 
 
+function toggleKopWallet(){
+  const type=document.getElementById('kop-type')?.value;
+  const row=document.getElementById('kop-wallet-row');
+  if(row) row.style.display = type==='income' ? 'block' : 'none';
+}
 function openKontragentOp(id){
   _kopId=id;
   const k=KONTRAGENTY.find(x=>x.id===id);
@@ -6576,6 +6586,8 @@ function openKontragentOp(id){
   document.getElementById('kop-date').value=todayStr;
   document.getElementById('kop-amount').value='';
   document.getElementById('kop-desc').value='';
+  document.getElementById('kop-type').value='charge';
+  toggleKopWallet();
   openModal('modal-kontragent-op');
 }
 
@@ -6586,24 +6598,37 @@ async function _saveKontragentOpImpl(){
   const opType=document.getElementById('kop-type').value; // 'charge' | 'income'
   const date=document.getElementById('kop-date').value||todayStr;
   const desc=document.getElementById('kop-desc').value;
+  const isIncome=opType==='income';
+  const wallet=document.getElementById('kop-wallet')?.value||'cash';
+  if(isIncome && !wallet){alert('Выберите кошелёк');return;}
   // Раньше писало в kontragenty.ops — отдельное, никем не читаемое поле (Акт сверки и
   // баланс контрагента берут данные из finance, см. renderAktSverki/printAktSverki).
   // Из-за этого "Приход"/"Начисление" через эту кнопку никогда не попадали в акт сверки —
   // баг найден пользователем 2026-07-20. Теперь пишем туда же, куда и остальные операции.
-  const isIncome=opType==='income';
+  // Отдельный баг найден пользователем 2026-07-23: "Приход" вообще не зачислялся в Кассу
+  // (баланс контрагента рос, а реальный остаток по кошелькам — нет) — теперь пишем и
+  // туда тоже, как это уже делает "+Приход" на странице Расчёты/Касса.
   const financeRecord={
     company_id:CURRENT_PROFILE.company_id, date, fleet_id:null, kontragent_id:k.id, person_name:k.name,
     type:isIncome?'payment':'charge', category:'manual', description:desc,
-    amount:isIncome?0:amount, paid:isIncome?amount:0,
+    amount:isIncome?0:amount, paid:isIncome?amount:0, wallet:isIncome?wallet:null,
   };
   const { data, error } = await sbClient.from('finance').insert(financeRecord).select().single();
   if (error) { alert('Не удалось сохранить операцию: '+error.message); return; }
   FINANCE.push(mapFinanceFromDb(data));
+  if(isIncome){
+    const { data:kData, error:kErr } = await sbClient.from('kassa').insert({
+      company_id:CURRENT_PROFILE.company_id, wallet, type:'income', date, category:'manual',
+      from_name:k.name, description:desc||('Приход от '+k.name), amount, finance_id:data.id,
+    }).select().single();
+    if (kErr) { alert('Операция сохранена в балансе, но не удалось зачислить в кассу: '+kErr.message); }
+    else KASSA.push(mapKassaFromDb(kData));
+  }
   notifyKontragent(k.id, (isIncome
     ? `✅ Учтён ваш приход: ${fmtN(amount)} сум${desc?' ('+desc+')':''}.`
     : `💸 Вам начислено: ${fmtN(amount)} сум${desc?' ('+desc+')':''}.`) + `\n💰 ${kgBalanceLine(k.id)}`);
   closeModal('modal-kontragent-op');
-  toast('Операция сохранена'); renderTenants();
+  toast('Операция сохранена'); renderTenants(); renderKassa();
 }
 
 let _aktKgId=null;
@@ -11623,6 +11648,7 @@ function refreshWalletSelects(){
     'kt-to':            'bank',
     'nt-buy-wallet':    'bank',
     'nd-buy-wallet':    'bank',
+    'kop-wallet':       'cash',
   };
   Object.entries(selects).forEach(([id, def])=>{
     const el = document.getElementById(id); if(!el) return;
