@@ -308,6 +308,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
     <div class="nav-lbl">Документы</div>
     <div class="nav-item" onclick="showPage('tir')"><span class="ico">📋</span><span>ТИР Карнет</span></div>
     <div class="nav-item" onclick="showPage('dozvol')"><span class="ico">📄</span><span>Дозволы</span></div>
+    <div class="nav-item" onclick="showPage('documents')"><span class="ico">🗂</span><span>Документы к рейсу</span></div>
     <div class="nav-lbl">Люди и машины</div>
     <div class="nav-item" onclick="showPage('fleet')"><span class="ico">🚛</span><span>Подвижной состав</span></div>
     <div class="nav-item" onclick="showPage('trips')"><span class="ico">🗺️</span><span>Рейсы</span></div>
@@ -319,10 +320,6 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
     <div class="nav-item" onclick="showPage('tenants')"><span class="ico">💳</span><span>Контрагенты</span></div>
     <div class="nav-item" onclick="showPage('finance')"><span class="ico">💰</span><span>История операций</span></div>
     <div class="nav-item" onclick="showPage('reports')"><span class="ico">📊</span><span>Отчёты / Экспорт</span></div>
-    <div class="nav-lbl">Документооборот</div>
-    <div class="nav-item" onclick="showPage('waybills')"><span class="ico">🗺</span><span>Путёвки</span></div>
-    <div class="nav-item" onclick="showPage('poa')"><span class="ico">📝</span><span>Доверенности</span></div>
-    <div class="nav-item" onclick="showPage('labor')"><span class="ico">📃</span><span>Труд. договоры</span></div>
   </div>
   <div class="sidebar-bottom">
     <div id="current-user-email" style="margin-bottom:4px;word-break:break-all;"></div>
@@ -818,45 +815,50 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
     <div id="transport-container"></div>
   </div>
 
-  <!-- ===== WAYBILLS ===== -->
-  <div class="page" id="page-waybills">
+  <!-- ===== ДОКУМЕНТЫ К РЕЙСУ (Путёвки/Доверенности/Труд.договоры объединены,
+       решение пользователя 2026-07-23 — раньше были тремя отдельными пунктами меню) ===== -->
+  <div class="page" id="page-documents">
     <div class="page-hdr">
       <div>
-        <h2>Путёвки</h2>
+        <h2>Документы к рейсу</h2>
         <div style="display:flex;gap:6px;margin-top:6px;">
-          <button id="wb-tab-hyt" class="btn primary" onclick="switchWaybillTab('hyt')" style="font-size:12px;padding:4px 12px;">ХЮТ</button>
-          <button id="wb-tab-shyt" class="btn" onclick="switchWaybillTab('shyt')" style="font-size:12px;padding:4px 12px;">ШЮТ</button>
+          <button id="docs-tab-waybills" class="btn primary" onclick="switchDocsTab('waybills')" style="font-size:12px;padding:4px 12px;">Путёвки</button>
+          <button id="docs-tab-poa" class="btn" onclick="switchDocsTab('poa')" style="font-size:12px;padding:4px 12px;">Доверенности</button>
+          <button id="docs-tab-labor" class="btn" onclick="switchDocsTab('labor')" style="font-size:12px;padding:4px 12px;">Трудовые договоры</button>
         </div>
       </div>
-      <button class="btn primary" onclick="openWaybillModal()">+ Новая путёвка</button>
+      <button id="docs-add-btn" class="btn primary" onclick="openWaybillModal()">+ Новая путёвка</button>
     </div>
-    <div class="section">
-      <table class="tbl">
-        <thead><tr><th>№</th><th>Дата</th><th>Тягач</th><th>Прицеп</th><th>Водитель 1</th><th>Водитель 2</th><th>Срок дн.</th><th>Срок до</th><th></th></tr></thead>
-        <tbody id="waybills-tbody"></tbody>
-      </table>
-    </div>
-  </div>
 
-  <!-- ===== POA ===== -->
-  <div class="page" id="page-poa">
-    <div class="page-hdr"><div><h2>Доверенности</h2></div><button class="btn primary" onclick="openPoaModal()">+ Новая</button></div>
-    <div class="section">
-      <table class="tbl">
-        <thead><tr><th>№</th><th>Тип</th><th>Дата</th><th>ФИО</th><th>Паспорт</th><th>Принят</th><th>Срок до</th><th>Статус</th><th></th></tr></thead>
-        <tbody id="poa-tbody"></tbody>
-      </table>
+    <div id="docs-panel-waybills">
+      <div style="display:flex;gap:6px;margin-bottom:10px;">
+        <button id="wb-tab-hyt" class="btn primary" onclick="switchWaybillTab('hyt')" style="font-size:12px;padding:4px 12px;">ХЮТ</button>
+        <button id="wb-tab-shyt" class="btn" onclick="switchWaybillTab('shyt')" style="font-size:12px;padding:4px 12px;">ШЮТ</button>
+      </div>
+      <div class="section">
+        <table class="tbl">
+          <thead><tr><th>№</th><th>Дата</th><th>Тягач</th><th>Прицеп</th><th>Водитель 1</th><th>Водитель 2</th><th>Срок дн.</th><th>Срок до</th><th></th></tr></thead>
+          <tbody id="waybills-tbody"></tbody>
+        </table>
+      </div>
     </div>
-  </div>
 
-  <!-- ===== LABOR ===== -->
-  <div class="page" id="page-labor">
-    <div class="page-hdr"><div><h2>Трудовые договоры</h2></div><button class="btn primary" onclick="openLaborModal()">+ Новый</button></div>
-    <div class="section">
-      <table class="tbl">
-        <thead><tr><th>№</th><th>Дата</th><th>ФИО</th><th>Срок дн.</th><th>Срок до</th><th>Паспорт</th><th>Адрес</th><th>Статус</th><th></th></tr></thead>
-        <tbody id="labor-tbody"></tbody>
-      </table>
+    <div id="docs-panel-poa" style="display:none;">
+      <div class="section">
+        <table class="tbl">
+          <thead><tr><th>№</th><th>Тип</th><th>Дата</th><th>ФИО</th><th>Паспорт</th><th>Принят</th><th>Срок до</th><th>Статус</th><th></th></tr></thead>
+          <tbody id="poa-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="docs-panel-labor" style="display:none;">
+      <div class="section">
+        <table class="tbl">
+          <thead><tr><th>№</th><th>Дата</th><th>ФИО</th><th>Срок дн.</th><th>Срок до</th><th>Паспорт</th><th>Адрес</th><th>Статус</th><th></th></tr></thead>
+          <tbody id="labor-tbody"></tbody>
+        </table>
+      </div>
     </div>
   </div>
 
@@ -3820,7 +3822,7 @@ function showPage(id) {
   document.getElementById('page-'+id).classList.add('active');
   const nav=document.querySelector(`.nav-item[onclick="showPage('${id}')"]`);
   if(nav) nav.classList.add('active');
-  const titles={dashboard:'Дашборд',deadlines:'Сроки',settings:'Настройки цен',tir:'ТИР Карнет',dozvol:'Дозволы',tenants:'Контрагенты',kassa:'Касса',fleet:'Подвижной состав',trips:'Рейсы',people:'Водители',transport:'Транспорт',maintenance:'ТО и Ремонты',waybills:'Путёвки',poa:'Доверенности',labor:'Трудовые договоры',finance:'История операций',reports:'Отчёты','driver-messages':'Диалоги'};
+  const titles={dashboard:'Дашборд',deadlines:'Сроки',settings:'Настройки цен',tir:'ТИР Карнет',dozvol:'Дозволы',documents:'Документы к рейсу',tenants:'Контрагенты',kassa:'Касса',fleet:'Подвижной состав',trips:'Рейсы',people:'Водители',transport:'Транспорт',maintenance:'ТО и Ремонты',finance:'История операций',reports:'Отчёты','driver-messages':'Диалоги'};
   document.getElementById('pageTitle').textContent=titles[id]||'';
   renderPage(id);
 }
@@ -5158,7 +5160,7 @@ function deleteDozCountry(id){ if(!confirm('Удалить страну?')) retu
 
 // ============ RENDER FUNCTIONS ============
 function renderPage(id){
-  const map={dashboard:renderDashboard,deadlines:renderDeadlines,settings:renderSettings,tir:renderTir,dozvol:renderDozv,tenants:renderTenants,kassa:renderKassa,fleet:renderFleet,trips:renderTrips,people:renderPeople,transport:renderTransport,maintenance:renderMaintenance,waybills:renderWaybills,poa:renderPoa,labor:renderLabor,finance:renderFinance,reports:renderReports,'driver-messages':renderDriverMessages};
+  const map={dashboard:renderDashboard,deadlines:renderDeadlines,settings:renderSettings,tir:renderTir,dozvol:renderDozv,documents:renderDocumentsPage,tenants:renderTenants,kassa:renderKassa,fleet:renderFleet,trips:renderTrips,people:renderPeople,transport:renderTransport,maintenance:renderMaintenance,finance:renderFinance,reports:renderReports,'driver-messages':renderDriverMessages};
   if(map[id]) map[id]();
 }
 
@@ -7780,6 +7782,35 @@ async function deleteKassaEntry(id){
 
 // WAYBILLS
 let waybillTab='hyt';
+// Путёвки/Доверенности/Трудовые договоры объединены в один раздел с вкладками
+// (решение пользователя 2026-07-23) — данные всех трёх уже в памяти, поэтому просто
+// обновляем все три таблицы при каждом заходе, а вкладками только переключаем, что
+// видно и какая кнопка "+Добавить" в шапке активна.
+let _docsTab='waybills';
+const DOCS_ADD_BTN={
+  waybills:{label:'+ Новая путёвка', onclick:"openWaybillModal()"},
+  poa:{label:'+ Новая', onclick:"openPoaModal()"},
+  labor:{label:'+ Новый', onclick:"openLaborModal()"},
+};
+function switchDocsTab(tab){
+  _docsTab=tab;
+  ['waybills','poa','labor'].forEach(t=>{
+    const btn=document.getElementById('docs-tab-'+t);
+    if(btn) btn.className=t===tab?'btn primary':'btn';
+    const panel=document.getElementById('docs-panel-'+t);
+    if(panel) panel.style.display=t===tab?'block':'none';
+  });
+  const addBtn=document.getElementById('docs-add-btn');
+  if(addBtn){
+    addBtn.textContent=DOCS_ADD_BTN[tab].label;
+    addBtn.setAttribute('onclick', DOCS_ADD_BTN[tab].onclick);
+  }
+}
+function renderDocumentsPage(){
+  renderWaybills();
+  renderPoa();
+  renderLabor();
+}
 function switchWaybillTab(tab){
   waybillTab=tab;
   const btnH=document.getElementById('wb-tab-hyt'), btnS=document.getElementById('wb-tab-shyt');
