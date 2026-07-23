@@ -9223,6 +9223,14 @@ function getDeadlinesByType(){
   return byType;
 }
 function deadlineColor(daysLeft){ return daysLeft<0?'red':daysLeft<=7?'red':daysLeft<=30?'amber':'gray'; }
+// По умолчанию карточка показывает 3 ближайших срока — но если нужно посмотреть все
+// (например, все лицензии), по ссылке карточка разворачивается на полный список.
+// Решение пользователя 2026-07-23.
+let _deadlinesExpanded=new Set();
+function toggleDeadlineExpand(key){
+  if(_deadlinesExpanded.has(key)) _deadlinesExpanded.delete(key); else _deadlinesExpanded.add(key);
+  renderDeadlines();
+}
 function renderDeadlines(){
   const byType=getDeadlinesByType();
   const overdueEl=document.getElementById('deadlines-overdue');
@@ -9240,13 +9248,19 @@ function renderDeadlines(){
   </div>` : '';
 
   gridEl.innerHTML = Object.keys(DEADLINE_TYPE_LABELS).map(key=>{
-    const items=byType[key].filter(i=>i.daysLeft>=0).slice(0,3);
+    const allItems=byType[key].filter(i=>i.daysLeft>=0);
+    const expanded=_deadlinesExpanded.has(key);
+    const items=expanded?allItems:allItems.slice(0,3);
+    const toggleLink = allItems.length>3
+      ? `<div style="margin-top:6px;"><a href="#" onclick="toggleDeadlineExpand('${key}');return false;" style="font-size:11px;color:var(--accent2);text-decoration:none;">${expanded?'Свернуть ↑':`Показать все (${allItems.length}) →`}</a></div>`
+      : '';
     return `<div class="section" style="padding:12px 14px;">
       <div style="font-size:12px;font-weight:600;color:var(--text3);margin-bottom:8px;">${DEADLINE_TYPE_LABELS[key]}</div>
       ${items.length ? items.map(i=>`<div style="display:flex;justify-content:space-between;gap:8px;font-size:12.5px;margin-bottom:5px;">
           <span>${i.name}</span>
           <span class="tag ${deadlineColor(i.daysLeft)}" style="white-space:nowrap;">${fmt(i.date)} · ${i.daysLeft} дн.</span>
         </div>`).join('') : '<div style="font-size:12px;color:var(--text3);">Нет данных</div>'}
+      ${toggleLink}
     </div>`;
   }).join('');
 }
