@@ -5537,6 +5537,15 @@ function renderTenants(){
     const tripCount = isClient ? TRIPS.filter(t=>(t.legs||[]).some(l=>l.clientId===k.id)).length : 0;
     const maintCount = isService ? MAINTENANCE.filter(m=>m.serviceId===k.id).length : 0;
     const contact = k.phone||k.email||'—';
+    // Метка подключения к Telegram-боту прямо в списке — раньше приходилось открывать
+    // карточку каждого контрагента по одному, чтобы узнать, кто подключён (решение
+    // пользователя 2026-07-23).
+    const tgLink = TELEGRAM_LINKS.find(l=>l.kontragentId===k.id && l.active);
+    const tgBadge = tgLink
+      ? (tgLink.telegramUserId
+          ? `<span class="tag green" style="font-size:9px;" title="Подключён к Telegram-боту${tgLink.telegramUsername?' (@'+tgLink.telegramUsername+')':''}">📱 Telegram</span>`
+          : `<span class="tag amber" style="font-size:9px;" title="Код выдан, ждём подключения">📱 код выдан</span>`)
+      : '';
 
     return `<tr${k.active===false?' style="opacity:.55;"':''}>
       <td>${i+1}</td>
@@ -5546,6 +5555,7 @@ function renderTenants(){
         ${k.short&&k.short!==k.name?`<br><span style="font-size:10px;color:var(--text3)">${k.short}</span>`:''}
         ${isClient&&tripCount>0?`<br><span style="font-size:10px;color:var(--text2)">Рейсов: ${tripCount}</span>`:''}
         ${isService&&maintCount>0?`<br><span style="font-size:10px;color:var(--text2)">ТО записей: ${maintCount}</span>`:''}
+        ${tgBadge?'<br>'+tgBadge:''}
       </td>
       <td style="font-size:11px">${contact}</td>
       <td>${col1}</td>
