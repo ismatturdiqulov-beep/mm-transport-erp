@@ -604,6 +604,12 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
           <option value="">Все типы</option>
         </select>
         <select onchange="renderTir()" id="tir-f-year"><option value="">Все годы</option></select>
+        <select onchange="renderTir()" id="tir-f-sort">
+          <option value="">Сортировка: по умолчанию</option>
+          <option value="received_desc">Дата получения (новые→старые)</option>
+          <option value="received_asc">Дата получения (старые→новые)</option>
+          <option value="vehicle">По машине (А-Я)</option>
+        </select>
         <button class="btn" onclick="printYearRegistry('tir')">🖨 Реестр за год</button>
       </div>
     </div>
@@ -651,6 +657,13 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
           <option value="expired">Просрочен ⚠️</option>
         </select>
         <select onchange="renderDozv()" id="dozv-f-year"><option value="">Все годы</option></select>
+        <select onchange="renderDozv()" id="dozv-f-sort">
+          <option value="">Сортировка: по умолчанию</option>
+          <option value="received_desc">Дата получения (новые→старые)</option>
+          <option value="received_asc">Дата получения (старые→новые)</option>
+          <option value="country">По стране (А-Я)</option>
+          <option value="vehicle">По машине (А-Я)</option>
+        </select>
         <button class="btn" onclick="printYearRegistry('dozv')">🖨 Реестр за год</button>
       </div>
     </div>
@@ -5347,6 +5360,11 @@ function renderTir(){
   // Ещё не переданные (свободные) — всегда в списке, независимо от выбранного года.
   if(fYear) data=data.filter(t=>!t.transferred || new Date(t.transferred).getFullYear()===parseInt(fYear));
 
+  const sortBy=(document.getElementById('tir-f-sort')||{}).value||'';
+  if(sortBy==='received_desc') data=[...data].sort((a,b)=>new Date(b.received||0)-new Date(a.received||0));
+  else if(sortBy==='received_asc') data=[...data].sort((a,b)=>new Date(a.received||0)-new Date(b.received||0));
+  else if(sortBy==='vehicle') data=[...data].sort((a,b)=>(a.plate||'').localeCompare(b.plate||''));
+
   const sub=document.getElementById('tir-sub');
   if(sub) sub.textContent=`Всего: ${TIRS.length} | На руках: ${TIRS.filter(t=>tirGetState(t)==='issued').length} | Использовано: ${TIRS.filter(t=>tirGetState(t)==='office'&&t.used===true).length} | В АСМАП: ${TIRS.filter(t=>tirGetState(t)==='asmaf').length}`;
 
@@ -5407,6 +5425,12 @@ function renderDozv(){
   else if(fS==='expired') data=data.filter(d=>!d.epermit&&isExp(d.expires)&&dozGetState(d)!=='mintrans');
   // Отчётный период дозвола — дата получения от МИНТРАНСА (у дозвола она есть всегда).
   if(fYear) data=data.filter(d=>d.received && new Date(d.received).getFullYear()===parseInt(fYear));
+
+  const sortBy=(document.getElementById('dozv-f-sort')||{}).value||'';
+  if(sortBy==='received_desc') data=[...data].sort((a,b)=>new Date(b.received||0)-new Date(a.received||0));
+  else if(sortBy==='received_asc') data=[...data].sort((a,b)=>new Date(a.received||0)-new Date(b.received||0));
+  else if(sortBy==='country') data=[...data].sort((a,b)=>(a.country||'').localeCompare(b.country||''));
+  else if(sortBy==='vehicle') data=[...data].sort((a,b)=>(a.plate||'').localeCompare(b.plate||''));
 
   const sub=document.getElementById('dozv-sub');
   if(sub) sub.textContent=`Всего: ${DOZV.length} | На руках: ${DOZV.filter(d=>dozGetState(d)==='issued').length} | Использовано: ${DOZV.filter(d=>dozGetState(d)==='office'&&d.used===true).length} | Закрыто: ${DOZV.filter(d=>dozGetState(d)==='mintrans'||dozGetState(d)==='closed').length} | Бумажных ⚠️: ${DOZV.filter(d=>!d.epermit&&isExp(d.expires)&&dozGetState(d)!=='mintrans').length}`;
