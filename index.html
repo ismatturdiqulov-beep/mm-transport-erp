@@ -535,12 +535,25 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
     </div>
     <div class="section" style="padding:20px;margin-top:14px;">
       <div style="font-size:13px;font-weight:600;margin-bottom:4px;">👷 Ответственные лица (для путёвок)</div>
-      <div style="font-size:11.5px;color:var(--text3);margin-bottom:14px;">Подставляются автоматически в печатный бланк путёвки (деж. механик / медработник). Подпись всё равно ставится вручную — печатается только напечатанное имя.</div>
+      <div style="font-size:11.5px;color:var(--text3);margin-bottom:14px;">Если в списке один человек — подставляется в путёвку автоматически. Если несколько — при создании путёвки нужно будет выбрать, кто дежурил. Подпись всё равно ставится вручную — печатается только напечатанное имя.</div>
       <div class="form-grid-2">
-        <div class="form-row"><label>Деж. механик (ФИО)</label><input type="text" id="wbp-mechanic" placeholder="Султанов Н.П."></div>
-        <div class="form-row"><label>Медработник (ФИО)</label><input type="text" id="wbp-medic" placeholder="Баранова Н.В."></div>
+        <div>
+          <label style="font-size:12px;font-weight:600;">Дежурные механики</label>
+          <div id="wbp-mechanics-list" style="margin:8px 0;"></div>
+          <div style="display:flex;gap:6px;">
+            <input type="text" id="wbp-mechanic-new" placeholder="ФИО механика" style="flex:1;padding:6px 9px;border:1px solid var(--border2);border-radius:var(--radius);font-size:13px;">
+            <button class="btn sm" onclick="addWaybillStaff('mechanic')">+ Добавить</button>
+          </div>
+        </div>
+        <div>
+          <label style="font-size:12px;font-weight:600;">Медработники</label>
+          <div id="wbp-medics-list" style="margin:8px 0;"></div>
+          <div style="display:flex;gap:6px;">
+            <input type="text" id="wbp-medic-new" placeholder="ФИО медработника" style="flex:1;padding:6px 9px;border:1px solid var(--border2);border-radius:var(--radius);font-size:13px;">
+            <button class="btn sm" onclick="addWaybillStaff('medic')">+ Добавить</button>
+          </div>
+        </div>
       </div>
-      <button class="btn primary" style="margin-top:6px;" onclick="saveWaybillStaff()">💾 Сохранить</button>
     </div>
     <div class="section" style="padding:20px;margin-top:14px;">
       <div style="font-size:11.5px;color:var(--text3);margin-bottom:14px;">Используются для конвертации расходов в рейсах. Обновляйте по необходимости.</div>
@@ -1394,6 +1407,14 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
         <div class="form-row"><label>Время выхода</label><input type="time" id="wb-time"></div>
       </div>
       <div class="form-row"><label>Срок (дней)</label><input type="number" id="wb-days" value="45"></div>
+      <!-- Показываются только если в настройках несколько человек в списке — если
+           один (или ни одного), подставляется автоматически без лишнего клика
+           (решение пользователя 2026-07-23, реальный клиент держит несколько
+           механиков/медработников посменно). -->
+      <div class="form-grid-2">
+        <div class="form-row" id="wb-mechanic-row" style="display:none;"><label>Дежурный механик</label><select id="wb-mechanic"></select></div>
+        <div class="form-row" id="wb-medic-row" style="display:none;"><label>Медработник</label><select id="wb-medic"></select></div>
+      </div>
     </div>
     <div class="modal-foot">
       <button class="btn" onclick="closeModal('modal-waybill')">Отмена</button>
@@ -2024,6 +2045,12 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
           <div class="form-row"><label>Выдан</label><input type="date" id="at-dopog-from"></div>
         </div>
         <div class="form-row"><label>Действителен до</label><input type="date" id="at-dopog-to"></div>
+        <div style="font-size:11px;font-weight:600;color:var(--text3);text-transform:uppercase;margin:10px 0 8px;letter-spacing:.05em;">📟 Сертификат тахографа</div>
+        <div class="form-grid-2">
+          <div class="form-row"><label>Номер</label><input type="text" id="at-tacho-num"></div>
+          <div class="form-row"><label>Выдан</label><input type="date" id="at-tacho-from"></div>
+        </div>
+        <div class="form-row"><label>Действителен до</label><input type="date" id="at-tacho-to"></div>
         <div style="font-size:11px;font-weight:600;color:var(--text3);text-transform:uppercase;margin:10px 0 8px;letter-spacing:.05em;">🛡 ОСАГО (добавить полис)</div>
         <div id="at-osago-list"></div>
         <button type="button" class="btn xs" style="margin-top:4px" onclick="addOsagoRow()">+ Добавить ОСАГО</button>
@@ -3038,7 +3065,8 @@ function mapWaybillFromDb(r) {
     drv1: r.drv1||'', drv2: r.drv2||'', date: r.issued_date||'', days: r.days,
     fleetId: r.fleet_id||'', truckId: r.truck_id||'', trailerId: r.trailer_id||'',
     driver1Id: r.driver1_id||'', driver2Id: r.driver2_id||'',
-    mileageStart: r.mileage_start, depTime: r.dep_time||'', prefix: r.prefix||'', fullNum: r.full_num||'' };
+    mileageStart: r.mileage_start, depTime: r.dep_time||'', prefix: r.prefix||'', fullNum: r.full_num||'',
+    mechanicName: r.mechanic_name||'', medicName: r.medic_name||'' };
 }
 function mapPoaFromDb(r) {
   return { id: r.id, num: r.num||'', date: r.date||'', name: r.name||'', passport: r.passport||'',
@@ -3128,6 +3156,12 @@ async function loadAllData() {
     if (cs.fx_rates && Object.keys(cs.fx_rates).length) FX_RATES = cs.fx_rates;
     if (cs.trip_counter && Object.keys(cs.trip_counter).length) TRIP_COUNTER = cs.trip_counter;
     if (cs.waybill_settings && Object.keys(cs.waybill_settings).length) WAYBILL_SETTINGS = cs.waybill_settings;
+    // Миграция с одиночного имени на список механиков/медработников (решение
+    // пользователя 2026-07-23 — реальный клиент держит несколько посменно).
+    // Старое одиночное имя, если было, становится первой (и единственной) записью
+    // списка — поведение "один человек = подставляется автоматически" не меняется.
+    if (!WAYBILL_SETTINGS.mechanics) WAYBILL_SETTINGS.mechanics = WAYBILL_SETTINGS.mechanicName ? [WAYBILL_SETTINGS.mechanicName] : [];
+    if (!WAYBILL_SETTINGS.medics) WAYBILL_SETTINGS.medics = WAYBILL_SETTINGS.medicName ? [WAYBILL_SETTINGS.medicName] : [];
     if (cs.buy_prices && Object.keys(cs.buy_prices).length) BUY_PRICES = cs.buy_prices;
     if (cs.asmaf_registries) ASMAF_REGISTRIES = cs.asmaf_registries;
     if (cs.doz_registries) DOZ_REGISTRIES = cs.doz_registries;
@@ -3675,7 +3709,7 @@ let TRIPS = ld('mm_trips', []);
 let FX_RATES = ld('mm_fx_rates', {USD:12700,EUR:13800,RUB:140,TRY:370,KZT:28});
 let TRIP_COUNTER = ld('mm_trip_counter', {prefix:'MM', counters:{}}); // counters: {2026: 5, 2025: 12}
 let MAINTENANCE = ld('mm_maintenance', []);
-let WAYBILL_SETTINGS = ld('mm_waybill_settings', {prefixHyt:'МНП-', prefixShyt:'', mechanicName:'', medicName:''});
+let WAYBILL_SETTINGS = ld('mm_waybill_settings', {prefixHyt:'МНП-', prefixShyt:'', mechanicName:'', medicName:'', mechanics:[], medics:[]});
 
 function saveAll(){
   sv('mm_tir_types',TIR_TYPES); sv('mm_doz_prices',DOZ_PRICES); sv('mm_doz_countries',DOZ_COUNTRIES);
@@ -4789,6 +4823,16 @@ function openWaybillModal(){
   document.getElementById('wb-mileage-hint').textContent = '';
   populateWaybillSelects();
   updateWaybillModalNumPreview();
+  // Один человек в списке (или ни одного) — поле выбора скрыто, значение
+  // подставится автоматически при сохранении. Несколько — нужно выбрать.
+  const mechRow=document.getElementById('wb-mechanic-row'), mechSel=document.getElementById('wb-mechanic');
+  const mechanics=WAYBILL_SETTINGS.mechanics||[];
+  if(mechRow){ mechRow.style.display = mechanics.length>1 ? 'block' : 'none'; }
+  if(mechSel) mechSel.innerHTML=mechanics.map(n=>`<option value="${n}">${n}</option>`).join('');
+  const medRow=document.getElementById('wb-medic-row'), medSel=document.getElementById('wb-medic');
+  const medics=WAYBILL_SETTINGS.medics||[];
+  if(medRow){ medRow.style.display = medics.length>1 ? 'block' : 'none'; }
+  if(medSel) medSel.innerHTML=medics.map(n=>`<option value="${n}">${n}</option>`).join('');
   openModal('modal-waybill');
 }
 
@@ -4851,6 +4895,12 @@ async function _saveWaybillImpl(){
   const num=nextWaybillNum(dir);
   const prefix = dir==='shyt' ? (WAYBILL_SETTINGS.prefixShyt||'') : (WAYBILL_SETTINGS.prefixHyt||'');
   const fullNum = waybillFullNum(dir,num);
+  // Один механик/медработник в списке — берём его напрямую (поле выбора скрыто);
+  // несколько — берём то, что выбрали в форме.
+  const mechanics=WAYBILL_SETTINGS.mechanics||[];
+  const medics=WAYBILL_SETTINGS.medics||[];
+  const mechanicName = mechanics.length>1 ? (document.getElementById('wb-mechanic')?.value||'') : (mechanics[0]||'');
+  const medicName = medics.length>1 ? (document.getElementById('wb-medic')?.value||'') : (medics[0]||'');
   const record={
     company_id: CURRENT_PROFILE.company_id,
     dir, num, prefix, full_num: fullNum,
@@ -4862,6 +4912,7 @@ async function _saveWaybillImpl(){
     dep_time: document.getElementById('wb-time').value||null,
     issued_date: document.getElementById('wb-date').value,
     days: parseInt(document.getElementById('wb-days').value)||45,
+    mechanic_name: mechanicName||null, medic_name: medicName||null,
   };
   const { data, error } = await sbClient.from('waybills').insert(record).select().single();
   if(error){ alert('Не удалось сохранить путёвку: '+error.message); return; }
@@ -5038,8 +5089,7 @@ function renderSettings(){
   // Waybill numbering + responsible staff
   const wbpHyt=document.getElementById('wbp-prefix-hyt'); if(wbpHyt) wbpHyt.value=WAYBILL_SETTINGS.prefixHyt||'';
   const wbpShyt=document.getElementById('wbp-prefix-shyt'); if(wbpShyt) wbpShyt.value=WAYBILL_SETTINGS.prefixShyt||'';
-  const wbpMech=document.getElementById('wbp-mechanic'); if(wbpMech) wbpMech.value=WAYBILL_SETTINGS.mechanicName||'';
-  const wbpMed=document.getElementById('wbp-medic'); if(wbpMed) wbpMed.value=WAYBILL_SETTINGS.medicName||'';
+  renderWaybillStaffLists();
   updateWaybillPrefixPreview();
   // FX rates
   ['USD','EUR','RUB','TRY','KZT'].forEach(c=>{
@@ -7911,8 +7961,11 @@ function printWaybillIntl(w){
   const dateStr=fmt(w.date), untilStr=fmt(until.toISOString());
   const depTime=w.depTime||'08:00';
   const mileageStr=w.mileageStart?fmtN(w.mileageStart):'';
-  const mechanic=WAYBILL_SETTINGS.mechanicName||'';
-  const medic=WAYBILL_SETTINGS.medicName||'';
+  // Снимок из самой путёвки (кто дежурил на момент создания) — если его нет
+  // (путёвка создана до этой возможности), берём первого из списка настроек
+  // для обратной совместимости со старыми записями.
+  const mechanic=w.mechanicName||(WAYBILL_SETTINGS.mechanics||[])[0]||WAYBILL_SETTINGS.mechanicName||'';
+  const medic=w.medicName||(WAYBILL_SETTINGS.medics||[])[0]||WAYBILL_SETTINGS.medicName||'';
   const drv1Name=drv1?drv1.name:w.drv1||'';
   const drv2Name=drv2?drv2.name:w.drv2||'';
   const drv1Lic=drv1&&drv1.docs&&drv1.docs.lic?drv1.docs.lic.num:'';
@@ -8028,8 +8081,11 @@ function printWaybillIntercity(w){
   const dateStr=fmt(w.date), untilStr=fmt(until.toISOString());
   const depTime=w.depTime||''; const [depH,depM]=depTime.split(':');
   const mileageStr=w.mileageStart?fmtN(w.mileageStart):'';
-  const mechanic=WAYBILL_SETTINGS.mechanicName||'';
-  const medic=WAYBILL_SETTINGS.medicName||'';
+  // Снимок из самой путёвки (кто дежурил на момент создания) — если его нет
+  // (путёвка создана до этой возможности), берём первого из списка настроек
+  // для обратной совместимости со старыми записями.
+  const mechanic=w.mechanicName||(WAYBILL_SETTINGS.mechanics||[])[0]||WAYBILL_SETTINGS.mechanicName||'';
+  const medic=w.medicName||(WAYBILL_SETTINGS.medics||[])[0]||WAYBILL_SETTINGS.medicName||'';
   const drv1Name=drv1?drv1.name:w.drv1||'';
   const drv2Name=drv2?drv2.name:w.drv2||'';
   const truckBrand=truck?(truck.brand+' '+truck.model).trim():(w.truck||'');
@@ -9209,6 +9265,7 @@ function fillTransportDocsToModal(t){
   s('at-svid-num',d.svid?.num); s('at-svid-from',d.svid?.from); s('at-svid-to',d.svid?.to);
   s('at-tech-from',d.tech?.from); s('at-tech-to',d.tech?.to);
   s('at-dopog-num',d.dopog?.num); s('at-dopog-from',d.dopog?.from); s('at-dopog-to',d.dopog?.to);
+  s('at-tacho-num',d.tacho?.num); s('at-tacho-from',d.tacho?.from); s('at-tacho-to',d.tacho?.to);
   // OSAGO
   const list=document.getElementById('at-osago-list');
   if(list){ list.innerHTML=''; _osagoRows=[]; }
@@ -9226,13 +9283,14 @@ function getTransportDocsFromModal(){
     svid:{num:g('at-svid-num'),from:g('at-svid-from'),to:g('at-svid-to')},
     tech:{from:g('at-tech-from'),to:g('at-tech-to')},
     dopog:{num:g('at-dopog-num'),from:g('at-dopog-from'),to:g('at-dopog-to')},
+    tacho:{num:g('at-tacho-num'),from:g('at-tacho-from'),to:g('at-tacho-to')},
     osago:getOsagoFromModal()
   };
 }
 
 function getTransportDocBadge(t){
   const d=t.docs||{};
-  const checks=[d.lic?.to,d.svid?.to,d.tech?.to,d.dopog?.to,t.techpass,...(d.osago||[]).map(o=>o.to)].filter(Boolean);
+  const checks=[d.lic?.to,d.svid?.to,d.tech?.to,d.dopog?.to,d.tacho?.to,t.techpass,...(d.osago||[]).map(o=>o.to)].filter(Boolean);
   const red=checks.filter(dt=>isExp(dt)||daysDiff(dt,todayStr)<=7).length;
   const amber=checks.filter(dt=>!isExp(dt)&&daysDiff(dt,todayStr)<=30&&daysDiff(dt,todayStr)>7).length;
   if(red>0) return `<span class="tag red" style="font-size:9px">⚠️ ${red} просроч.</span>`;
@@ -9281,9 +9339,9 @@ function getDocAlerts(){
 // документы транспорта и личные документы водителей (решение пользователя 2026-07-23).
 const DEADLINE_TYPE_LABELS = {
   t_lic:'Лицензия транспорта', t_svid:'Свидетельство о допущении', t_tech:'Техосмотр',
-  t_dopog:'ДОПОГ транспорта', t_osago:'ОСАГО', t_techpass:'Техпаспорт', t_rent:'Договор аренды',
+  t_dopog:'ДОПОГ транспорта', t_tacho:'Сертификат тахографа (машина)', t_osago:'ОСАГО', t_techpass:'Техпаспорт', t_rent:'Договор аренды',
   p_pass:'Паспорт водителя', p_inter:'Загранпаспорт', p_lic:'Водительские права',
-  p_mnp:'Медсправка (МНП)', p_tacho:'Карта тахографа', p_adr:'Карта АДР',
+  p_mnp:'Медсправка (МНП)', p_tacho:'Карта тахографа (водитель)', p_adr:'Карта АДР',
 };
 function getDeadlinesByType(){
   const byType={};
@@ -9296,6 +9354,7 @@ function getDeadlinesByType(){
     push('t_svid', n, d.svid?.to);
     push('t_tech', n, d.tech?.to);
     push('t_dopog', n, d.dopog?.to);
+    push('t_tacho', n, d.tacho?.to);
     (d.osago||[]).forEach(o=>{ if(o.to) push('t_osago', n+(o.country?' ('+o.country+')':''), o.to); });
     push('t_techpass', n, t.techpass);
     if(t.owner==='Аренда') push('t_rent', n, t.contract_end);
@@ -9419,10 +9478,34 @@ function saveWaybillPrefixes(){
   toast('Префиксы путёвок сохранены');
   updateWaybillPrefixPreview();
 }
+function renderWaybillStaffLists(){
+  const row=(name,kind,i)=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 9px;background:var(--surface2);border-radius:var(--radius);margin-bottom:4px;font-size:13px;">
+    <span>${escapeHtml(name)}</span><button class="btn xs danger" onclick="removeWaybillStaff('${kind}',${i})">✕</button>
+  </div>`;
+  const mechEl=document.getElementById('wbp-mechanics-list');
+  if(mechEl) mechEl.innerHTML=(WAYBILL_SETTINGS.mechanics||[]).map((n,i)=>row(n,'mechanic',i)).join('')||'<div style="font-size:12px;color:var(--text3);">Список пуст</div>';
+  const medEl=document.getElementById('wbp-medics-list');
+  if(medEl) medEl.innerHTML=(WAYBILL_SETTINGS.medics||[]).map((n,i)=>row(n,'medic',i)).join('')||'<div style="font-size:12px;color:var(--text3);">Список пуст</div>';
+}
+function addWaybillStaff(kind){
+  const inputId = kind==='mechanic'?'wbp-mechanic-new':'wbp-medic-new';
+  const listKey = kind==='mechanic'?'mechanics':'medics';
+  const el=document.getElementById(inputId);
+  const val=(el?.value||'').trim();
+  if(!val) return;
+  if(!WAYBILL_SETTINGS[listKey]) WAYBILL_SETTINGS[listKey]=[];
+  WAYBILL_SETTINGS[listKey].push(val);
+  if(el) el.value='';
+  saveWaybillStaff();
+}
+function removeWaybillStaff(kind, idx){
+  const listKey = kind==='mechanic'?'mechanics':'medics';
+  WAYBILL_SETTINGS[listKey].splice(idx,1);
+  saveWaybillStaff();
+}
 function saveWaybillStaff(){
-  WAYBILL_SETTINGS.mechanicName=(document.getElementById('wbp-mechanic')||{}).value.trim();
-  WAYBILL_SETTINGS.medicName=(document.getElementById('wbp-medic')||{}).value.trim();
-  saveAll(); saveCompanySettings();
+  sv('mm_waybill_settings',WAYBILL_SETTINGS); saveCompanySettings();
+  renderWaybillStaffLists();
   toast('Ответственные лица сохранены');
 }
 
