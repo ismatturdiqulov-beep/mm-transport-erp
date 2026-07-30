@@ -7982,7 +7982,7 @@ function printWaybillIntl(w){
     .title b{text-decoration:underline}
     .subtitle{text-align:center;font-size:13.6pt;color:#333;margin-bottom:2px}
     .warn{text-align:center;font-size:10.2pt;font-weight:bold;margin-bottom:8px}
-    .co-box{text-align:center;padding:4px}
+    .co-box{text-align:center;padding:4px;vertical-align:middle!important}
     .co-box .co-name{font-size:11pt;font-weight:bold;text-decoration:underline}
     .co-box .co-addr{font-size:11pt;margin-top:4px}
     .co-box .co-asmap{font-size:14pt;font-weight:bold;text-decoration:underline;margin-top:6px}
@@ -8027,17 +8027,17 @@ function printWaybillIntl(w){
   </tr></table>
   <div class="two-col">
     <div class="left-pane">
-      <p>Срок командировки <b><i>${w.days||45}</i></b> (дней) до <b><i>${untilStr}</i></b> г.</p>
-      <p>Основание заявки № ______ от ______ 20___ г.</p>
-      <p>Выезд разрешен приказом _____ от _____ 20___ г.</p>
+      <p style="margin-bottom:1px;line-height:1.05">Срок командировки <b><i>${w.days||45}</i></b> (дней) до <b><i>${untilStr}</i></b> г.</p>
+      <p style="margin-bottom:1px;line-height:1.05">Основание заявки № ______ от ______ 20___ г.</p>
+      <p style="margin-bottom:1px;line-height:1.05">Выезд разрешен приказом _____ от _____ 20___ г.</p>
       <table class="box" style="margin-top:8px">
         <colgroup><col style="width:28.4%"><col style="width:22%"><col style="width:26%"><col style="width:23.7%"></colgroup>
         <tr><th>Марка автомобили</th><th>№ колонны</th><th>Шифр марки автомобиля</th><th>Номерной знак</th></tr>
-        <tr><td class="fill veh-val">${truckBrand}</td><td></td><td class="fill veh-val">${truckModel}</td><td class="fill veh-val">${truckPlate}</td></tr>
-        <tr><td></td><td></td><td></td><td></td></tr>
-        <tr><td></td><td style="font-weight:bold;text-align:center">${isSemi?'':'Прицеп'}</td><td></td><td></td></tr>
-        <tr><td></td><td style="font-weight:bold;text-align:center">${isSemi?'Полуприцеп':''}</td><td></td><td></td></tr>
-        <tr><td class="fill veh-val">${trailerBrand}</td><td></td><td class="fill veh-val">${trailerModel}</td><td class="fill veh-val">${trailerPlate}</td></tr>
+        <tr><td class="fill veh-val" style="text-align:center">${truckBrand}</td><td style="text-align:center"></td><td class="fill veh-val" style="text-align:center">${truckModel}</td><td class="fill veh-val" style="text-align:center">${truckPlate}</td></tr>
+        <tr><td style="font-weight:bold">Прицеп</td><td style="text-align:center"></td><td style="text-align:center"></td><td style="text-align:center"></td></tr>
+        <tr><td class="fill veh-val" style="text-align:center">${!isSemi?trailerBrand:''}</td><td style="text-align:center"></td><td class="fill veh-val" style="text-align:center">${!isSemi?trailerModel:''}</td><td class="fill veh-val" style="text-align:center">${!isSemi?trailerPlate:''}</td></tr>
+        <tr><td style="font-weight:bold">Полуприцеп</td><td style="text-align:center"></td><td style="text-align:center"></td><td style="text-align:center"></td></tr>
+        <tr><td class="fill veh-val" style="text-align:center">${isSemi?trailerBrand:''}</td><td style="text-align:center"></td><td class="fill veh-val" style="text-align:center">${isSemi?trailerModel:''}</td><td class="fill veh-val" style="text-align:center">${isSemi?trailerPlate:''}</td></tr>
       </table>
     </div>
     <div>
@@ -8046,11 +8046,10 @@ function printWaybillIntl(w){
         <tr><th colspan="3" style="text-align:center">Работа водителя и автомобиля</th></tr>
         <tr><th>Операция</th><th>Время по графику<br>(число, месяц, час)</th><th>Время фактическое<br>(число, месяц, час)</th></tr>
         <tr><td>Выезд из гаража</td><td class="fill" style="text-align:center">${dateStr}, ${depTime}</td><td></td></tr>
-        <tr><td>Возвращение в гараж</td><td></td><td></td></tr>
+        <tr><td>Возвр. в гараж</td><td></td><td></td></tr>
         <tr><th colspan="2">Фамилия, имя, отчество водителя</th><th>Номер водительского удостоверения</th></tr>
-        <tr><td colspan="2"></td><td></td></tr>
-        <tr><td colspan="2" class="fill">${drv1Name||'—'}</td><td class="fill">${drv1Lic}</td></tr>
-        ${drv2Name?`<tr><td colspan="2" class="fill">${drv2Name}</td><td class="fill">${drv2Lic}</td></tr>`:''}
+        <tr><td colspan="2" class="fill" style="text-align:center">${drv1Name||'—'}</td><td class="fill" style="text-align:center">${drv1Lic}</td></tr>
+        <tr><td colspan="2" class="fill" style="text-align:center">${drv2Name||'&nbsp;'}</td><td class="fill" style="text-align:center">${drv2Lic}</td></tr>
         <tr><th colspan="2">Табельный номер водителя</th><td></td></tr>
         <tr><th colspan="2">Маршрут следования</th><td></td></tr>
         <tr><td>Пункты отдыха</td><td colspan="2">В прямом направления</td></tr>
@@ -8061,10 +8060,11 @@ function printWaybillIntl(w){
   <table class="box" style="margin-top:8px">
     <tr><th colspan="6" style="text-align:center">Задания водителю (заполняется перевозчиком в пути следования в диспетчерских пунктах)</th></tr>
     <tr><th>В чью распоряжение</th><th>Место взятия груза</th><th>Место доставки груза</th><th>Расстояние, км.</th><th>Наименование груза</th><th>Количество груза, тонн или штук</th></tr>
-    <tr style="height:10mm"><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+    <tr style="height:5mm"><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+    <tr style="height:5mm"><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+    <tr style="height:5mm"><td></td><td></td><td></td><td></td><td></td><td></td></tr>
   </table>
   <div style="margin-top:6px;font-size:8.5pt">Опоздания, простой в пути, заезды в гараж и прочие отметки <span class="foot-line"></span></div>
-  <div style="margin-top:3px"><span class="foot-line" style="width:100%;min-width:100%"></span></div>
   <div style="text-align:right;font-size:7.5pt;color:#555;margin-top:2px">(подпись, штамп)</div>
   <div style="margin-top:8px;font-size:9pt">Водитель по состоянию к управлению допущен <span class="foot-line" style="min-width:350px"></span> <span class="fill">${medic} ${medic?dateStr:''}</span></div>
   <div style="text-align:center;margin-top:14px"><button onclick="window.print()" style="padding:7px 18px;cursor:pointer">🖨 Распечатать</button></div>
