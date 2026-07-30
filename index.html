@@ -8034,10 +8034,10 @@ function printWaybillIntl(w){
         <colgroup><col style="width:28.4%"><col style="width:22%"><col style="width:26%"><col style="width:23.7%"></colgroup>
         <tr><th>Марка автомобили</th><th>№ колонны</th><th>Шифр марки автомобиля</th><th>Номерной знак</th></tr>
         <tr><td class="fill veh-val" style="text-align:center">${truckBrand}</td><td style="text-align:center"></td><td class="fill veh-val" style="text-align:center">${truckModel}</td><td class="fill veh-val" style="text-align:center">${truckPlate}</td></tr>
-        <tr><td style="font-weight:bold">Прицеп</td><td style="text-align:center"></td><td style="text-align:center"></td><td style="text-align:center"></td></tr>
-        <tr><td class="fill veh-val" style="text-align:center">${!isSemi?trailerBrand:''}</td><td style="text-align:center"></td><td class="fill veh-val" style="text-align:center">${!isSemi?trailerModel:''}</td><td class="fill veh-val" style="text-align:center">${!isSemi?trailerPlate:''}</td></tr>
-        <tr><td style="font-weight:bold">Полуприцеп</td><td style="text-align:center"></td><td style="text-align:center"></td><td style="text-align:center"></td></tr>
-        <tr><td class="fill veh-val" style="text-align:center">${isSemi?trailerBrand:''}</td><td style="text-align:center"></td><td class="fill veh-val" style="text-align:center">${isSemi?trailerModel:''}</td><td class="fill veh-val" style="text-align:center">${isSemi?trailerPlate:''}</td></tr>
+        <tr><td style="font-weight:bold">Прицеп</td><td style="text-align:center">&nbsp;</td><td style="text-align:center">&nbsp;</td><td style="text-align:center">&nbsp;</td></tr>
+        <tr><td class="fill veh-val" style="text-align:center">${(!isSemi&&trailerBrand)||'&nbsp;'}</td><td style="text-align:center">&nbsp;</td><td class="fill veh-val" style="text-align:center">${(!isSemi&&trailerModel)||'&nbsp;'}</td><td class="fill veh-val" style="text-align:center">${(!isSemi&&trailerPlate)||'&nbsp;'}</td></tr>
+        <tr><td style="font-weight:bold">Полуприцеп</td><td style="text-align:center">&nbsp;</td><td style="text-align:center">&nbsp;</td><td style="text-align:center">&nbsp;</td></tr>
+        <tr><td class="fill veh-val" style="text-align:center">${(isSemi&&trailerBrand)||'&nbsp;'}</td><td style="text-align:center">&nbsp;</td><td class="fill veh-val" style="text-align:center">${(isSemi&&trailerModel)||'&nbsp;'}</td><td class="fill veh-val" style="text-align:center">${(isSemi&&trailerPlate)||'&nbsp;'}</td></tr>
       </table>
     </div>
     <div>
