@@ -4016,9 +4016,14 @@ function populateModal(id) {
     'ro-dozv': dozForReturnOffice.map(d=>({v:d.id,l:`${d.num} — ${d.person} (${d.plate})`})),
     'rc-dozv': dozForClose.map(d=>({v:d.id,l:`${d.num} — ${d.person} (${d.plate})`})),
     'rm-dozv': dozForMintrans.map(d=>({v:d.id,l:`${d.num} — ${d.country} (вернулся ${fmt(d.returnedOffice)})`})),
-    'tt-fleet': FLEET.filter(f=>f.active!==false).map(f=>{const kg=getFleetKontragent(f);return {v:f.id,l:f.label+' — '+kg.name};}),
-    'td-fleet': FLEET.filter(f=>f.active!==false).map(f=>{const kg=getFleetKontragent(f);return {v:f.id,l:f.label+' — '+kg.name};}),
-    'nd-fleet': FLEET.filter(f=>f.active!==false).map(f=>{const kg=getFleetKontragent(f);return {v:f.id,l:f.label+' — '+kg.name};}),
+    // Пустой первый пункт — без него браузер сам выбирал первый ПС в списке, и если
+    // пользователь забывал сменить его, ТИР/Дозвол/Е-ПЕРМИТ уходил не тому ПС (баг
+    // найден пользователем 2026-08-01). Проверка "поле обязательно" уже была в коде
+    // (transferTir/transferDozv/saveDozNew), просто не срабатывала, т.к. поле не
+    // могло быть пустым.
+    'tt-fleet': [{v:'',l:'— выберите ПС —'}, ...FLEET.filter(f=>f.active!==false).map(f=>{const kg=getFleetKontragent(f);return {v:f.id,l:f.label+' — '+kg.name};})],
+    'td-fleet': [{v:'',l:'— выберите ПС —'}, ...FLEET.filter(f=>f.active!==false).map(f=>{const kg=getFleetKontragent(f);return {v:f.id,l:f.label+' — '+kg.name};})],
+    'nd-fleet': [{v:'',l:'— выберите ПС —'}, ...FLEET.filter(f=>f.active!==false).map(f=>{const kg=getFleetKontragent(f);return {v:f.id,l:f.label+' — '+kg.name};})],
     'nt-buy-wallet': KASSA_WALLETS.filter(w=>w.active!==false).sort((a,b)=>(a.order||99)-(b.order||99)).map(w=>({v:w.id,l:(w.icon||'💰')+' '+w.name})),
     'nd-buy-wallet': KASSA_WALLETS.filter(w=>w.active!==false).sort((a,b)=>(a.order||99)-(b.order||99)).map(w=>({v:w.id,l:(w.icon||'💰')+' '+w.name})),
     'ch-person': allPersons.map(p=>({v:p,l:p})),
@@ -4029,12 +4034,11 @@ function populateModal(id) {
     const el=document.getElementById(sid);
     if(el) el.innerHTML=opts.map(o=>`<option value="${o.v}">${o.l}</option>`).join('');
   });
-  // tt-fleet/td-fleet только что перезаполнены и браузер сам выбрал первый вариант,
-  // но onchange при этом не срабатывает — без явного вызова список рейсов (tt-trip/td-trip)
-  // остаётся пустым, пока пользователь вручную не переключит ПС на другой (баг найден
-  // пользователем 2026-07-19: привязка ТИР/Дозвол к рейсу "не работала").
-  if(id==='modal-transfer-tir') onTirFleetSelect();
-  if(id==='modal-transfer-dozv') onDozFleetSelect();
+  // tt-fleet/td-fleet теперь по умолчанию пустые (см. selMap выше — пользователь
+  // 2026-08-01 попросил убрать автовыбор первого ПС), поэтому список рейсов
+  // (tt-trip/td-trip) заполнится сам через onchange="onTirFleetSelect()"/
+  // "onDozFleetSelect()" на самом select, когда пользователь реально выберет ПС —
+  // отдельный вызов здесь больше не нужен.
 
   // Reset return comp blocks
   const rtComp=document.getElementById('rt-comp-block');
