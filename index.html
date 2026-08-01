@@ -1874,15 +1874,28 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
           <option value="income">Приход</option>
         </select>
       </div>
+      <!-- Начисление по умолчанию кассу не трогает — это просто счёт, а не реальное
+           движение денег (плановая аренда, стоимость ТИР/дозвола и т.п.). Но бывают
+           начисления, которые СОВПАДАЮТ с реальной выплатой контрагенту из кассы
+           (например перевод части его прихода на его же компанию, оплата гос.
+           пошлины из его прихода) — раньше это приходилось вносить двумя отдельными
+           записями (начисление + расход в Кассе), и про вторую легко было забыть,
+           из-за чего касса расходилась с реальным остатком (баг найден
+           пользователем 2026-07-31/08-01). Чекбокс объединяет оба действия в одно. -->
+      <div class="form-row" id="kop-kassa-row" style="display:none;">
+        <label style="display:flex;align-items:center;gap:6px;font-weight:400;cursor:pointer;">
+          <input type="checkbox" id="kop-from-kassa" onchange="toggleKopWallet()" style="width:16px;height:16px;">
+          Списать эту сумму из кассы (реальная выплата)
+        </label>
+      </div>
       <div class="form-grid-2">
         <div class="form-row"><label>Сумма (сум) *</label><input type="text" inputmode="numeric" class="fmt-money" id="kop-amount"></div>
         <div class="form-row"><label>Дата</label><input type="date" id="kop-date"></div>
       </div>
       <!-- Приход раньше не попадал в Кассу — деньги учитывались только в балансе
            контрагента, реальный остаток по кошелькам не менялся (баг найден
-           пользователем 2026-07-23). Начисление кассу не трогает — это просто счёт,
-           а не реальное движение денег. -->
-      <div class="form-row" id="kop-wallet-row" style="display:none;"><label>Куда зачислить (кошелёк) *</label><select id="kop-wallet"></select></div>
+           пользователем 2026-07-23). -->
+      <div class="form-row" id="kop-wallet-row" style="display:none;"><label id="kop-wallet-label">Куда зачислить (кошелёк) *</label><select id="kop-wallet"></select></div>
       <div class="form-row"><label>Описание</label><input type="text" id="kop-desc" placeholder="За что..."></div>
     </div>
     <div class="modal-foot">
@@ -2154,6 +2167,12 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
       <div class="form-grid-2">
         <div class="form-row"><label>Сумма (сум) *</label><input type="text" inputmode="numeric" class="fmt-money" id="exp-amount" placeholder="500000"></div>
         <div class="form-row"><label>Получатель / Кому</label><input type="text" id="exp-to" placeholder="АЗС Нафтгаз..."></div>
+      </div>
+      <!-- Необязательная привязка к контрагенту — если выбран, этот же расход
+           одновременно уменьшает баланс контрагента (Акт сверки), а не только
+           кассу (решение пользователя 2026-08-01). -->
+      <div class="form-row"><label>Контрагент (если выплата ему, необязательно)</label>
+        <select id="exp-kontragent" onchange="onKassaKontragentChange('exp')"><option value="">— без привязки к контрагенту —</option></select>
       </div>
       <div class="form-row"><label>Описание</label><input type="text" id="exp-desc" placeholder="Заправка 304, 80 л..."></div>
     </div>
@@ -2695,6 +2714,12 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
       </div>
       <div class="form-row"><label>Привязать к рейсу (необязательно)</label>
         <select id="kp-trip"><option value="">— без привязки к рейсу —</option></select>
+      </div>
+      <!-- Необязательная привязка к контрагенту — если выбрана, эта же выдача
+           одновременно уменьшает баланс контрагента (Акт сверки), а не только
+           кассу (решение пользователя 2026-08-01). -->
+      <div class="form-row"><label>Контрагент (если выдача ему, необязательно)</label>
+        <select id="kp-kontragent" onchange="onKassaKontragentChange('kp')"><option value="">— без привязки к контрагенту —</option></select>
       </div>
       <div class="form-row"><label>Назначение</label><input type="text" id="kp-desc" placeholder="Командировочные, аванс на расходы..."></div>
     </div>
@@ -4031,12 +4056,40 @@ function populateModal(id) {
     if(kgLink) kgLink.innerHTML='<option value="">— Не связывать —</option>'+
       KONTRAGENTY.filter(k=>k.active!==false).map(k=>`<option value="${k.id}">${k.name} (${KT_TYPE_LABEL[k.type]||k.type})</option>`).join('');
   }
+  // Необязательная привязка Расхода/Выдачи к контрагенту (см. chargeKontragentFromKassa) —
+  // список всех активных контрагентов без ограничения по типу (решение пользователя 2026-08-01).
+  if(id==='modal-add-expense'||id==='modal-kassa-payout'){
+    const selId=id==='modal-add-expense'?'exp-kontragent':'kp-kontragent';
+    const sel=document.getElementById(selId);
+    if(sel) sel.innerHTML='<option value="">— без привязки к контрагенту —</option>'+
+      KONTRAGENTY.filter(k=>k.active!==false).map(k=>`<option value="${k.id}">${k.name} (${KT_TYPE_LABEL[k.type]||k.type})</option>`).join('');
+    const toId=id==='modal-add-expense'?'exp-to':'kp-to';
+    const toEl=document.getElementById(toId);
+    if(toEl) toEl.readOnly=false;
+  }
   if(id==='modal-mintrans-registry') populateMintransRegistry();
   if(id==='modal-asmaf-registry') populateAsmafRegistry();
   if(id==='modal-new-dozv') setTimeout(initDozModal,50);
   if(id==='modal-new-tir'){ resetTirNumRows(); setTimeout(()=>{updateTirBuyPreview();autoTirExpiry();},50); }
   if(id==='modal-transfer-tir') checkTirTransfer();
   if(id==='modal-settings') renderSettings();
+}
+
+// Автозаполнение "Кому"/"Получатель" именем контрагента при выборе привязки в
+// Расходе/Выдаче — поле блокируется на редактирование, пока привязка активна,
+// чтобы не разошлись имя в кассе и реальный получатель (решение пользователя 2026-08-01).
+function onKassaKontragentChange(prefix){
+  const sel=document.getElementById(prefix+'-kontragent');
+  const toField=document.getElementById(prefix+'-to');
+  if(!sel||!toField) return;
+  const id=sel.value;
+  if(id){
+    const k=KONTRAGENTY.find(x=>x.id===id);
+    toField.value=k?k.name:'';
+    toField.readOnly=true;
+  } else {
+    toField.readOnly=false;
+  }
 }
 
 // ============ DOZ COUNTRY / KIND ============
@@ -6657,8 +6710,13 @@ async function _saveKontragentImpl(){
 
 function toggleKopWallet(){
   const type=document.getElementById('kop-type')?.value;
+  const kassaRow=document.getElementById('kop-kassa-row');
+  if(kassaRow) kassaRow.style.display = type==='charge' ? 'block' : 'none';
+  const fromKassa=type==='charge' && document.getElementById('kop-from-kassa')?.checked;
   const row=document.getElementById('kop-wallet-row');
-  if(row) row.style.display = type==='income' ? 'block' : 'none';
+  if(row) row.style.display = (type==='income'||fromKassa) ? 'block' : 'none';
+  const label=document.getElementById('kop-wallet-label');
+  if(label) label.textContent = type==='income' ? 'Куда зачислить (кошелёк) *' : 'Из какого кошелька списать *';
 }
 function openKontragentOp(id){
   _kopId=id;
@@ -6669,8 +6727,47 @@ function openKontragentOp(id){
   document.getElementById('kop-amount').value='';
   document.getElementById('kop-desc').value='';
   document.getElementById('kop-type').value='charge';
+  const fk=document.getElementById('kop-from-kassa'); if(fk) fk.checked=false;
   toggleKopWallet();
   openModal('modal-kontragent-op');
+}
+
+// Общая логика для трёх точек входа — Контрагенты → "+Операция" (Начисление
+// со списанием из кассы), Касса → Расход, Касса → Выдача — когда операция
+// одновременно и списывает деньги из кассы, и уменьшает баланс контрагента.
+// Раньше это приходилось вносить двумя отдельными записями (начисление в
+// Контрагентах + расход в Кассе), про вторую легко было забыть, из-за чего
+// касса расходилась с реальным остатком (баг найден пользователем 2026-08-01
+// на реальных примерах: перевод части прихода арендатора на его компанию,
+// оплата гос.пошлины из прихода контрагента). Теперь оба действия — одна
+// запись в finance (type:'charge', как обычное начисление) и одна запись в
+// kassa (расход/выдача), связанные через уже существующее поле
+// kassa.finance_id (тот же приём уже используется для "Приход" контрагента).
+// Явного нового типа операции/колонки-маркера не вводим — то, что начисление
+// реально списано из кассы, видно по наличию связанной записи в kassa
+// (см. проверку в renderAktSverki/printAktSverki), это не может разойтись
+// с реальностью, в отличие от отдельного флага.
+async function chargeKontragentFromKassa({kontragentId, amount, date, desc, wallet, kassaType, category, tripId}){
+  const k=KONTRAGENTY.find(x=>x.id===kontragentId);
+  if(!k) return {error:'Контрагент не найден'};
+  const financeRecord={
+    company_id:CURRENT_PROFILE.company_id, date, fleet_id:null, kontragent_id:k.id, person_name:k.name,
+    type:'charge', category:'manual', description:desc, amount, paid:0, wallet:null,
+  };
+  const { data:finData, error:finErr } = await sbClient.from('finance').insert(financeRecord).select().single();
+  if (finErr) return {error:finErr.message};
+  FINANCE.push(mapFinanceFromDb(finData));
+  const kassaRecord={
+    company_id:CURRENT_PROFILE.company_id, wallet, type:kassaType,
+    date, category:category||(kassaType==='payout'?'payout':'manual'),
+    to_name:k.name, description:desc||(kassaType==='payout'?'Выдача: '+k.name:'Выплата контрагенту: '+k.name),
+    amount, finance_id:finData.id, trip_id:tripId||null,
+  };
+  const { data:kData, error:kErr } = await sbClient.from('kassa').insert(kassaRecord).select().single();
+  if (kErr) return {error:kErr.message, financeSaved:true};
+  KASSA.push(mapKassaFromDb(kData));
+  notifyKontragent(k.id, `💸 Вам начислено: ${fmtN(amount)} сум${desc?' ('+desc+')':''}.\n💰 ${kgBalanceLine(k.id)}`);
+  return {ok:true, financeId:finData.id, kassaId:kData.id};
 }
 
 async function _saveKontragentOpImpl(){
@@ -6681,8 +6778,18 @@ async function _saveKontragentOpImpl(){
   const date=document.getElementById('kop-date').value||todayStr;
   const desc=document.getElementById('kop-desc').value;
   const isIncome=opType==='income';
+  const fromKassa=!isIncome && !!document.getElementById('kop-from-kassa')?.checked;
   const wallet=document.getElementById('kop-wallet')?.value||'cash';
-  if(isIncome && !wallet){alert('Выберите кошелёк');return;}
+  if((isIncome||fromKassa) && !wallet){alert('Выберите кошелёк');return;}
+
+  if(fromKassa){
+    const r=await chargeKontragentFromKassa({kontragentId:k.id, amount, date, desc, wallet, kassaType:'expense', category:'manual'});
+    if(r.error){ alert('Не удалось сохранить операцию: '+r.error); return; }
+    closeModal('modal-kontragent-op');
+    toast('Операция сохранена'); renderTenants(); renderKassa();
+    return;
+  }
+
   // Раньше писало в kontragenty.ops — отдельное, никем не читаемое поле (Акт сверки и
   // баланс контрагента берут данные из finance, см. renderAktSverki/printAktSverki).
   // Из-за этого "Приход"/"Начисление" через эту кнопку никогда не попадали в акт сверки —
@@ -6807,7 +6914,7 @@ function renderAktSverki(){
     // кнопкой "+ Операция" и не видит начислений от ТИР/дозволов/рейсов — раньше акт
     // сверки контрагента поэтому оставался пустым, хотя баланс уже считался правильно).
     const allOps=FINANCE.filter(f=>f.kontragentId===k.id)
-      .map(f=>({date:f.date, type:(f.type==='payment'||f.type==='vacation')?'income':'charge',
+      .map(f=>({id:f.id, date:f.date, type:(f.type==='payment'||f.type==='vacation')?'income':'charge',
                 amount:(f.type==='payment'||f.type==='vacation')?(f.paid||0):(f.amount||0),
                 desc:f.desc}))
       .sort((a,b)=>new Date(a.date)-new Date(b.date));
@@ -6828,9 +6935,13 @@ function renderAktSverki(){
       <div class="bs-card"><div class="bsl">Оплачено</div><div class="bsv green">${fmtN(income)}</div></div>
       <div class="bs-card"><div class="bsl">Баланс</div><div class="bsv ${totalBalance<0?'red':'green'}">${fmtN(Math.abs(totalBalance))} ${totalBalance<0?'(долг)':'(переп.)'}</div></div>`;
     if(thead) thead.innerHTML='<tr><th>Дата</th><th>Тип</th><th>Описание</th><th style="text-align:right">Сумма</th></tr>';
+    // "Начисление", реально списанное из кассы (Расход/Выдача/операция "Списать из
+    // кассы"), помечаем отдельно — видно по наличию связанной записи в kassa
+    // (kassa.finance_id), решение пользователя 2026-08-01.
+    const kassaLinkedIds=new Set(KASSA.filter(kk=>kk.financeId).map(kk=>kk.financeId));
     if(tb) tb.innerHTML=filtered.map(o=>`<tr>
       <td>${fmt(o.date)}</td>
-      <td><span class="tag ${o.type==='income'?'green':'amber'}">${o.type==='income'?'Приход':'Начисл.'}</span></td>
+      <td><span class="tag ${o.type==='income'?'green':'amber'}">${o.type==='income'?'Приход':'Начисл.'}</span>${o.type==='charge'&&kassaLinkedIds.has(o.id)?' <span class="tag gray" style="font-size:9px;" title="Реально списано из кассы">💵 из кассы</span>':''}</td>
       <td>${o.desc||'—'}</td>
       <td style="text-align:right;font-weight:600;color:${o.type==='income'?'var(--green)':'var(--red)'}">${o.type==='income'?'+':'-'}${fmtN(o.amount)}</td>
     </tr>`).join('')||'<tr><td colspan="4" style="text-align:center;padding:16px;color:var(--text3)">Нет операций за период</td></tr>';
@@ -6873,7 +6984,7 @@ function printAktSverki(){
   } else {
     // См. пояснение в renderAktSverki() — берём из finance, а не из k.ops.
     const allOps=FINANCE.filter(f=>f.kontragentId===k.id)
-      .map(f=>({date:f.date, type:(f.type==='payment'||f.type==='vacation')?'income':'charge',
+      .map(f=>({id:f.id, date:f.date, type:(f.type==='payment'||f.type==='vacation')?'income':'charge',
                 amount:(f.type==='payment'||f.type==='vacation')?(f.paid||0):(f.amount||0),
                 desc:f.desc}))
       .sort((a,b)=>new Date(a.date)-new Date(b.date));
@@ -6886,7 +6997,8 @@ function printAktSverki(){
     const income=filtered.filter(o=>o.type==='income').reduce((s,o)=>s+o.amount,0);
     const totalBalance=allOps.filter(o=>o.type==='income').reduce((s,o)=>s+o.amount,0)-allOps.filter(o=>o.type==='charge').reduce((s,o)=>s+o.amount,0);
     summaryHtml=`<div class="sc"><div class="l">Вход. остаток</div><div class="v" style="color:${incoming<0?'red':'green'}">${fmtN(incoming)}</div></div><div class="sc"><div class="l">Начислено</div><div class="v" style="color:red">${fmtN(charged)}</div></div><div class="sc"><div class="l">Оплачено</div><div class="v" style="color:green">${fmtN(income)}</div></div><div class="sc"><div class="l">Баланс</div><div class="v" style="color:${totalBalance<0?'red':'green'}">${fmtN(Math.abs(totalBalance))} ${totalBalance<0?'(долг)':'(переп.)'}</div></div>`;
-    tableHtml=`<table><thead><tr><th>Дата</th><th>Тип</th><th>Описание</th><th style="text-align:right">Сумма</th></tr></thead><tbody>${filtered.map(o=>`<tr><td>${fmt(o.date)}</td><td>${o.type==='income'?'Приход':'Начисление'}</td><td>${o.desc||'—'}</td><td style="text-align:right;color:${o.type==='income'?'green':'red'}">${o.type==='income'?'+':'-'}${fmtN(o.amount)}</td></tr>`).join('')||'<tr><td colspan="4" style="text-align:center">Нет операций</td></tr>'}</tbody></table>`;
+    const kassaLinkedIdsP=new Set(KASSA.filter(kk=>kk.financeId).map(kk=>kk.financeId));
+    tableHtml=`<table><thead><tr><th>Дата</th><th>Тип</th><th>Описание</th><th style="text-align:right">Сумма</th></tr></thead><tbody>${filtered.map(o=>`<tr><td>${fmt(o.date)}</td><td>${o.type==='income'?'Приход':'Начисление'}${o.type==='charge'&&kassaLinkedIdsP.has(o.id)?' <span style="font-size:8pt;color:#666">(💵 из кассы)</span>':''}</td><td>${o.desc||'—'}</td><td style="text-align:right;color:${o.type==='income'?'green':'red'}">${o.type==='income'?'+':'-'}${fmtN(o.amount)}</td></tr>`).join('')||'<tr><td colspan="4" style="text-align:center">Нет операций</td></tr>'}</tbody></table>`;
   }
 
   const win=window.open('','_blank','width=760,height=600');
@@ -7795,15 +7907,26 @@ function renderKassa(){
 async function _saveExpenseImpl(){
   const amount=numVal('exp-amount');
   if(!amount){alert('Укажите сумму');return;}
-  const { data, error } = await sbClient.from('kassa').insert({
-    company_id:CURRENT_PROFILE.company_id, wallet:document.getElementById('exp-wallet').value, type:'expense',
-    date:document.getElementById('exp-date').value||todayStr,
-    category:document.getElementById('exp-cat').value,
-    to_name:document.getElementById('exp-to').value,
-    description:document.getElementById('exp-desc').value, amount,
-  }).select().single();
-  if (error) { alert('Не удалось сохранить расход: '+error.message); return; }
-  KASSA.push(mapKassaFromDb(data));
+  const wallet=document.getElementById('exp-wallet').value;
+  const date=document.getElementById('exp-date').value||todayStr;
+  const category=document.getElementById('exp-cat').value;
+  const desc=document.getElementById('exp-desc').value;
+  const kontragentId=(document.getElementById('exp-kontragent')||{}).value||'';
+  // Если выбран контрагент — этот же расход одновременно уменьшает его баланс
+  // (Акт сверки), см. chargeKontragentFromKassa. Без привязки — как раньше,
+  // просто расход в кассе, никак не связанный с контрагентами.
+  if(kontragentId){
+    const r=await chargeKontragentFromKassa({kontragentId, amount, date, desc, wallet, kassaType:'expense', category});
+    if(r.error){ alert('Не удалось сохранить расход: '+r.error); return; }
+  } else {
+    const { data, error } = await sbClient.from('kassa').insert({
+      company_id:CURRENT_PROFILE.company_id, wallet, type:'expense', date, category,
+      to_name:document.getElementById('exp-to').value,
+      description:desc, amount,
+    }).select().single();
+    if (error) { alert('Не удалось сохранить расход: '+error.message); return; }
+    KASSA.push(mapKassaFromDb(data));
+  }
   closeModal('modal-add-expense');
   document.getElementById('exp-amount').value='';
   toast('Расход зафиксирован: '+fmtN(amount)); renderKassa();
@@ -11009,9 +11132,11 @@ async function deleteTrip(tripId){
 function openKassaPayoutModal(){
   document.getElementById('kp-amount').value='';
   document.getElementById('kp-to').value='';
+  document.getElementById('kp-to').readOnly=false;
   document.getElementById('kp-desc').value='';
   document.getElementById('kp-date').value=todayStr;
   document.getElementById('kp-wallet').value='cash';
+  const kpKg=document.getElementById('kp-kontragent'); if(kpKg) kpKg.value='';
   // Список активных рейсов
   const activeTrips=TRIPS.filter(t=>!['done'].includes(t.status));
   const tripSel=document.getElementById('kp-trip');
@@ -11032,12 +11157,21 @@ async function _saveKassaPayoutImpl(){
   const desc=document.getElementById('kp-desc').value;
   const date=document.getElementById('kp-date').value||todayStr;
   const tripId=(document.getElementById('kp-trip')||{}).value||'';
-  const { data, error } = await sbClient.from('kassa').insert({
-    company_id:CURRENT_PROFILE.company_id, wallet, type:'payout', date, category:'payout',
-    to_name:to, trip_id:tripId||null, description:desc||(to?'Выдача: '+to:'Выдача наличных'), amount,
-  }).select().single();
-  if (error) { alert('Не удалось сохранить выдачу: '+error.message); return; }
-  KASSA.push(mapKassaFromDb(data));
+  const kontragentId=(document.getElementById('kp-kontragent')||{}).value||'';
+  // Если выбран контрагент — эта же выдача одновременно уменьшает его баланс
+  // (Акт сверки), см. chargeKontragentFromKassa. Без привязки — как раньше,
+  // просто выдача из кассы, никак не связанная с контрагентами.
+  if(kontragentId){
+    const r=await chargeKontragentFromKassa({kontragentId, amount, date, desc, wallet, kassaType:'payout', category:'payout', tripId});
+    if(r.error){ alert('Не удалось сохранить выдачу: '+r.error); return; }
+  } else {
+    const { data, error } = await sbClient.from('kassa').insert({
+      company_id:CURRENT_PROFILE.company_id, wallet, type:'payout', date, category:'payout',
+      to_name:to, trip_id:tripId||null, description:desc||(to?'Выдача: '+to:'Выдача наличных'), amount,
+    }).select().single();
+    if (error) { alert('Не удалось сохранить выдачу: '+error.message); return; }
+    KASSA.push(mapKassaFromDb(data));
+  }
   // Привязываем аванс к рейсу
   if(tripId){
     const trip=TRIPS.find(t=>t.id===tripId);
