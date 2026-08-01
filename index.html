@@ -4002,9 +4002,13 @@ function populateModal(id) {
   const countryOpts=DOZ_COUNTRIES.map(c=>`<option value="${c.name}">${c.name}</option>`).join('');
   ['nd-country','dozv-f-country'].forEach(sid=>{
     const el=document.getElementById(sid);
-    if(el){ el.innerHTML=(sid==='dozv-f-country'?'<option value="">Все страны</option>':'')+countryOpts; }
+    // nd-country раньше не имело пустого пункта — браузер всегда выставлял первую
+    // страну из списка настроек (Казахстан), и следом за ней автоматически вид
+    // дозвола, без реального выбора пользователя (баг найден пользователем 2026-08-01,
+    // тот же класс проблемы, что и с автовыбором ПС выше).
+    if(el){ el.innerHTML=(sid==='dozv-f-country'?'<option value="">Все страны</option>':'<option value="">— выберите страну —</option>')+countryOpts; }
   });
-  // trigger kind update
+  // trigger kind update (при пустой стране просто очистит "Вид дозвола", см. onDozCountryChange)
   const ndCEl=document.getElementById('nd-country');
   if(ndCEl) onDozCountryChange('nd');
 
@@ -4038,7 +4042,21 @@ function populateModal(id) {
   // 2026-08-01 попросил убрать автовыбор первого ПС), поэтому список рейсов
   // (tt-trip/td-trip) заполнится сам через onchange="onTirFleetSelect()"/
   // "onDozFleetSelect()" на самом select, когда пользователь реально выберет ПС —
-  // отдельный вызов здесь больше не нужен.
+  // отдельный вызов здесь больше не нужен. Но подсказку контрагента/предпросмотр
+  // начисления/список рейсов от ПРОШЛОГО открытия окна эти onchange-обработчики
+  // сами не чистят (они просто ничего не делают, пока ПС не выбран заново) — без
+  // явной очистки здесь подсказка "зависала" с прошлым контрагентом, хотя поле ПС
+  // уже пустое (баг найден пользователем 2026-08-01).
+  if(id==='modal-transfer-tir'){
+    const infoEl=document.getElementById('tt-fleet-info'); if(infoEl) infoEl.innerHTML='';
+    const preview=document.getElementById('tt-charge-preview'); if(preview){ preview.style.display='none'; preview.textContent=''; }
+    const tripSel=document.getElementById('tt-trip'); if(tripSel) tripSel.innerHTML='<option value="">— без привязки к рейсу —</option>';
+  }
+  if(id==='modal-transfer-dozv'){
+    const infoEl=document.getElementById('td-fleet-info'); if(infoEl) infoEl.innerHTML='';
+    const preview=document.getElementById('td-charge-preview'); if(preview){ preview.style.display='none'; preview.textContent=''; }
+    const tripSel=document.getElementById('td-trip'); if(tripSel) tripSel.innerHTML='<option value="">— без привязки к рейсу —</option>';
+  }
 
   // Reset return comp blocks
   const rtComp=document.getElementById('rt-comp-block');
@@ -4125,7 +4143,10 @@ function onDozCountryChange(prefix) {
   const country=document.getElementById(prefix+'-country').value;
   const c=DOZ_COUNTRIES.find(x=>x.name===country);
   const kindEl=document.getElementById(prefix+'-kind');
-  if(kindEl && c) kindEl.innerHTML=c.kinds.map(k=>`<option value="${k}">${k}</option>`).join('');
+  // Страна не выбрана (или не найдена) — очищаем "Вид дозвола", а не оставляем
+  // список от предыдущей страны, который иначе "зависал" (баг найден
+  // пользователем 2026-08-01, симметрично баг с подсказкой ПС выше).
+  if(kindEl) kindEl.innerHTML = c ? c.kinds.map(k=>`<option value="${k}">${k}</option>`).join('') : '';
 }
 
 function toggleDozExpiry(prefix) {
@@ -4540,6 +4561,11 @@ async function _saveDozNewImpl() {
   const epermit=document.getElementById('nd-epermit').value==='yes';
   const rec=document.getElementById('nd-rec').value;
   if(!num||!rec){alert('Заполните обязательные поля');return;}
+  // Страна/вид раньше не проверялись вообще — можно было сохранить дозвол с
+  // "залипшей" страной по умолчанию (Казахстан), не выбрав её на самом деле
+  // (баг найден пользователем 2026-08-01).
+  if(!country){alert('Выберите страну дозвола');return;}
+  if(!kind){alert('Выберите вид дозвола');return;}
   // Е-ПЕРМИТ в реальности сразу закрепляется за конкретной машиной при получении
   // от МИНТРАНС (не лежит "свободным" в офисе, как бумажный) — решение пользователя
   // 2026-07-20.
