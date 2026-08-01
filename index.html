@@ -95,8 +95,11 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
 .overlay.open{display:flex;}
 .modal{background:var(--surface);border-radius:var(--radius-lg);width:100%;max-width:520px;max-height:92vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.2);}
 .modal.wide{max-width:680px;}
+.modal.fullscreen{max-width:calc(100vw - 32px);width:calc(100vw - 32px);height:calc(100vh - 32px);max-height:calc(100vh - 32px);}
 .modal-head{padding:16px 18px 13px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;}
 .modal-head h3{font-size:14px;font-weight:600;}
+.modal-head-actions{display:flex;align-items:center;gap:10px;}
+.modal-fullscreen-toggle{cursor:pointer;font-size:15px;color:var(--text3);line-height:1;padding:4px;}
 .modal-close{cursor:pointer;font-size:18px;color:var(--text3);line-height:1;padding:4px;}
 .modal-body{padding:16px 18px;}
 .modal-foot{padding:12px 18px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end;}
@@ -2408,7 +2411,12 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
 
 <div class="overlay" id="modal-trip-detail">
   <div class="modal wide">
-    <div class="modal-head"><h3 id="td-trip-title">Рейс</h3><span class="modal-close" onclick="closeModal('modal-trip-detail')">×</span></div>
+    <div class="modal-head"><h3 id="td-trip-title">Рейс</h3>
+      <div class="modal-head-actions">
+        <span class="modal-fullscreen-toggle" id="td-fullscreen-btn" onclick="toggleModalFullscreen('modal-trip-detail','td-fullscreen-btn')" title="На весь экран">⤢</span>
+        <span class="modal-close" onclick="closeModal('modal-trip-detail')">×</span>
+      </div>
+    </div>
     <div class="modal-body" id="td-trip-body"></div>
     <div class="modal-foot" id="td-trip-foot"></div>
   </div>
@@ -3914,8 +3922,24 @@ function closeModal(id) {
   document.getElementById(id).classList.remove('open');
   // Re-enable any disabled selects for next use
   document.querySelectorAll('#'+id+' select[disabled]').forEach(el=>{el.disabled=false;});
+  // Сбрасываем полноэкранный режим — каждое открытие модалки начинается с обычного
+  // размера, а не запоминает состояние с прошлого раза (решение пользователя 2026-08-01).
+  const modalEl=document.querySelector('#'+id+' .modal');
+  if(modalEl) modalEl.classList.remove('fullscreen');
+  document.querySelectorAll('#'+id+' .modal-fullscreen-toggle').forEach(btn=>{btn.textContent='⤢'; btn.title='На весь экран';});
 }
 document.querySelectorAll('.overlay').forEach(o=>o.addEventListener('click',e=>{if(e.target===o)o.classList.remove('open');}));
+
+// Кнопка рядом с крестиком, разворачивающая окно на весь экран — пока только у
+// деталей рейса (решение пользователя 2026-08-01), но написана универсально —
+// можно так же подключить к любой другой модалке при необходимости.
+function toggleModalFullscreen(overlayId, btnId){
+  const modalEl=document.querySelector('#'+overlayId+' .modal');
+  if(!modalEl) return;
+  const isFull=modalEl.classList.toggle('fullscreen');
+  const btn=document.getElementById(btnId);
+  if(btn){ btn.textContent = isFull ? '⤡' : '⤢'; btn.title = isFull ? 'Свернуть' : 'На весь экран'; }
+}
 
 // Общая очистка полей формы "Добавить..." перед показом — иначе в полях остаются
 // данные предыдущей записи (телефон/паспорт прошлого контрагента и т.п., баг найден
