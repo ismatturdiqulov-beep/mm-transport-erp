@@ -3927,8 +3927,15 @@ function closeModal(id) {
   const modalEl=document.querySelector('#'+id+' .modal');
   if(modalEl) modalEl.classList.remove('fullscreen');
   document.querySelectorAll('#'+id+' .modal-fullscreen-toggle').forEach(btn=>{btn.textContent='⤢'; btn.title='На весь экран';});
+  // fleetCharge/fleetPay/fleetVac помечают модалку конкретным ПС (dataset.fleetId),
+  // чтобы при сохранении не ошибиться получателем. Если вместо сохранения нажать
+  // "Отмена", метка раньше оставалась висеть — при следующем открытии того же окна
+  // через общую кнопку "+ Начисление"/"+ Приход" сохранение молча уходило старому
+  // ПС, а не тому контрагенту, что реально выбран в списке (баг найден
+  // пользователем 2026-08-01).
+  delete document.getElementById(id).dataset.fleetId;
 }
-document.querySelectorAll('.overlay').forEach(o=>o.addEventListener('click',e=>{if(e.target===o)o.classList.remove('open');}));
+document.querySelectorAll('.overlay').forEach(o=>o.addEventListener('click',e=>{if(e.target===o)closeModal(o.id);}));
 
 // Кнопка рядом с крестиком, разворачивающая окно на весь экран — пока только у
 // деталей рейса (решение пользователя 2026-08-01), но написана универсально —
@@ -4030,9 +4037,15 @@ function populateModal(id) {
     'nd-fleet': [{v:'',l:'— выберите ПС —'}, ...FLEET.filter(f=>f.active!==false).map(f=>{const kg=getFleetKontragent(f);return {v:f.id,l:f.label+' — '+kg.name};})],
     'nt-buy-wallet': KASSA_WALLETS.filter(w=>w.active!==false).sort((a,b)=>(a.order||99)-(b.order||99)).map(w=>({v:w.id,l:(w.icon||'💰')+' '+w.name})),
     'nd-buy-wallet': KASSA_WALLETS.filter(w=>w.active!==false).sort((a,b)=>(a.order||99)-(b.order||99)).map(w=>({v:w.id,l:(w.icon||'💰')+' '+w.name})),
-    'ch-person': allPersons.map(p=>({v:p,l:p})),
-    'pay-person': allPersons.map(p=>({v:p,l:p})),
-    'vac-person': KONTRAGENTY.filter(k=>k.active!==false).map(k=>({v:k.name,l:k.name})),
+    // Тот же баг, что у tt-fleet/td-fleet/nd-fleet выше — без пустого пункта браузер
+    // выбирал первого контрагента из списка сам, и при сохранении через общие кнопки
+    // "+ Начисление"/"+ Приход" (не из карточки конкретного ПС) деньги могли молча
+    // уйти не тому контрагенту (баг найден пользователем 2026-08-01). fleetCharge/
+    // fleetPay/fleetVac (открытие из карточки ПС) всё равно сразу подменяют список
+    // одним заблокированным вариантом — на них это не влияет.
+    'ch-person': [{v:'',l:'— выберите контрагента —'}, ...allPersons.map(p=>({v:p,l:p}))],
+    'pay-person': [{v:'',l:'— выберите контрагента —'}, ...allPersons.map(p=>({v:p,l:p}))],
+    'vac-person': [{v:'',l:'— выберите контрагента —'}, ...KONTRAGENTY.filter(k=>k.active!==false).map(k=>({v:k.name,l:k.name}))],
   };
   Object.entries(selMap).forEach(([sid,opts])=>{
     const el=document.getElementById(sid);
@@ -4070,7 +4083,10 @@ function populateModal(id) {
     // Наёмный водитель не может быть "Ответственным лицом" за ПС — иначе начисления
     // за ТИР/Дозвол уйдут на контрагента, который не отвечает за финансы (решение
     // пользователя 2026-07-21). Он назначается отдельно, полем "Закреплённый водитель".
-    if(afPerson) afPerson.innerHTML=KONTRAGENTY.filter(k=>k.active!==false&&k.type!=='hired_driver').map(k=>`<option value="${k.id}">${k.name}${k.short&&k.short!==k.name?' ('+k.short+')':''} · ${k.type==='mm'?'Собств.':k.type==='tenant'?'Аренда':'Проч.'}</option>`).join('');
+    // Пустой первый пункт — без него браузер сам выбирал первого контрагента из списка,
+    // и если забыть сменить, ВСЕ будущие начисления по ТИР/Дозволу/аренде за эту машину
+    // молча уходили не тому контрагенту (баг найден пользователем 2026-08-01).
+    if(afPerson) afPerson.innerHTML='<option value="">— выберите контрагента —</option>'+KONTRAGENTY.filter(k=>k.active!==false&&k.type!=='hired_driver').map(k=>`<option value="${k.id}">${k.name}${k.short&&k.short!==k.name?' ('+k.short+')':''} · ${k.type==='mm'?'Собств.':k.type==='tenant'?'Аренда':'Проч.'}</option>`).join('');
     const afTruck=document.getElementById('af-truck');
     // Тягач ИЛИ Фургон — фургон тоже может быть тянущей единицей в связке
     // Фургон+Прицеп, не только классический тягач (решение пользователя 2026-07-22).
@@ -4932,14 +4948,18 @@ function openWaybillModal(){
   updateWaybillModalNumPreview();
   // Один человек в списке (или ни одного) — поле выбора скрыто, значение
   // подставится автоматически при сохранении. Несколько — нужно выбрать.
+  // Пустой первый пункт при показе выбора — без него браузер сам выбирал первого
+  // из списка, и без единой проверки "обязательно" в путевой лист (уже официальный
+  // печатный документ) молча вписывался не тот механик/медработник (баг найден
+  // пользователем 2026-08-01).
   const mechRow=document.getElementById('wb-mechanic-row'), mechSel=document.getElementById('wb-mechanic');
   const mechanics=WAYBILL_SETTINGS.mechanics||[];
   if(mechRow){ mechRow.style.display = mechanics.length>1 ? 'block' : 'none'; }
-  if(mechSel) mechSel.innerHTML=mechanics.map(n=>`<option value="${n}">${n}</option>`).join('');
+  if(mechSel) mechSel.innerHTML=(mechanics.length>1?'<option value="">— выберите механика —</option>':'')+mechanics.map(n=>`<option value="${n}">${n}</option>`).join('');
   const medRow=document.getElementById('wb-medic-row'), medSel=document.getElementById('wb-medic');
   const medics=WAYBILL_SETTINGS.medics||[];
   if(medRow){ medRow.style.display = medics.length>1 ? 'block' : 'none'; }
-  if(medSel) medSel.innerHTML=medics.map(n=>`<option value="${n}">${n}</option>`).join('');
+  if(medSel) medSel.innerHTML=(medics.length>1?'<option value="">— выберите медработника —</option>':'')+medics.map(n=>`<option value="${n}">${n}</option>`).join('');
   openModal('modal-waybill');
 }
 
@@ -4994,6 +5014,13 @@ async function _saveWaybillImpl(){
   const drv2Id=document.getElementById('wb-drv2').value;
   if(!fleetId){ alert('Выберите подвижной состав'); return; }
   if(!drv1Id){ alert('Выберите водителя 1'); return; }
+  // Раньше не проверялось вообще — при нескольких механиках/медработниках список
+  // показывался, но браузер сам выбирал первого, и в путевой лист молча вписывался
+  // не тот человек, если не сменить (баг найден пользователем 2026-08-01).
+  const mechanicsChk=WAYBILL_SETTINGS.mechanics||[];
+  const medicsChk=WAYBILL_SETTINGS.medics||[];
+  if(mechanicsChk.length>1 && !document.getElementById('wb-mechanic')?.value){ alert('Выберите дежурного механика'); return; }
+  if(medicsChk.length>1 && !document.getElementById('wb-medic')?.value){ alert('Выберите медработника'); return; }
   const fleet=FLEET.find(f=>f.id===fleetId);
   const truck=fleet&&fleet.truckId?TRANSPORT.find(t=>t.id===fleet.truckId):null;
   const trailer=fleet&&fleet.trailerId?TRANSPORT.find(t=>t.id===fleet.trailerId):null;
