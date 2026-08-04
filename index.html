@@ -2353,7 +2353,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
       </div>
       <div class="form-grid-2">
         <div class="form-row"><label>Водитель *</label><select id="tr-driver"><option value="">— выберите —</option></select></div>
-        <div class="form-row"><label>Начальный пробег (км)</label>
+        <div class="form-row"><label>Показание спидометра в начале рейса (км)</label>
           <input type="text" inputmode="numeric" class="fmt-mileage" id="tr-km-start" placeholder="0">
           <div id="tr-km-hint" style="font-size:11px;color:var(--text3);margin-top:2px;"></div>
         </div>
@@ -2541,8 +2541,8 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
       <div style="padding:10px 14px;background:var(--surface2);border-radius:var(--radius-lg);border-left:3px solid var(--accent2);margin-bottom:10px;">
         <div style="font-size:12px;font-weight:600;color:var(--accent2);margin-bottom:10px;">📏 Пробег и топливо</div>
         <div class="form-grid-2">
-          <div class="form-row"><label>Начальный пробег (км)</label><input type="text" class="fmt-mileage" id="tf-km-start" readonly style="background:var(--surface2);color:var(--text3)"></div>
-          <div class="form-row"><label>Конечный пробег (км) *</label><input type="text" inputmode="numeric" class="fmt-mileage" id="tf-km-end" placeholder="Введите показание одометра" oninput="calcTripFinish()"></div>
+          <div class="form-row"><label>Показание спидометра в начале рейса (км)</label><input type="text" class="fmt-mileage" id="tf-km-start" readonly style="background:var(--surface2);color:var(--text3)"></div>
+          <div class="form-row"><label>Показание спидометра в конце рейса (км) *</label><input type="text" inputmode="numeric" class="fmt-mileage" id="tf-km-end" placeholder="Введите показание одометра" oninput="calcTripFinish()"></div>
         </div>
         <div class="form-grid-2">
           <div class="form-row"><label>Топливо в начале (л)</label><input type="number" id="tf-fuel-start" readonly style="background:var(--surface2);color:var(--text3)"></div>
@@ -10159,7 +10159,7 @@ function finishTripCheck(){
   const kmEnd=kmEndEl&&kmEndEl.value!==''?parseFloat(unformatNumber(kmEndEl.value)):null;
   const fuelEnd=fuelEndEl&&fuelEndEl.value!==''?parseFloat(fuelEndEl.value):null;
   const warnings=[];
-  if(!kmEnd) warnings.push('• Конечный пробег не указан');
+  if(!kmEnd) warnings.push('• Показание спидометра в конце рейса не указано');
   if(fuelEnd===null) warnings.push('• Остаток топлива не указан');
   if(!trip.driverId) warnings.push('• Водитель не назначен');
   const debt=tripDebt(trip);
@@ -11008,8 +11008,8 @@ function printTripReport(tripId){
   <div class="fuel-box">
     <div style="font-weight:bold;margin-bottom:6px;">📏 Пробег и расход топлива</div>
     <div class="fuel-row">
-      <span>Начальный пробег: <b>${trip.kmStart>0?fmtN(trip.kmStart)+' км':'не указан'}</b></span>
-      <span>Конечный пробег: <b>${trip.kmEnd>0?fmtN(trip.kmEnd)+' км':'не указан'}</b></span>
+      <span>Показание спидометра в начале рейса: <b>${trip.kmStart>0?fmtN(trip.kmStart)+' км':'не указано'}</b></span>
+      <span>Показание спидометра в конце рейса: <b>${trip.kmEnd>0?fmtN(trip.kmEnd)+' км':'не указано'}</b></span>
       <span>Пробег рейса: <b>${km>0?fmtN(km)+' км':'—'}</b></span>
     </div>
     <div class="fuel-row" style="margin-top:4px;">
