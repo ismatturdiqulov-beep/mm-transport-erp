@@ -9850,6 +9850,20 @@ function tripFuelPer100(trip){
   const km=tripKm(trip),fuel=tripFuelUsed(trip);
   return(km>0&&fuel>0)?Math.round(fuel/km*100*10)/10:0;
 }
+// Отклонение факта от нормы расхода (Этап 3, решение пользователя 2026-08-04).
+// Нормы (л/100км гружёный/пустой) заданы на ед. ПС — если ни одна не задана,
+// сравнивать не с чем, available:false (а не 0, чтобы не путать с "точно по норме").
+function tripFuelNormInfo(trip){
+  const fleet=trip.fleetId?FLEET.find(f=>f.id===trip.fleetId):null;
+  const normLoaded=(fleet&&fleet.fuelNormLoaded)||0;
+  const normEmpty=(fleet&&fleet.fuelNormEmpty)||0;
+  if(!normLoaded&&!normEmpty) return {available:false};
+  const expected=tripLoadedKm(trip)/100*normLoaded+tripEmptyKm(trip)/100*normEmpty;
+  const actual=tripFuelUsed(trip);
+  const deviation=actual-expected;
+  const deviationPct=expected>0?Math.round(deviation/expected*1000)/10:0;
+  return {available:true, expected, actual, deviation, deviationPct};
+}
 function getActiveTripsCount(){return TRIPS.filter(t=>!['done'].includes(t.status)).length;}
 
 // --- ТИР/ДОЗВОЛ ТЕГИ ---
@@ -10695,6 +10709,7 @@ function openTripDetail(tripId){
   const totalExp=tripTotalExpenses(trip),income=tripTotalIncome(trip),profit=tripProfit(trip);
   const paid=tripTotalPaid(trip),debt=tripDebt(trip);
   const km=tripKm(trip),fuelUsed=tripFuelUsed(trip),per100=tripFuelPer100(trip);
+  const loadedKm=tripLoadedKm(trip),emptyKm=tripEmptyKm(trip),normInfo=tripFuelNormInfo(trip);
   const advance=KASSA.filter(k=>k.tripId===trip.id&&k.type==='payout').reduce((s,k)=>s+k.amount,0);
   // ТИРы: из tirIds рейса + из записей ТИР с tripId
   const tirIdsFromRecords = TIRS.filter(x=>x.tripId===trip.id).map(x=>x.id);
@@ -10785,10 +10800,25 @@ function openTripDetail(tripId){
       </div>
     </div>`;
     })():''}
-    ${km>0||fuelUsed>0?`<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px;">
+    ${km>0||fuelUsed>0?`<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:${emptyKm>0||normInfo.available?'8px':'12px'};">
       ${km>0?`<div class="bs-card"><div class="bsl">Пробег</div><div class="bsv">${fmtN(km)} км</div></div>`:''}
       ${fuelUsed>0?`<div class="bs-card"><div class="bsl">Топливо</div><div class="bsv">${fuelUsed.toFixed(1)} л</div></div>`:''}
       ${per100>0?`<div class="bs-card"><div class="bsl">л/100км</div><div class="bsv">${per100}</div></div>`:''}
+    </div>`:''}
+    ${emptyKm>0?`<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:${normInfo.available?'8px':'12px'};">
+      <div class="bs-card"><div class="bsl">Пробег с грузом</div><div class="bsv">${fmtN(loadedKm)} км</div></div>
+      <div class="bs-card"><div class="bsl">Порожний пробег</div><div class="bsv">${fmtN(emptyKm)} км</div></div>
+    </div>`:''}
+    <!-- Отклонение факта от нормы расхода (Этап 3) — виден, только если у ПС заданы
+         нормы (л/100км гружёный/пустой); иначе сравнивать не с чем (решение
+         пользователя 2026-08-04). -->
+    ${normInfo.available?`<div style="padding:10px 14px;background:var(--surface2);border-radius:var(--radius-lg);border-left:3px solid ${normInfo.deviation>0?'var(--red)':'var(--green)'};margin-bottom:12px;">
+      <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:8px;">⛽ Расход по норме</div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;">
+        <div class="bs-card"><div class="bsl">По норме должно уйти</div><div class="bsv">${normInfo.expected.toFixed(1)} л</div></div>
+        <div class="bs-card"><div class="bsl">Реально ушло</div><div class="bsv">${normInfo.actual.toFixed(1)} л</div></div>
+        <div class="bs-card"><div class="bsl">Отклонение</div><div class="bsv ${normInfo.deviation>0?'red':'green'}">${normInfo.deviation>0?'+':''}${normInfo.deviation.toFixed(1)} л (${normInfo.deviationPct>0?'+':''}${normInfo.deviationPct}%)</div></div>
+      </div>
     </div>`:''}
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;font-size:13px;">
       <div><b>Тягач:</b> ${truck?truck.callsign+(truck.plate?' ('+truck.plate+')':''):'—'}</div>
@@ -10974,6 +11004,7 @@ function printTripReport(tripId){
   const totalExp=tripTotalExpenses(trip),income=tripTotalIncome(trip),profit=tripProfit(trip);
   const paid=tripTotalPaid(trip),debt=tripDebt(trip);
   const km=tripKm(trip),fuelUsed=tripFuelUsed(trip),per100=tripFuelPer100(trip);
+  const loadedKm=tripLoadedKm(trip),emptyKm=tripEmptyKm(trip),normInfo=tripFuelNormInfo(trip);
   const tirIdsAll2=[...new Set([...(trip.tirIds||[]),...TIRS.filter(x=>x.tripId===trip.id).map(x=>x.id)])];
   const tirNums=tirIdsAll2.map(id=>(TIRS.find(x=>x.id===id)||{}).num||id).join(', ');
   const dozvNums=(trip.dozvIds||[]).map(id=>{const d=DOZV.find(x=>x.id===id);return d?d.num+' ('+d.country+')':id;}).join(', ');
@@ -11073,6 +11104,10 @@ function printTripReport(tripId){
       <span>Показание спидометра в конце рейса: <b>${trip.kmEnd>0?fmtN(trip.kmEnd)+' км':'не указано'}</b></span>
       <span>Пробег рейса: <b>${km>0?fmtN(km)+' км':'—'}</b></span>
     </div>
+    ${emptyKm>0?`<div class="fuel-row" style="margin-top:4px;">
+      <span>Пробег с грузом: <b>${fmtN(loadedKm)} км</b></span>
+      <span>Порожний пробег: <b>${fmtN(emptyKm)} км</b></span>
+    </div>`:''}
     <div class="fuel-row" style="margin-top:4px;">
       <span>Топливо в начале: <b>${trip.fuelStart>0?trip.fuelStart+' л':'не указано'}</b></span>
       <span>Топливо в конце: <b>${trip.fuelEnd>=0&&trip.fuelEnd!==undefined?trip.fuelEnd+' л':'не указано'}</b></span>
@@ -11082,6 +11117,12 @@ function printTripReport(tripId){
       <span>Израсходовано топлива: ${fuelUsed.toFixed(1)} л</span>
       <span>Средний расход: ${per100} л/100 км</span>
       ${km>0&&income>0?`<span>Прибыль на км: ${fmtN(Math.round(profit/km))} сум</span>`:''}
+    </div>`:''}
+    <!-- Отклонение факта от нормы (Этап 3) — печатается, только если у ПС заданы
+         нормы расхода (решение пользователя 2026-08-04). -->
+    ${normInfo.available?`<div class="fuel-row" style="margin-top:4px;font-weight:bold;color:${normInfo.deviation>0?'#b91c1c':'#15803d'};">
+      <span>По норме должно уйти: ${normInfo.expected.toFixed(1)} л</span>
+      <span>Отклонение от нормы: ${normInfo.deviation>0?'+':''}${normInfo.deviation.toFixed(1)} л (${normInfo.deviationPct>0?'+':''}${normInfo.deviationPct}%)</span>
     </div>`:''}
   </div>
 
