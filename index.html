@@ -11735,7 +11735,11 @@ function renderMaintenance(){
       const t=TRANSPORT.find(x=>x.id===m.transportId);
       const svc=m.serviceId?KONTRAGENTY.find(k=>k.id===m.serviceId):null;
       const mt=MAINT_TYPES[m.type]||MAINT_TYPES.other;
-      return ((t?t.callsign+t.plate:'')+(svc?svc.name:'')+mt.label+(m.note||'')+(m.parts||'')).toLowerCase().includes(q);
+      // Реальное описание работ/запчастей лежит в m.items[].desc/.parts (заполняется
+      // построчно в модалке добавления ТО), а не в m.note/m.parts — из-за этого поиск
+      // не находил записи по названию работы (баг найден пользователем 2026-08-04).
+      const itemsText=(m.items||[]).map(i=>(i.desc||'')+(i.parts||'')).join(' ');
+      return ((t?t.callsign+t.plate:'')+(svc?svc.name:'')+mt.label+(m.note||'')+(m.parts||'')+itemsText).toLowerCase().includes(q);
     });
   }
   if(fT)    data = data.filter(m=>m.transportId===fT);
