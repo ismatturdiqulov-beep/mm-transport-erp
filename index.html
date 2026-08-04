@@ -2604,6 +2604,23 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
       <div style="padding:10px 14px;background:var(--surface2);border-radius:var(--radius-lg);border-left:3px solid var(--amber);margin-bottom:10px;">
         <div style="font-size:12px;font-weight:600;color:var(--amber);margin-bottom:10px;">👤 Расчёт с водителем</div>
         <div id="tf-advance-info" style="font-size:12px;color:var(--text2);margin-bottom:8px;"></div>
+        <!-- Сдельная ЗП — способ и ставка выбираются заново каждый раз, ничего не
+             запоминается между рейсами (решение пользователя 2026-08-04). При
+             "Вручную" (по умолчанию) всё работает как раньше — просто вписывается сумма. -->
+        <div class="form-grid-2">
+          <div class="form-row"><label>Способ расчёта ЗП</label>
+            <select id="tf-salary-method" onchange="onSalaryMethodChange()">
+              <option value="manual">Вручную</option>
+              <option value="pct_income">% от ставки</option>
+              <option value="pct_profit">% от прибыли</option>
+              <option value="per_km">Оплата за км</option>
+            </select>
+          </div>
+          <div class="form-row" id="tf-salary-rate-row" style="display:none;">
+            <label id="tf-salary-rate-label">Процент (%)</label>
+            <input type="number" id="tf-salary-rate" placeholder="10" oninput="calcTripFinish()">
+          </div>
+        </div>
         <div class="form-grid-2">
           <div class="form-row"><label>ЗП водителю (сум)</label><input type="text" inputmode="numeric" class="fmt-money" id="tf-salary" placeholder="0" oninput="calcTripFinish()"></div>
           <div class="form-row"><label>Из кошелька</label>
@@ -9818,7 +9835,11 @@ const TRIP_STATUSES = {
 // обычную кнопку смены статуса — иначе рейс уходит в архив без пробега/топлива/зарплаты и
 // без единого предупреждения.
 const TRIP_STATUS_FLOW = ['prep','active'];
-const TRIP_EXP_CATS = {fuel:'⛽ Топливо',road:'🛣 Дорога',border:'🛂 Граница',repair:'🔧 Ремонт',food:'🍔 Суточные',parking:'🅿️ Стоянка',tir:'📋 ТИР карнет',dozv:'📄 Дозвол',other:'📦 Прочее'};
+// salary ('ЗП водителю') создаётся программно при завершении рейса, а не через
+// выбор в форме "+ Расход" (там такой категории нет в списке) — поэтому её тут
+// не хватало, и в отчётах вместо названия печаталось сырое "salary" (баг найден
+// пользователем 2026-08-04).
+const TRIP_EXP_CATS = {fuel:'⛽ Топливо',road:'🛣 Дорога',border:'🛂 Граница',repair:'🔧 Ремонт',food:'🍔 Суточные',parking:'🅿️ Стоянка',tir:'📋 ТИР карнет',dozv:'📄 Дозвол',salary:'👤 Зарплата',other:'📦 Прочее'};
 const TRIP_SURCHARGE_CATS = {downtime:'⏱ Простой',delay:'⏰ Задержка доставки',damage:'📦 Порча груза',other:'📌 Прочее'};
 
 let _editTripId=null, _expTripId=null, _finishTripId=null, _legTripId=null, _payTripId=null, _editExpId=null, _editLegIdx=null, _surchTripId=null, _editSurchId=null;
@@ -10509,6 +10530,23 @@ async function _saveTripPaymentImpl(){
 }
 
 // --- ЗАВЕРШЕНИЕ ---
+// Переключение способа расчёта ЗП — "Вручную" оставляет поле ЗП полностью
+// редактируемым (поведение как раньше); остальные три способа блокируют его на
+// редактирование и считают сумму сами (решение пользователя 2026-08-04).
+function onSalaryMethodChange(){
+  const method=(document.getElementById('tf-salary-method')||{}).value||'manual';
+  const rateRow=document.getElementById('tf-salary-rate-row');
+  const rateLabel=document.getElementById('tf-salary-rate-label');
+  const salaryEl=document.getElementById('tf-salary');
+  if(rateRow) rateRow.style.display=method==='manual'?'none':'block';
+  if(rateLabel) rateLabel.textContent=method==='per_km'?'Сум за км':'Процент (%)';
+  if(salaryEl){
+    salaryEl.readOnly=method!=='manual';
+    salaryEl.style.background=method!=='manual'?'var(--surface2)':'';
+    salaryEl.style.color=method!=='manual'?'var(--text3)':'';
+  }
+  calcTripFinish();
+}
 function calcTripFinish(){
   const trip=TRIPS.find(t=>t.id===_finishTripId);if(!trip)return;
   const kmStart=trip.kmStart||0;
@@ -10560,9 +10598,24 @@ function calcTripFinish(){
     const rateEl=el('tf-leg-rate-'+i);
     totalIncome+=rateEl?parseFloat(unformatNumber(rateEl.value))||l.rate||0:l.rate||0;
   });
+  const expenses=tripTotalExpenses(trip);
+  // Сдельная ЗП — способ и ставка (n) вводятся заново каждый раз, ничего не
+  // запоминается между рейсами (решение пользователя 2026-08-04). "Расход" здесь —
+  // уже сохранённые расходы рейса, БЕЗ самой ЗП (она ещё не добавлена в trip.expenses
+  // на этом экране) — иначе получился бы замкнутый расчёт "прибыль минус ЗП, умножить
+  // на процент, получить ЗП".
+  const salaryMethod=(el('tf-salary-method')||{}).value||'manual';
+  const salaryRate=parseFloat((el('tf-salary-rate')||{}).value)||0;
+  const salaryEl=el('tf-salary');
+  if(salaryMethod!=='manual'&&salaryEl){
+    let autoSalary=0;
+    if(salaryMethod==='pct_income') autoSalary=totalIncome*salaryRate/100;
+    else if(salaryMethod==='pct_profit') autoSalary=(totalIncome-expenses)*salaryRate/100;
+    else if(salaryMethod==='per_km') autoSalary=km*salaryRate;
+    setNumVal('tf-salary', Math.max(0,Math.round(autoSalary)));
+  }
   const salary=numVal('tf-salary');
   const cashReturn=numVal('tf-cash-return');
-  const expenses=tripTotalExpenses(trip);
   const profit=totalIncome-(expenses+salary);
   if(el('tf-calc-income')) el('tf-calc-income').textContent=fmtN(totalIncome);
   if(el('tf-calc-exp'))    el('tf-calc-exp').textContent   =fmtN(expenses+salary);
@@ -10634,6 +10687,17 @@ function openFinishTrip(tripId){
   const salaryEl=document.getElementById('tf-salary');
   const retEl=document.getElementById('tf-cash-return');
   if(salaryEl) salaryEl.value='';
+  // Способ расчёта ЗП сбрасывается на "Вручную" при каждом открытии — ничего не
+  // запоминается между рейсами (решение пользователя 2026-08-04). Сам пересчёт
+  // (calcTripFinish) уже вызывается ниже через setTimeout, когда форма полностью
+  // готова — здесь только визуальный сброс.
+  const salaryMethodEl=document.getElementById('tf-salary-method');
+  if(salaryMethodEl) salaryMethodEl.value='manual';
+  const salaryRateEl=document.getElementById('tf-salary-rate');
+  if(salaryRateEl) salaryRateEl.value='';
+  const salaryRateRowEl=document.getElementById('tf-salary-rate-row');
+  if(salaryRateRowEl) salaryRateRowEl.style.display='none';
+  if(salaryEl){ salaryEl.readOnly=false; salaryEl.style.background=''; salaryEl.style.color=''; }
   if(retEl){
     const remainingAdvance=tripAdvanceRemaining(trip);
     retEl.value=remainingAdvance>0?formatNumberSpaces(String(remainingAdvance)):'';
@@ -10681,6 +10745,14 @@ async function _finishTripImpl(){
   // ЗП водителю
   const salaryVal=numVal('tf-salary');
   const salaryWallet=(document.getElementById('tf-salary-wallet')||{}).value||'cash';
+  // Способ расчёта ЗП — только для пометки в описании расхода (для истории), в базе
+  // отдельно не хранится, само число уже посчитано и лежит в tf-salary (решение
+  // пользователя 2026-08-04).
+  const salaryMethodVal=(document.getElementById('tf-salary-method')||{}).value||'manual';
+  const salaryRateVal=parseFloat((document.getElementById('tf-salary-rate')||{}).value)||0;
+  const SALARY_METHOD_LABEL={pct_income:'% от ставки',pct_profit:'% от прибыли',per_km:'оплата за км'};
+  const salaryMethodNote=salaryMethodVal!=='manual'&&SALARY_METHOD_LABEL[salaryMethodVal]
+    ?` (${SALARY_METHOD_LABEL[salaryMethodVal]}, ${salaryRateVal}${salaryMethodVal==='per_km'?' сум/км':'%'})`:'';
   const cashReturnVal=numVal('tf-cash-return');
   const finalNote = note?(trip.note?trip.note+' | ':'')+note:trip.note;
 
@@ -10707,7 +10779,7 @@ async function _finishTripImpl(){
   // ЗП водителю → расход в кассе
   if(salaryVal>0){
     const driver=tripGetDriver(trip);
-    const desc='ЗП водителю'+(driver?' '+driver.name:'');
+    const desc='ЗП водителю'+(driver?' '+driver.name:'')+salaryMethodNote;
     const { data:expData, error:expErr } = await sbClient.from('trip_expenses').insert({
       trip_id:trip.id, date:unloadDate, category:'salary', country:'', wallet:salaryWallet,
       note:desc, amount:salaryVal, currency:'UZS', liters:0, source:'manual',
