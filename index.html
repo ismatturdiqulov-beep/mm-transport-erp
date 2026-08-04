@@ -2576,6 +2576,17 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
           <div class="bs-card"><div class="bsl">Топливо потрачено</div><div class="bsv" id="tf-calc-fuel">—</div></div>
           <div class="bs-card"><div class="bsl">Расход л/100км</div><div class="bsv" id="tf-calc-per100">—</div></div>
         </div>
+        <!-- Прогноз по норме — виден только если у ПС заданы нормы расхода (Этап 4,
+             решение пользователя 2026-08-04). Пересчитывается вживую вместе с остальными
+             полями, чтобы диспетчер видел отклонение ДО того, как нажмёт "Завершить". -->
+        <div id="tf-norm-block" style="display:none;margin-top:8px;padding:10px 14px;background:var(--surface2);border-radius:var(--radius-lg);border-left:3px solid var(--accent2);">
+          <div style="font-size:12px;font-weight:600;color:var(--text2);margin-bottom:8px;">⛽ Прогноз по норме</div>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;">
+            <div class="bs-card"><div class="bsl">По норме должно уйти</div><div class="bsv" id="tf-norm-expected">—</div></div>
+            <div class="bs-card"><div class="bsl">Реально ушло</div><div class="bsv" id="tf-norm-actual">—</div></div>
+            <div class="bs-card"><div class="bsl">Отклонение</div><div class="bsv" id="tf-norm-deviation">—</div></div>
+          </div>
+        </div>
       </div>
 
       <!-- Ставки по плечам -->
@@ -10226,6 +10237,25 @@ function finishTripCheck(){
   const emptyKmEl=document.getElementById('tf-empty-km');
   const emptyKmChk=emptyKmEl&&emptyKmEl.value!==''?parseFloat(unformatNumber(emptyKmEl.value)):null;
   if(kmEnd&&emptyKmChk!=null&&emptyKmChk>(kmEnd-(trip.kmStart||0))) warnings.push('• Порожний пробег больше общего пробега — проверьте цифры');
+  // Заметное отклонение от нормы расхода — не блокирует, просто напоминание перед
+  // завершением, чтобы не пропустить перерасход/слив (решение пользователя
+  // 2026-08-04, Этап 4).
+  const fleetChk=trip.fleetId?FLEET.find(f=>f.id===trip.fleetId):null;
+  const normLoadedChk=(fleetChk&&fleetChk.fuelNormLoaded)||0;
+  const normEmptyChk=(fleetChk&&fleetChk.fuelNormEmpty)||0;
+  if((normLoadedChk||normEmptyChk)&&kmEnd&&fuelEnd!=null){
+    const kmStartChk=trip.kmStart||0;
+    const totalKmChk=kmEnd>kmStartChk?kmEnd-kmStartChk:0;
+    const emptyKmForCalc=Math.min(emptyKmChk||0,totalKmChk);
+    const loadedKmForCalc=Math.max(0,totalKmChk-emptyKmForCalc);
+    const refuelsChk=(trip.expenses||[]).filter(e=>e.cat==='fuel').reduce((s,e)=>s+(e.liters||0),0);
+    const fuelUsedChk=(trip.fuelStart||0)+refuelsChk-fuelEnd;
+    const expectedChk=loadedKmForCalc/100*normLoadedChk+emptyKmForCalc/100*normEmptyChk;
+    if(expectedChk>0){
+      const devPctChk=Math.round((fuelUsedChk-expectedChk)/expectedChk*1000)/10;
+      if(Math.abs(devPctChk)>15) warnings.push(`• Расход топлива отличается от нормы на ${devPctChk>0?'+':''}${devPctChk}% — проверьте показания`);
+    }
+  }
   const debt=tripDebt(trip);
   if(debt>0) warnings.push(`• Оплата от заказчика не поступила полностью (долг: ${fmtN(debt)} сум)`);
   if(warnings.length>0){
@@ -10500,6 +10530,30 @@ function calcTripFinish(){
   if(el('tf-calc-km-empty'))  el('tf-calc-km-empty').textContent  = emptyKm>0?fmtN(emptyKm)+' км':'—';
   if(el('tf-calc-fuel'))  el('tf-calc-fuel').textContent  = fuelUsed>0?fuelUsed.toFixed(1)+' л':'—';
   if(el('tf-calc-per100'))el('tf-calc-per100').textContent= per100>0?per100+' л':'—';
+  // Прогноз по норме вживую — считаем из тех же значений формы, а не из уже
+  // сохранённого trip.emptyKm/kmEnd, потому что на этом экране их ещё только вводят
+  // (решение пользователя 2026-08-04, Этап 4).
+  const fleetForNorm=trip.fleetId?FLEET.find(f=>f.id===trip.fleetId):null;
+  const normLoaded=(fleetForNorm&&fleetForNorm.fuelNormLoaded)||0;
+  const normEmpty=(fleetForNorm&&fleetForNorm.fuelNormEmpty)||0;
+  const normBlock=el('tf-norm-block');
+  if(normBlock){
+    if(normLoaded||normEmpty){
+      const expected=loadedKm/100*normLoaded+emptyKm/100*normEmpty;
+      const deviation=fuelUsed-expected;
+      const deviationPct=expected>0?Math.round(deviation/expected*1000)/10:0;
+      normBlock.style.display='block';
+      if(el('tf-norm-expected')) el('tf-norm-expected').textContent=expected>0?expected.toFixed(1)+' л':'—';
+      if(el('tf-norm-actual'))   el('tf-norm-actual').textContent=fuelUsed>0?fuelUsed.toFixed(1)+' л':'—';
+      const devEl=el('tf-norm-deviation');
+      if(devEl){
+        devEl.textContent=expected>0?(deviation>0?'+':'')+deviation.toFixed(1)+' л ('+(deviationPct>0?'+':'')+deviationPct+'%)':'—';
+        devEl.className='bsv '+(expected>0?(deviation>0?'red':deviation<0?'green':''):'');
+      }
+    } else {
+      normBlock.style.display='none';
+    }
+  }
   const legs=trip.legs||[];
   let totalIncome=0;
   legs.forEach((l,i)=>{
