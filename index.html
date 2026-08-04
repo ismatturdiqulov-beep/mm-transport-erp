@@ -1807,6 +1807,10 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
         </div>
         <div class="form-row"><label>Договор до</label><input type="date" id="af-contract"></div>
       </div>
+      <div class="form-grid-2">
+        <div class="form-row"><label>Норма расхода гружёный (л/100км)</label><input type="number" id="af-fuel-norm-loaded" placeholder="35"></div>
+        <div class="form-row"><label>Норма расхода пустой (л/100км)</label><input type="number" id="af-fuel-norm-empty" placeholder="28"></div>
+      </div>
       <div class="form-row"><label>Примечание</label><input type="text" id="af-note"></div>
     </div>
     <div class="modal-foot">
@@ -3032,6 +3036,7 @@ function mapFleetFromDb(r) {
     truckId: r.truck_id||'', trailerId: r.trailer_id||'', plan: r.plan||0, planType: r.plan_type||'',
     contract_end: r.contract_end||'', balance: r.balance||0, active: r.active,
     note: r.note||'', ops: r.ops || [],
+    fuelNormLoaded: r.fuel_norm_loaded||0, fuelNormEmpty: r.fuel_norm_empty||0,
   };
 }
 
@@ -6689,6 +6694,10 @@ function openFleetEdit(id){
         <option value="mm" ${f.planType==='mm'?'selected':''}>Собственник</option>
       </select></div>
     <div class="form-row"><label>Договор до</label><input type="date" id="fe-contract" value="${f.contract_end||''}" class="edit-field"></div>
+    <div class="form-grid-2">
+      <div class="form-row"><label>Норма расхода гружёный (л/100км)</label><input type="number" id="fe-fuel-norm-loaded" value="${f.fuelNormLoaded||''}" class="edit-field" placeholder="35"></div>
+      <div class="form-row"><label>Норма расхода пустой (л/100км)</label><input type="number" id="fe-fuel-norm-empty" value="${f.fuelNormEmpty||''}" class="edit-field" placeholder="28"></div>
+    </div>
     <div class="form-row"><label>Примечание</label><input type="text" id="fe-note" value="${f.note||''}" class="edit-field"></div>`;
   document.getElementById('edit-fleet-body').innerHTML=html;
   openModal('modal-edit-fleet');
@@ -6708,6 +6717,8 @@ async function saveFleetEdit(){
       plan_type: document.getElementById('fe-plan-type').value,
       contract_end: document.getElementById('fe-contract').value || null,
       note: document.getElementById('fe-note').value || '',
+      fuel_norm_loaded: parseFloat(document.getElementById('fe-fuel-norm-loaded').value)||null,
+      fuel_norm_empty: parseFloat(document.getElementById('fe-fuel-norm-empty').value)||null,
     };
     const doSave=async ()=>{
       const { error } = await sbClient.from('fleet').update(updates).eq('id', f.id);
@@ -6715,6 +6726,7 @@ async function saveFleetEdit(){
       f.kontragentId=updates.kontragent_id; f.label=updates.label; f.truckId=updates.truck_id||'';
       f.trailerId=updates.trailer_id||''; f.driverId=updates.driver_id||''; f.plan=updates.plan;
       f.planType=updates.plan_type; f.contract_end=updates.contract_end||''; f.note=updates.note;
+      f.fuelNormLoaded=updates.fuel_norm_loaded||0; f.fuelNormEmpty=updates.fuel_norm_empty||0;
       closeModal('modal-edit-fleet'); renderFleet(); toast('Карточка обновлена');
     };
     const warning=transportConflictWarning(updates.truck_id, updates.trailer_id, f.id);
@@ -6750,6 +6762,8 @@ async function _saveFleetImpl(){
     truck_id: truckId||null, trailer_id: trailerId||null, plan, plan_type: planType,
     contract_end: contract_end||null, balance:0, active:true,
     note: document.getElementById('af-note').value||'', ops:[],
+    fuel_norm_loaded: parseFloat(document.getElementById('af-fuel-norm-loaded').value)||null,
+    fuel_norm_empty: parseFloat(document.getElementById('af-fuel-norm-empty').value)||null,
   };
   const doSave=async ()=>{
     const { data, error } = await sbClient.from('fleet').insert(record).select().single();
