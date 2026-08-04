@@ -2444,7 +2444,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
         </div>
       </div>
       <div class="form-grid-2">
-        <div class="form-row"><label>Сумма *</label><input type="text" inputmode="numeric" class="fmt-money" id="te-amount" placeholder="0" oninput="calcFuelPrice()"></div>
+        <div class="form-row"><label>Сумма *</label><input type="text" inputmode="numeric" class="fmt-money" id="te-amount" placeholder="0" oninput="calcFuelPrice('amount')"></div>
         <div class="form-row"><label>Валюта</label>
           <select id="te-currency" onchange="onTeCurrencyChange()">
             <option value="UZS">🇺🇿 UZS (сум)</option>
@@ -2464,11 +2464,14 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
           </div>
         </div>
       </div>
-      <!-- Поля только для топлива -->
+      <!-- Поля только для топлива. Сумма/Литры/Цена за литр — три взаимосвязанных
+           поля (Сумма = Литры × Цена); заполняете любые два, третье считается само
+           через calcFuelPrice(source) — часть волонтёров привыкла указывать сумму
+           и литры, часть — литры и цену за литр (решение пользователя 2026-08-04). -->
       <div id="te-fuel-block" style="background:var(--surface2);border-radius:var(--radius);padding:10px;margin-bottom:8px;">
         <div class="form-grid-2">
-          <div class="form-row"><label>Литры (л)</label><input type="number" id="te-liters" placeholder="0" oninput="calcFuelPrice()"></div>
-          <div class="form-row"><label>Цена за литр (авто)</label><input type="number" id="te-price-per-l" placeholder="0" readonly style="background:var(--surface2);color:var(--text3)"></div>
+          <div class="form-row"><label>Литры (л)</label><input type="number" id="te-liters" placeholder="0" oninput="calcFuelPrice('liters')"></div>
+          <div class="form-row"><label>Цена за литр</label><input type="number" id="te-price-per-l" placeholder="0" oninput="calcFuelPrice('price')"></div>
         </div>
         <div id="te-fuel-uzs" style="font-size:12px;color:var(--text3);margin-top:4px;"></div>
       </div>
@@ -10066,14 +10069,26 @@ function toggleFuelFields(cat){
   const fb=document.getElementById('te-fuel-block');
   if(fb) fb.style.display=cat==='fuel'?'block':'none';
 }
-function calcFuelPrice(){
-  const amount=numVal('te-amount');
+// source — какое из трёх полей (amount/liters/price) сейчас редактирует
+// пользователь. Считаем то, что он НЕ трогает, по двум остальным. Без source
+// (смена валюты/курса) — просто обновляем строку конвертации, ничего не пересчитываем.
+function calcFuelPrice(source){
+  const priceEl=document.getElementById('te-price-per-l');
   const liters=parseFloat(document.getElementById('te-liters').value)||0;
+  const price=parseFloat(priceEl.value)||0;
+  if(source==='amount'){
+    const amount=numVal('te-amount');
+    priceEl.value=liters>0?(amount>0?Math.round(amount/liters):''):'';
+  } else if(source==='liters'){
+    if(price>0){ setNumVal('te-amount', liters*price); }
+    else { const amount=numVal('te-amount'); priceEl.value=liters>0?(amount>0?Math.round(amount/liters):''):''; }
+  } else if(source==='price'){
+    if(liters>0&&price>0){ setNumVal('te-amount', liters*price); }
+  }
+  const amount=numVal('te-amount');
   const currency=(document.getElementById('te-currency')||{}).value||'UZS';
   const customRate=parseFloat((document.getElementById('te-custom-rate')||{}).value)||0;
   const amountUzs=toUZS(amount,currency,customRate);
-  const priceEl=document.getElementById('te-price-per-l');
-  if(priceEl) priceEl.value=liters>0?Math.round(amount/liters):'';
   const uzsEl=document.getElementById('te-fuel-uzs');
   const usedRate=customRate>0?customRate:(FX_RATES[currency]||0);
   if(uzsEl&&currency!=='UZS'&&amount>0) uzsEl.textContent=`≈ ${fmtN(amountUzs)} сум (курс: 1 ${currency} = ${fmtN(usedRate)} сум)`;
@@ -10148,7 +10163,7 @@ function editTripExpense(tripId,expId){
   document.getElementById('te-desc').value=exp.desc||'';
   toggleFuelFields(exp.cat);
   onTeCurrencyChange();
-  calcFuelPrice();
+  calcFuelPrice('amount');
   onTeWalletChange();
   openModal('modal-trip-expense');
 }
