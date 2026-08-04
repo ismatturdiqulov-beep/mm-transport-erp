@@ -3116,7 +3116,7 @@ function mapKassaFromDb(r) {
     id: r.id, wallet: r.wallet, type: r.type, date: r.date||'', cat: r.category||'',
     from: r.from_name||'', to: r.to_name||'', desc: r.description||'', amount: r.amount,
     tripId: r.trip_id||'', tripExpId: r.trip_exp_id||'', maintenanceId: r.maintenance_id||'',
-    financeId: r.finance_id||'',
+    financeId: r.finance_id||'', createdAt: r.created_at||'',
   };
 }
 
@@ -8023,7 +8023,11 @@ function renderKassa(){
       </div>
     </div>`;
   }).join('');
-  let data=[...KASSA].sort((a,b)=>new Date(b.date)-new Date(a.date));
+  // "Дата" хранит только день, без времени — при нескольких операциях за один день
+  // добавляем created_at (момент фактического ввода записи) как тай-брейк, чтобы
+  // последняя оплата всегда была первой строкой (баг найден пользователем 2026-08-04,
+  // тот же приём, что уже применён к ТИР/Дозвол 2026-07-30).
+  let data=[...KASSA].sort((a,b)=>(new Date(b.date)-new Date(a.date))||(new Date(b.createdAt||0)-new Date(a.createdAt||0)));
   if(fW) data=data.filter(k=>k.wallet===fW);
   if(fM) data=data.filter(k=>k.date.startsWith(fM));
   if(fT) data=data.filter(k=>k.type===fT);
