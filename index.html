@@ -2551,6 +2551,14 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
           <div class="form-row"><label>Показание спидометра в начале рейса (км)</label><input type="text" class="fmt-mileage" id="tf-km-start" readonly style="background:var(--surface2);color:var(--text3)"></div>
           <div class="form-row"><label>Показание спидометра в конце рейса (км) *</label><input type="text" inputmode="numeric" class="fmt-mileage" id="tf-km-end" placeholder="Введите показание одометра" oninput="calcTripFinish()"></div>
         </div>
+        <!-- Порожний пробег — одно число на весь рейс, вводится тут, потому что весь
+             маршрут (и где были порожняком) известен только к завершению рейса.
+             Пробег с грузом дальше считается как остаток: общий − порожний, отдельного
+             поля под него не заводим (решение пользователя 2026-08-04). -->
+        <div class="form-grid-2">
+          <div class="form-row"><label>Порожний пробег (км)</label><input type="text" inputmode="numeric" class="fmt-mileage" id="tf-empty-km" placeholder="Без груза, например Самара→Казань" oninput="calcTripFinish()"></div>
+          <div class="form-row"></div>
+        </div>
         <div class="form-grid-2">
           <div class="form-row"><label>Топливо в начале (л)</label><input type="number" id="tf-fuel-start" readonly style="background:var(--surface2);color:var(--text3)"></div>
           <div class="form-row"><label>Топливо в конце (л)</label><input type="number" id="tf-fuel-end" placeholder="Остаток в баке" oninput="calcTripFinish()"></div>
@@ -2559,8 +2567,12 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
           <div class="form-row"><label>AdBlue в конце (л)</label><input type="number" id="tf-adblue-end" placeholder="0"></div>
           <div class="form-row"></div>
         </div>
-        <div style="margin-top:8px;display:grid;grid-template-columns:repeat(3,1fr);gap:8px;">
-          <div class="bs-card"><div class="bsl">Пробег рейса</div><div class="bsv" id="tf-calc-km">—</div></div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;">
+          <div class="bs-card"><div class="bsl">Общий пробег</div><div class="bsv" id="tf-calc-km">—</div></div>
+          <div class="bs-card"><div class="bsl">Пробег с грузом</div><div class="bsv" id="tf-calc-km-loaded">—</div></div>
+          <div class="bs-card"><div class="bsl">Порожний пробег</div><div class="bsv" id="tf-calc-km-empty">—</div></div>
+        </div>
+        <div style="margin-top:8px;display:grid;grid-template-columns:repeat(2,1fr);gap:8px;">
           <div class="bs-card"><div class="bsl">Топливо потрачено</div><div class="bsv" id="tf-calc-fuel">—</div></div>
           <div class="bs-card"><div class="bsl">Расход л/100км</div><div class="bsv" id="tf-calc-per100">—</div></div>
         </div>
@@ -3149,7 +3161,7 @@ function mapTripFromDb(t, legs, expenses, payments, surcharges) {
       currency: l.currency||'UZS', fxRate: l.fx_rate, rateOrig: l.rate_orig,
       cargo: l.cargo||'', loadDate: l.load_date||'', unloadDate: l.unload_date||'',
     })),
-    kmStart: t.km_start||0, kmEnd: t.km_end||0,
+    kmStart: t.km_start||0, kmEnd: t.km_end||0, emptyKm: t.empty_km||0,
     fuelStart: t.fuel_start||0, fuelEnd: t.fuel_end||0,
     adblueStart: t.adblue_start||0, adblueEnd: t.adblue_end||0,
     expenses: expenses.filter(e => e.trip_id === t.id).map(e => ({
@@ -9825,6 +9837,10 @@ function tripTotalPaid(trip){return (trip.payments||[]).reduce((s,p)=>s+p.amount
 function tripProfit(trip){return tripTotalIncome(trip)-tripTotalExpenses(trip);}
 function tripDebt(trip){return tripTotalIncome(trip)-tripTotalPaid(trip);}
 function tripKm(trip){return(trip.kmEnd>0&&trip.kmStart>0)?trip.kmEnd-trip.kmStart:0;}
+// Порожний пробег — одно число на весь рейс (см. tf-empty-km, введено при завершении
+// рейса). Пробег с грузом — остаток от общего пробега (решение пользователя 2026-08-04).
+function tripEmptyKm(trip){return Math.min(trip.emptyKm||0,tripKm(trip));}
+function tripLoadedKm(trip){return Math.max(0,tripKm(trip)-tripEmptyKm(trip));}
 function tripFuelUsed(trip){
   if(!trip.fuelStart)return 0;
   const refuels=(trip.expenses||[]).filter(e=>e.cat==='fuel').reduce((s,e)=>s+(e.liters||0),0);
@@ -10191,6 +10207,11 @@ function finishTripCheck(){
   if(!kmEnd) warnings.push('• Показание спидометра в конце рейса не указано');
   if(fuelEnd===null) warnings.push('• Остаток топлива не указан');
   if(!trip.driverId) warnings.push('• Водитель не назначен');
+  // Порожний пробег не может быть больше общего — явная ошибка ввода
+  // (решение пользователя 2026-08-04).
+  const emptyKmEl=document.getElementById('tf-empty-km');
+  const emptyKmChk=emptyKmEl&&emptyKmEl.value!==''?parseFloat(unformatNumber(emptyKmEl.value)):null;
+  if(kmEnd&&emptyKmChk!=null&&emptyKmChk>(kmEnd-(trip.kmStart||0))) warnings.push('• Порожний пробег больше общего пробега — проверьте цифры');
   const debt=tripDebt(trip);
   if(debt>0) warnings.push(`• Оплата от заказчика не поступила полностью (долг: ${fmtN(debt)} сум)`);
   if(warnings.length>0){
@@ -10454,10 +10475,15 @@ function calcTripFinish(){
   const fuelEnd=fuelEndEl&&fuelEndEl.value!==''?parseFloat(fuelEndEl.value)||0:trip.fuelEnd||0;
   const refuels=(trip.expenses||[]).filter(e=>e.cat==='fuel').reduce((s,e)=>s+(e.liters||0),0);
   const km=kmEnd>kmStart?kmEnd-kmStart:0;
+  const emptyKmEl=document.getElementById('tf-empty-km');
+  const emptyKm=emptyKmEl&&emptyKmEl.value!==''?parseFloat(unformatNumber(emptyKmEl.value))||0:0;
+  const loadedKm=Math.max(0,km-emptyKm);
   const fuelUsed=fuelStart+refuels-fuelEnd;
   const per100=km>0&&fuelUsed>0?Math.round(fuelUsed/km*100*10)/10:0;
   const el=id=>document.getElementById(id);
   if(el('tf-calc-km'))    el('tf-calc-km').textContent    = km>0?fmtN(km)+' км':'—';
+  if(el('tf-calc-km-loaded')) el('tf-calc-km-loaded').textContent = km>0?fmtN(loadedKm)+' км':'—';
+  if(el('tf-calc-km-empty'))  el('tf-calc-km-empty').textContent  = emptyKm>0?fmtN(emptyKm)+' км':'—';
   if(el('tf-calc-fuel'))  el('tf-calc-fuel').textContent  = fuelUsed>0?fuelUsed.toFixed(1)+' л':'—';
   if(el('tf-calc-per100'))el('tf-calc-per100').textContent= per100>0?per100+' л':'—';
   const legs=trip.legs||[];
@@ -10530,6 +10556,8 @@ function openFinishTrip(tripId){
   // и проверка при завершении решала бы, что данные не заполнены.
   if(kmStartEl) kmStartEl.value=(trip.kmStart!=null&&trip.kmStart>=0)?formatNumberSpaces(String(trip.kmStart)):'';
   if(kmEndEl)   kmEndEl.value=(trip.kmEnd!=null&&trip.kmEnd>0)?formatNumberSpaces(String(trip.kmEnd)):'';
+  const emptyKmEl=document.getElementById('tf-empty-km');
+  if(emptyKmEl) emptyKmEl.value=(trip.emptyKm!=null&&trip.emptyKm>0)?formatNumberSpaces(String(trip.emptyKm)):'';
   if(fuelStartEl) fuelStartEl.value=(trip.fuelStart!=null&&trip.fuelStart>=0)?trip.fuelStart:'';
   if(fuelEndEl)   fuelEndEl.value=(trip.fuelEnd!=null&&trip.fuelEnd>=0)?trip.fuelEnd:'';
   document.getElementById('tf-adblue-end').value=(trip.adblueEnd!=null&&trip.adblueEnd>=0)?trip.adblueEnd:'';
@@ -10576,8 +10604,10 @@ async function _finishTripImpl(){
   const unloadDate=document.getElementById('tf-unload-date').value||todayStr;
   const kmEndVal=unformatNumber(document.getElementById('tf-km-end').value);
   const fuelEndVal=document.getElementById('tf-fuel-end').value;
+  const emptyKmVal=unformatNumber(document.getElementById('tf-empty-km').value);
   const kmEnd=kmEndVal!==''?parseFloat(kmEndVal):trip.kmEnd||0;
   const fuelEnd=fuelEndVal!==''?parseFloat(fuelEndVal):trip.fuelEnd||0;
+  const emptyKm=emptyKmVal!==''?parseFloat(emptyKmVal):trip.emptyKm||0;
   const adblueEnd=parseFloat(document.getElementById('tf-adblue-end').value)||trip.adblueEnd||0;
   const note=document.getElementById('tf-note').value;
   // ЗП водителю
@@ -10598,11 +10628,13 @@ async function _finishTripImpl(){
   const tripUpdates = { status:'done', unload_date:unloadDate, adblue_end:adblueEnd, cash_return:cashReturnVal, note:finalNote };
   if(kmEnd>0) tripUpdates.km_end=kmEnd;
   if(fuelEnd>=0&&fuelEndVal!=='') tripUpdates.fuel_end=fuelEnd;
+  if(emptyKm>=0&&emptyKmVal!=='') tripUpdates.empty_km=emptyKm;
   const { error: tripErr } = await sbClient.from('trips').update(tripUpdates).eq('id', trip.id);
   if (tripErr) { alert('Не удалось завершить рейс: '+tripErr.message); return; }
   trip.status='done'; trip.unloadDate=unloadDate; trip.adblueEnd=adblueEnd; trip.cashReturn=cashReturnVal; trip.note=finalNote;
   if(kmEnd>0) trip.kmEnd=kmEnd;
   if(fuelEnd>=0&&fuelEndVal!=='') trip.fuelEnd=fuelEnd;
+  if(emptyKm>=0&&emptyKmVal!=='') trip.emptyKm=emptyKm;
 
   // ЗП водителю → расход в кассе
   if(salaryVal>0){
