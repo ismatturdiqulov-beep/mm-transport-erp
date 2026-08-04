@@ -1021,31 +1021,34 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
   <div class="page" id="page-maintenance">
     <div class="page-hdr">
       <div><h2>ТО и Ремонты</h2><div class="ph-sub" id="maint-sub"></div></div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-        <select id="maint-filter-transport" onchange="renderMaintenance()" style="font-size:12px;">
-          <option value="">Все машины</option>
-        </select>
-        <select id="maint-filter-type" onchange="renderMaintenance()" style="font-size:12px;">
-          <option value="">Все типы</option>
-          <option value="planned">Плановое ТО</option>
-          <option value="oil">Замена масла</option>
-          <option value="tires">Шины</option>
-          <option value="brakes">Тормоза</option>
-          <option value="battery">АКБ</option>
-          <option value="engine">Двигатель</option>
-          <option value="gearbox">КПП / трансмиссия</option>
-          <option value="electrics">Электрика</option>
-          <option value="body">Кузов / рама</option>
-          <option value="diagnostics">Диагностика</option>
-          <option value="other">Прочее</option>
-        </select>
-        <select id="maint-filter-status" onchange="renderMaintenance()" style="font-size:12px;">
-          <option value="">Все статусы</option>
-          <option value="inprogress">В процессе</option>
-          <option value="done">Завершено</option>
-        </select>
+      <div style="display:flex;gap:7px;align-items:center;">
         <button class="btn primary" onclick="openNewMaint()">+ Добавить ТО / Ремонт</button>
       </div>
+    </div>
+    <div class="filter-bar">
+      <input type="text" placeholder="Поиск по машине, сервису, работам..." id="maint-search" oninput="renderMaintenance()">
+      <select id="maint-filter-transport" onchange="renderMaintenance()">
+        <option value="">Все машины</option>
+      </select>
+      <select id="maint-filter-type" onchange="renderMaintenance()">
+        <option value="">Все типы</option>
+        <option value="planned">Плановое ТО</option>
+        <option value="oil">Замена масла</option>
+        <option value="tires">Шины</option>
+        <option value="brakes">Тормоза</option>
+        <option value="battery">АКБ</option>
+        <option value="engine">Двигатель</option>
+        <option value="gearbox">КПП / трансмиссия</option>
+        <option value="electrics">Электрика</option>
+        <option value="body">Кузов / рама</option>
+        <option value="diagnostics">Диагностика</option>
+        <option value="other">Прочее</option>
+      </select>
+      <select id="maint-filter-status" onchange="renderMaintenance()">
+        <option value="">Все статусы</option>
+        <option value="inprogress">В процессе</option>
+        <option value="done">Завершено</option>
+      </select>
     </div>
     <!-- Карточки машин с алертами -->
     <div id="maint-fleet-cards" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px;margin-bottom:20px;"></div>
@@ -11673,6 +11676,7 @@ function updateMaintNextHint(){
 
 // --- РЕНДЕР ---
 function renderMaintenance(){
+  const search=(document.getElementById('maint-search')||{}).value||'';
   const fT    = (document.getElementById('maint-filter-transport')||{}).value||'';
   const fType = (document.getElementById('maint-filter-type')||{}).value||'';
   const fSt   = (document.getElementById('maint-filter-status')||{}).value||'';
@@ -11725,6 +11729,15 @@ function renderMaintenance(){
 
   // Таблица всех записей
   let data = [...MAINTENANCE].sort((a,b)=>new Date(b.date)-new Date(a.date));
+  if(search){
+    const q=search.toLowerCase();
+    data = data.filter(m=>{
+      const t=TRANSPORT.find(x=>x.id===m.transportId);
+      const svc=m.serviceId?KONTRAGENTY.find(k=>k.id===m.serviceId):null;
+      const mt=MAINT_TYPES[m.type]||MAINT_TYPES.other;
+      return ((t?t.callsign+t.plate:'')+(svc?svc.name:'')+mt.label+(m.note||'')+(m.parts||'')).toLowerCase().includes(q);
+    });
+  }
   if(fT)    data = data.filter(m=>m.transportId===fT);
   if(fType) data = data.filter(m=>m.type===fType);
   if(fSt)   data = data.filter(m=>m.status===fSt);
