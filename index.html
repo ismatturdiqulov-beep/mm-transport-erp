@@ -447,7 +447,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
       <div style="font-size:13px;font-weight:600;margin-bottom:14px;">📋 Типы ТИР и их стоимость</div>
       <div style="overflow-x:auto;">
         <table class="tbl">
-          <thead><tr><th>Тип ТИР</th><th>Листов</th><th>Цена для арендаторов (сум)</th><th>Цена для водителей ММ (сум)</th><th></th></tr></thead>
+          <thead><tr><th>Тип ТИР</th><th>Листов</th><th>Цена для арендаторов (сум)</th><th>Цена для водителей ММ (сум)</th><th>Мин. запас</th><th></th></tr></thead>
           <tbody id="tir-prices-tbody"></tbody>
         </table>
       </div>
@@ -657,8 +657,12 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
         <button id="dozv-tab-active" class="btn primary" onclick="switchDozvTab('active')" style="font-size:12px;padding:4px 12px;">Активные</button>
         <button id="dozv-tab-used" class="btn" onclick="switchDozvTab('used')" style="font-size:12px;padding:4px 12px;">Использованные</button>
         <button id="dozv-tab-archive" class="btn" onclick="switchDozvTab('archive')" style="font-size:12px;padding:4px 12px;">📦 Архив (сдан/закрыт)</button>
+        <!-- Заметки/задачи (например электронная очередь на Китай) — намеренно НЕ
+             настоящие дозволы, отдельная таблица, без связи с DOZV (решение
+             пользователя 2026-08-04). -->
+        <button id="dozv-tab-planned" class="btn" onclick="switchDozvTab('planned')" style="font-size:12px;padding:4px 12px;">📋 Ожидаются</button>
       </div>
-      <div style="display:flex;gap:7px;flex-wrap:wrap;">
+      <div id="dozv-filters-normal" style="display:flex;gap:7px;flex-wrap:wrap;">
         <input type="text" placeholder="Поиск..." id="dozv-search" oninput="renderDozv()">
         <select onchange="renderDozv()" id="dozv-f-country"><option value="">Все страны</option></select>
         <select onchange="renderDozv()" id="dozv-f-type">
@@ -682,14 +686,25 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
         </select>
         <button class="btn" onclick="printYearRegistry('dozv')">🖨 Реестр за год</button>
       </div>
+      <div id="dozv-filters-planned" style="display:none;">
+        <button class="btn primary" onclick="openPlannedDozvModal()">+ Добавить в очередь</button>
+      </div>
     </div>
-    <div class="section">
+    <div class="section" id="dozv-section-normal">
       <table class="tbl">
         <thead><tr>
           <th>#</th><th>Документ</th><th>Период действия</th>
           <th>ПС / Водитель</th><th>Статус</th><th>Действия</th>
         </tr></thead>
         <tbody id="dozv-tbody"></tbody>
+      </table>
+    </div>
+    <div class="section" id="dozv-section-planned" style="display:none;">
+      <table class="tbl">
+        <thead><tr>
+          <th>Страна</th><th>Номер очереди</th><th>Дата</th><th>ПС</th><th>Примечание</th><th>Действия</th>
+        </tr></thead>
+        <tbody id="dozv-planned-tbody"></tbody>
       </table>
     </div>
   </div>
@@ -860,11 +875,11 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
     </div>
 
     <div id="docs-panel-waybills">
-      <div style="display:flex;gap:6px;margin-bottom:10px;">
-        <button id="wb-tab-hyt" class="btn primary" onclick="switchWaybillTab('hyt')" style="font-size:12px;padding:4px 12px;">ХЮТ</button>
-        <button id="wb-tab-shyt" class="btn" onclick="switchWaybillTab('shyt')" style="font-size:12px;padding:4px 12px;">ШЮТ</button>
-      </div>
-      <div class="filter-bar">
+      <div class="filter-bar" style="justify-content:space-between;">
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+          <button id="wb-tab-hyt" class="btn primary" onclick="switchWaybillTab('hyt')" style="font-size:12px;padding:4px 12px;">ХЮТ</button>
+          <button id="wb-tab-shyt" class="btn" onclick="switchWaybillTab('shyt')" style="font-size:12px;padding:4px 12px;">ШЮТ</button>
+        </div>
         <input type="text" placeholder="Поиск по номеру, тягачу, прицепу, водителю..." id="waybills-search" oninput="renderWaybills()">
       </div>
       <div class="section">
@@ -1229,6 +1244,30 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
     <div class="modal-foot">
       <button class="btn" onclick="closeModal('modal-new-dozv')">Отмена</button>
       <button class="btn primary" onclick="saveDozNew()">Сохранить</button>
+    </div>
+  </div>
+</div>
+
+<!-- Ожидаемый дозвол — заметка/задача, НЕ настоящий документ (например электронная
+     очередь на Китай, или просто "может понадобиться дозвол на такую-то страну").
+     Никак не связана с реальными дозволами — решение пользователя 2026-08-04. -->
+<div class="overlay" id="modal-planned-dozv">
+  <div class="modal">
+    <div class="modal-head"><h3>📋 Добавить в очередь</h3><span class="modal-close" onclick="closeModal('modal-planned-dozv')">×</span></div>
+    <div class="modal-body">
+      <div class="form-grid-2">
+        <div class="form-row"><label>Страна *</label><select id="pd-country"></select></div>
+        <div class="form-row"><label>Номер очереди</label><input type="text" id="pd-queue-num" placeholder="Если есть, например Китай"></div>
+      </div>
+      <div class="form-grid-2">
+        <div class="form-row"><label>Дата</label><input type="date" id="pd-date"></div>
+        <div class="form-row"><label>ПС (если уже известно)</label><select id="pd-fleet"><option value="">— не выбрано —</option></select></div>
+      </div>
+      <div class="form-row"><label>Примечание</label><input type="text" id="pd-note" placeholder="Например: едет через Таджикистан вместо Казахстана"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeModal('modal-planned-dozv')">Отмена</button>
+      <button class="btn primary" onclick="savePlannedDozv()">Сохранить</button>
     </div>
   </div>
 </div>
@@ -3111,6 +3150,13 @@ function mapDozvFromDb(r) {
     tripId: r.trip_id||'', closed: r.closed||'', createdAt: r.created_at||'',
   };
 }
+function mapDozPlannedFromDb(r) {
+  return {
+    id: r.id, country: r.country||'', queueNum: r.queue_num||'', date: r.date||'',
+    fleetId: r.fleet_id||'', note: r.note||'', status: r.status||'planned',
+    createdAt: r.created_at||'',
+  };
+}
 
 function mapFinanceFromDb(r) {
   return {
@@ -3228,7 +3274,7 @@ function mapTripFromDb(t, legs, expenses, payments, surcharges) {
 
 async function loadAllData() {
   const tables = ['companies','company_settings','kontragenty','people','person_docs','transport','fleet','trips','trip_legs',
-    'trip_expenses','trip_payments','trip_surcharges','tirs','dozv','finance','kassa',
+    'trip_expenses','trip_payments','trip_surcharges','tirs','dozv','doz_planned','finance','kassa',
     'kassa_wallets','maintenance','waybills','poa','labor','telegram_links','driver_messages'];
   const results = await Promise.all(tables.map(t => sbClient.from(t).select('*')));
   const byTable = {};
@@ -3266,6 +3312,7 @@ async function loadAllData() {
   FLEET = byTable.fleet.map(mapFleetFromDb);
   TIRS = byTable.tirs.map(mapTirFromDb);
   DOZV = byTable.dozv.map(mapDozvFromDb);
+  DOZ_PLANNED = byTable.doz_planned.map(mapDozPlannedFromDb);
   FINANCE = byTable.finance.map(mapFinanceFromDb);
   KASSA = byTable.kassa.map(mapKassaFromDb);
   if (byTable.kassa_wallets.length) {
@@ -3671,6 +3718,10 @@ let TIRS = ld('mm_tirs', []);
 // DOZV статусы: '' = свободен, 'issued' = на руках, 'office' = в офисе, 'mintrans' = сдан в МИНТРАНС, 'closed' = закрыт (E-ПЕРМИТ использован)
 // Поля: issued=дата выдачи водителю, returnedOffice=возврат в офис, returnedMt=сдача в МИНТРАНС
 let DOZV = ld('mm_dozv', []);
+// Ожидаемые дозволы — лёгкие заметки/задачи (например электронная очередь на Китай,
+// которая ещё не стала настоящим дозволом), никак не связаны с DOZV (решение
+// пользователя 2026-08-04). Только Supabase, локального fallback не было и не нужно.
+let DOZ_PLANNED = [];
 
 // ============================================================
 // НОВАЯ АРХИТЕКТУРА v2 (чистый лист)
@@ -4068,7 +4119,7 @@ function populateModal(id) {
 
   // Populate country selects
   const countryOpts=DOZ_COUNTRIES.map(c=>`<option value="${c.name}">${c.name}</option>`).join('');
-  ['nd-country','dozv-f-country'].forEach(sid=>{
+  ['nd-country','dozv-f-country','pd-country'].forEach(sid=>{
     const el=document.getElementById(sid);
     // nd-country раньше не имело пустого пункта — браузер всегда выставлял первую
     // страну из списка настроек (Казахстан), и следом за ней автоматически вид
@@ -4076,6 +4127,10 @@ function populateModal(id) {
     // тот же класс проблемы, что и с автовыбором ПС выше).
     if(el){ el.innerHTML=(sid==='dozv-f-country'?'<option value="">Все страны</option>':'<option value="">— выберите страну —</option>')+countryOpts; }
   });
+  // Ожидаемые дозволы — выбор ПС (необязательно, если ещё не известно для какой машины)
+  const pdFleetEl=document.getElementById('pd-fleet');
+  if(pdFleetEl) pdFleetEl.innerHTML='<option value="">— не выбрано —</option>'+
+    FLEET.filter(f=>f.active!==false).map(f=>{const kg=getFleetKontragent(f);return `<option value="${f.id}">${f.label} — ${kg.name}</option>`;}).join('');
   // trigger kind update (при пустой стране просто очистит "Вид дозвола", см. onDozCountryChange)
   const ndCEl=document.getElementById('nd-country');
   if(ndCEl) onDozCountryChange('nd');
@@ -5234,9 +5289,11 @@ function saveTirPrices(){
     if(t){
       t.priceRent=parseFloat(unformatNumber(row.querySelector('.pr-rent').value))||0;
       t.priceMM=parseFloat(unformatNumber(row.querySelector('.pr-mm').value))||0;
+      t.minStock=parseInt(row.querySelector('.pr-min-stock').value)||0;
     }
   });
   saveAll(); saveCompanySettings(); toast('Цены сохранены');
+  renderDashboard();
 }
 function addDozCountry(){ openModal('modal-add-doz-country'); }
 function saveDozCountry(){
@@ -5261,6 +5318,7 @@ function renderSettings(){
     <td>${t.sheets} листов</td>
     <td><input class="pr-rent fmt-money" type="text" inputmode="numeric" value="${t.priceRent?formatNumberSpaces(String(t.priceRent)):''}" style="width:140px;padding:5px 8px;border:1px solid var(--border2);border-radius:6px;font-family:var(--mono);font-size:13px;"></td>
     <td><input class="pr-mm fmt-money" type="text" inputmode="numeric" value="${t.priceMM?formatNumberSpaces(String(t.priceMM)):''}" style="width:140px;padding:5px 8px;border:1px solid var(--border2);border-radius:6px;font-family:var(--mono);font-size:13px;"></td>
+    <td><input class="pr-min-stock" type="number" min="0" value="${t.minStock||''}" placeholder="0" style="width:70px;padding:5px 8px;border:1px solid var(--border2);border-radius:6px;font-family:var(--mono);font-size:13px;"></td>
     <td><button class="btn sm danger" onclick="deleteTirType('${t.id}')">Удалить</button></td>
   </tr>`).join('');
 
@@ -5423,7 +5481,7 @@ function deleteDozCountry(id){ if(!confirm('Удалить страну?')) retu
 
 // ============ RENDER FUNCTIONS ============
 function renderPage(id){
-  const map={dashboard:renderDashboard,deadlines:renderDeadlines,settings:renderSettings,tir:renderTir,dozvol:renderDozv,documents:renderDocumentsPage,tenants:renderTenants,kassa:renderKassa,fleet:renderFleet,trips:renderTrips,people:renderPeople,transport:renderTransport,maintenance:renderMaintenance,finance:renderFinance,reports:renderReports,'driver-messages':renderDriverMessages};
+  const map={dashboard:renderDashboard,deadlines:renderDeadlines,settings:renderSettings,tir:renderTir,dozvol:renderDozvPage,documents:renderDocumentsPage,tenants:renderTenants,kassa:renderKassa,fleet:renderFleet,trips:renderTrips,people:renderPeople,transport:renderTransport,maintenance:renderMaintenance,finance:renderFinance,reports:renderReports,'driver-messages':renderDriverMessages};
   if(map[id]) map[id]();
 }
 
@@ -5457,6 +5515,16 @@ function renderDashboard(){
   // ТИР истекает < 10 дней
   TIRS.filter(t=>!t.returnedAsmaf&&t.transferred&&!t.returnedDriver&&expSoon(t.expires,10)).forEach(t=>{
     alerts+=`<div class="alert amber"><span class="ai">⚠️</span><span class="at">ТИР истекает через ${daysDiff(t.expires,todayStr)} дн.: <b>${t.num}</b> — у <b>${t.person}</b></span><span class="ad">${fmt(t.expires)}</span></div>`;
+  });
+  // Минимальный запас ТИР по типу (Настройки → Типы ТИР) — та же логика "доступен для
+  // выдачи", что уже используется при передаче ТИР (populateModal → tirForTransfer):
+  // свободен, либо вернулся в офис неиспользованным, и не просрочен (решение
+  // пользователя 2026-08-04).
+  TIR_TYPES.filter(tt=>tt.minStock>0).forEach(tt=>{
+    const availCount=TIRS.filter(t=>t.type===tt.name&&!isExp(t.expires)&&(tirGetState(t)==='free'||(tirGetState(t)==='office'&&t.used===false))).length;
+    if(availCount<=tt.minStock){
+      alerts+=`<div class="alert amber"><span class="ai">📦</span><span class="at">Мало ТИР "${tt.name}": осталось ${availCount} (минимум ${tt.minStock}) — пора пополнить запас</span></div>`;
+    }
   });
   // Начисление плана арендаторам за месяц — баннер с 1-го числа, пока не начислено всем
   const pendingPlan=getPendingPlanFleets();
@@ -5645,11 +5713,91 @@ function renderTir(){
 let _dozvTab = 'active'; // 'active' | 'used' | 'archive'
 function switchDozvTab(tab){
   _dozvTab = tab;
-  ['active','used','archive'].forEach(t=>{
+  ['active','used','archive','planned'].forEach(t=>{
     const btn=document.getElementById('dozv-tab-'+t);
     if(btn) btn.className = t===tab?'btn primary':'btn';
   });
-  renderDozv();
+  // "Ожидаются" — отдельная таблица/набор фильтров, не связанная с реальными
+  // дозволами (решение пользователя 2026-08-04) — переключаем видимость целиком.
+  const isPlanned=tab==='planned';
+  const elFiltersNormal=document.getElementById('dozv-filters-normal');
+  const elFiltersPlanned=document.getElementById('dozv-filters-planned');
+  const elSectionNormal=document.getElementById('dozv-section-normal');
+  const elSectionPlanned=document.getElementById('dozv-section-planned');
+  if(elFiltersNormal) elFiltersNormal.style.display=isPlanned?'none':'flex';
+  if(elFiltersPlanned) elFiltersPlanned.style.display=isPlanned?'block':'none';
+  if(elSectionNormal) elSectionNormal.style.display=isPlanned?'none':'block';
+  if(elSectionPlanned) elSectionPlanned.style.display=isPlanned?'block':'none';
+  if(isPlanned) renderDozPlanned(); else renderDozv();
+}
+// --- ОЖИДАЕМЫЕ ДОЗВОЛЫ (заметки/задачи, не настоящие документы) ---
+function openPlannedDozvModal(){
+  document.getElementById('pd-queue-num').value='';
+  document.getElementById('pd-date').value=todayStr;
+  document.getElementById('pd-note').value='';
+  openModal('modal-planned-dozv');
+}
+async function _savePlannedDozvImpl(){
+  const country=document.getElementById('pd-country').value;
+  if(!country){ alert('Выберите страну'); return; }
+  const record={
+    company_id: CURRENT_PROFILE.company_id, country,
+    queue_num: document.getElementById('pd-queue-num').value||null,
+    date: document.getElementById('pd-date').value||todayStr,
+    fleet_id: document.getElementById('pd-fleet').value||null,
+    note: document.getElementById('pd-note').value||null,
+    status: 'planned',
+  };
+  const { data, error } = await sbClient.from('doz_planned').insert(record).select().single();
+  if (error) { alert('Не удалось сохранить: '+error.message); return; }
+  DOZ_PLANNED.push(mapDozPlannedFromDb(data));
+  closeModal('modal-planned-dozv');
+  toast('Добавлено в очередь: '+country);
+  renderDozPlanned();
+}
+const savePlannedDozv = guardDoubleSubmit('savePlannedDozv', (...a)=>_savePlannedDozvImpl(...a));
+async function markPlannedDozvDone(id){
+  const p=DOZ_PLANNED.find(x=>x.id===id); if(!p) return;
+  const { error } = await sbClient.from('doz_planned').update({ status:'done' }).eq('id', id);
+  if (error) { alert('Не удалось обновить: '+error.message); return; }
+  p.status='done';
+  toast('Задача выполнена: '+p.country);
+  renderDozPlanned();
+}
+async function deletePlannedDozv(id){
+  if(!confirm('Удалить запись из очереди?')) return;
+  const { error } = await sbClient.from('doz_planned').delete().eq('id', id);
+  if (error) { alert('Не удалось удалить: '+error.message); return; }
+  DOZ_PLANNED = DOZ_PLANNED.filter(x=>x.id!==id);
+  renderDozPlanned();
+}
+function renderDozPlanned(){
+  // Только активные (status='planned') — выполненные просто уходят из вида, как и
+  // договаривались (решение пользователя 2026-08-04), отдельного экрана-архива для них нет.
+  const data=[...DOZ_PLANNED].filter(p=>p.status==='planned')
+    .sort((a,b)=>(new Date(b.date)-new Date(a.date))||(new Date(b.createdAt||0)-new Date(a.createdAt||0)));
+  const tb=document.getElementById('dozv-planned-tbody'); if(!tb) return;
+  tb.innerHTML=data.map(p=>{
+    const fl=p.fleetId?FLEET.find(f=>f.id===p.fleetId):null;
+    return `<tr>
+      <td>${p.country}</td>
+      <td class="mono">${p.queueNum||'—'}</td>
+      <td>${fmt(p.date)}</td>
+      <td>${fl?fl.label:'—'}</td>
+      <td style="font-size:12px;color:var(--text2);">${p.note||'—'}</td>
+      <td style="white-space:nowrap;">
+        <button class="btn xs primary" onclick="markPlannedDozvDone('${p.id}')">✅ Задача выполнена</button>
+        <button class="btn xs danger" onclick="deletePlannedDozv('${p.id}')" title="Удалить">🗑</button>
+      </td>
+    </tr>`;
+  }).join('')||'<tr><td colspan="6" style="text-align:center;padding:30px;color:var(--text3)">Нет ожидаемых дозволов</td></tr>';
+}
+
+// При возврате на страницу Дозволов (showPage) нужно отрендерить ту таблицу,
+// что реально видна — "Ожидаются" использует другой контейнер, чем остальные три
+// вкладки (решение пользователя 2026-08-04, отдельная таблица без связи с DOZV).
+function renderDozvPage(){
+  if(_dozvTab==='planned') renderDozPlanned(); else renderDozv();
 }
 function renderDozv(){
   const search=(document.getElementById('dozv-search')||{}).value||'';
