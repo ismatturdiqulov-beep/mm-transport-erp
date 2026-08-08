@@ -660,7 +660,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
         <!-- Заметки/задачи (например электронная очередь на Китай) — намеренно НЕ
              настоящие дозволы, отдельная таблица, без связи с DOZV (решение
              пользователя 2026-08-04). -->
-        <button id="dozv-tab-planned" class="btn" onclick="switchDozvTab('planned')" style="font-size:12px;padding:4px 12px;">📋 Ожидаются</button>
+        <button id="dozv-tab-planned" class="btn" onclick="switchDozvTab('planned')" style="font-size:12px;padding:4px 12px;">📋 Ожидаются<span id="dozv-planned-badge" style="display:none;background:var(--red);color:#fff;border-radius:10px;font-size:10px;font-weight:700;padding:1px 6px;margin-left:5px;"></span></button>
       </div>
       <div id="dozv-filters-normal" style="display:flex;gap:7px;flex-wrap:wrap;">
         <input type="text" placeholder="Поиск..." id="dozv-search" oninput="renderDozv()">
@@ -1270,7 +1270,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
     </div>
     <div class="modal-foot">
       <button class="btn" onclick="closeModal('modal-planned-dozv')">Отмена</button>
-      <button class="btn primary" onclick="savePlannedDozv()">Сохранить</button>
+      <button class="btn primary" id="pd-save-btn" onclick="savePlannedDozv()">Сохранить</button>
     </div>
   </div>
 </div>
@@ -5728,39 +5728,99 @@ function switchDozvTab(tab){
   const elSectionNormal=document.getElementById('dozv-section-normal');
   const elSectionPlanned=document.getElementById('dozv-section-planned');
   if(elFiltersNormal) elFiltersNormal.style.display=isPlanned?'none':'flex';
-  if(elFiltersPlanned) elFiltersPlanned.style.display=isPlanned?'block':'none';
+  if(elFiltersPlanned) elFiltersPlanned.style.display=isPlanned?'flex':'none';
   if(elSectionNormal) elSectionNormal.style.display=isPlanned?'none':'block';
   if(elSectionPlanned) elSectionPlanned.style.display=isPlanned?'block':'none';
   if(isPlanned) renderDozPlanned(); else renderDozv();
 }
 // --- ОЖИДАЕМЫЕ ДОЗВОЛЫ (заметки/задачи, не настоящие документы) ---
+let _editDozPlannedId=null;
 function openPlannedDozvModal(){
-  document.getElementById('pd-queue-num').value='';
-  document.getElementById('pd-date').value=todayStr;
-  document.getElementById('pd-note').value='';
+  _editDozPlannedId=null;
+  document.getElementById('modal-planned-dozv').querySelector('.modal-head h3').textContent='📋 Добавить в очередь';
+  document.getElementById('pd-save-btn').textContent='Сохранить';
+  // openModal() → populateModal() перестраивает варианты pd-country/pd-fleet заново
+  // при КАЖДОМ открытии любой модалки — значения нужно проставлять ПОСЛЕ него, иначе
+  // они тут же затираются (баг найден и исправлен сразу, до релиза, 2026-08-09).
   openModal('modal-planned-dozv');
+  document.getElementById('pd-fleet').value='';
+  document.getElementById('pd-country').value='';
+  document.getElementById('pd-queue-num').value='';
+  // Дату НЕ подставляем автоматически — иначе легко забыть указать реальную дату
+  // очереди, и в базе останется сегодняшняя дата вместо настоящей (баг найден
+  // пользователем 2026-08-09). Обязательность проверяется при сохранении.
+  document.getElementById('pd-date').value='';
+  document.getElementById('pd-note').value='';
+}
+function editPlannedDozv(id){
+  const p=DOZ_PLANNED.find(x=>x.id===id); if(!p) return;
+  _editDozPlannedId=id;
+  document.getElementById('modal-planned-dozv').querySelector('.modal-head h3').textContent='✏️ Редактировать запись';
+  document.getElementById('pd-save-btn').textContent='Сохранить изменения';
+  // См. комментарий в openPlannedDozvModal() — значения ставим после openModal().
+  openModal('modal-planned-dozv');
+  document.getElementById('pd-fleet').value=p.fleetId||'';
+  document.getElementById('pd-country').value=p.country||'';
+  document.getElementById('pd-queue-num').value=p.queueNum||'';
+  document.getElementById('pd-date').value=p.date||'';
+  document.getElementById('pd-note').value=p.note||'';
 }
 async function _savePlannedDozvImpl(){
   const country=document.getElementById('pd-country').value;
   if(!country){ alert('Выберите страну'); return; }
+  const date=document.getElementById('pd-date').value;
+  if(!date){ alert('Укажите дату очереди'); return; }
   const fleetId=document.getElementById('pd-fleet').value||null;
   const queueNum=document.getElementById('pd-queue-num').value||null;
-  const date=document.getElementById('pd-date').value||todayStr;
   const note=document.getElementById('pd-note').value||null;
+  const isEdit=!!_editDozPlannedId;
+
+  // На один ПС бывает несколько записей — просто предупреждаем, не блокируем
+  // (решение пользователя 2026-08-09).
+  if(fleetId){
+    const existing=DOZ_PLANNED.find(p=>p.status==='planned'&&p.fleetId===fleetId&&p.id!==_editDozPlannedId);
+    if(existing){
+      const fl=FLEET.find(f=>f.id===fleetId);
+      if(!confirm(`У этого ПС уже есть запись в очереди: ${existing.country}, ${fmt(existing.date)}.\nВсё равно добавить ещё одну?`)) return;
+    }
+  }
+  // Номер очереди — настоящий уникальный идентификатор, поэтому дубликат блокируем
+  // полностью, а не просто предупреждаем (решение пользователя 2026-08-09). Проверяем
+  // по всем записям (не только "Ожидается") — совпадение номера в любом случае
+  // означает ошибку ввода.
+  if(queueNum){
+    const dup=DOZ_PLANNED.find(p=>p.queueNum&&p.queueNum.trim().toLowerCase()===queueNum.trim().toLowerCase()&&p.id!==_editDozPlannedId);
+    if(dup){
+      const dupFl=dup.fleetId?FLEET.find(f=>f.id===dup.fleetId):null;
+      alert(`Такой номер очереди уже есть в базе (ПС: ${dupFl?dupFl.label:'не указано'}, страна: ${dup.country}) — проверьте номер.`);
+      return;
+    }
+  }
+
   const record={
     company_id: CURRENT_PROFILE.company_id, country, queue_num: queueNum,
-    date, fleet_id: fleetId, note, status: 'planned',
+    date, fleet_id: fleetId, note,
   };
-  const { data, error } = await sbClient.from('doz_planned').insert(record).select().single();
-  if (error) { alert('Не удалось сохранить: '+error.message); return; }
-  DOZ_PLANNED.push(mapDozPlannedFromDb(data));
+  if(isEdit){
+    const { error } = await sbClient.from('doz_planned').update(record).eq('id', _editDozPlannedId);
+    if (error) { alert('Не удалось сохранить изменения: '+error.message); return; }
+    const p=DOZ_PLANNED.find(x=>x.id===_editDozPlannedId);
+    if(p) Object.assign(p, {country, queueNum, date, fleetId, note});
+  } else {
+    record.status='planned';
+    const { data, error } = await sbClient.from('doz_planned').insert(record).select().single();
+    if (error) { alert('Не удалось сохранить: '+error.message); return; }
+    DOZ_PLANNED.push(mapDozPlannedFromDb(data));
+  }
   // Уведомляем контрагента, ответственного за ПС (карточка ПС → "Контрагент
-  // (ответственный)") — только если ПС указано, иначе уведомлять некого
-  // (решение пользователя 2026-08-04).
+  // (ответственный)") — и при создании, и при редактировании (решение пользователя
+  // 2026-08-09) — только если ПС указано, иначе уведомлять некого.
   if(fleetId){
     const fl=FLEET.find(f=>f.id===fleetId);
     if(fl&&fl.kontragentId){
-      const lines=[`📋 Для вашего ПС «${fl.label}» поставлена в очередь заявка на дозвол.`,
+      const lines=[isEdit
+        ? `✏️ Запись в очереди на дозвол для вашего ПС «${fl.label}» изменена.`
+        : `📋 Для вашего ПС «${fl.label}» поставлена в очередь заявка на дозвол.`,
         `Страна: ${country}`];
       if(queueNum) lines.push(`Номер очереди: ${queueNum}`);
       lines.push(`Ожидаемая дата очереди: ${fmt(date)}`);
@@ -5769,7 +5829,7 @@ async function _savePlannedDozvImpl(){
     }
   }
   closeModal('modal-planned-dozv');
-  toast('Добавлено в очередь: '+country);
+  toast(isEdit?'Изменения сохранены: '+country:'Добавлено в очередь: '+country);
   renderDozPlanned();
 }
 const savePlannedDozv = guardDoubleSubmit('savePlannedDozv', (...a)=>_savePlannedDozvImpl(...a));
@@ -5787,6 +5847,13 @@ async function deletePlannedDozv(id){
   if (error) { alert('Не удалось удалить: '+error.message); return; }
   DOZ_PLANNED = DOZ_PLANNED.filter(x=>x.id!==id);
   renderDozPlanned();
+}
+// Счётчик на кнопке вкладки — виден, даже если сейчас открыта другая вкладка
+// (Активные/Использованные/Архив), решение пользователя 2026-08-09.
+function updateDozPlannedBadge(){
+  const badge=document.getElementById('dozv-planned-badge'); if(!badge) return;
+  const n=DOZ_PLANNED.filter(p=>p.status==='planned').length;
+  badge.textContent=n; badge.style.display=n>0?'inline-block':'none';
 }
 function renderDozPlanned(){
   const priorityMode=(document.getElementById('dozv-planned-priority')||{}).checked;
@@ -5823,17 +5890,21 @@ function renderDozPlanned(){
       <td style="font-size:12px;color:var(--text2);">${p.note||'—'}</td>
       <td style="white-space:nowrap;">
         <button class="btn xs primary" onclick="markPlannedDozvDone('${p.id}')">✅ Задача выполнена</button>
+        <button class="btn xs" onclick="editPlannedDozv('${p.id}')" title="Редактировать">✏️</button>
         <button class="btn xs danger" onclick="deletePlannedDozv('${p.id}')" title="Удалить">🗑</button>
       </td>
     </tr>`;
   }).join('')||'<tr><td colspan="6" style="text-align:center;padding:30px;color:var(--text3)">Нет ожидаемых дозволов</td></tr>';
+  updateDozPlannedBadge();
 }
 
 // При возврате на страницу Дозволов (showPage) нужно отрендерить ту таблицу,
 // что реально видна — "Ожидаются" использует другой контейнер, чем остальные три
 // вкладки (решение пользователя 2026-08-04, отдельная таблица без связи с DOZV).
+// Счётчик на кнопке вкладки обновляем всегда, даже если сейчас открыта другая
+// вкладка (решение пользователя 2026-08-09).
 function renderDozvPage(){
-  if(_dozvTab==='planned') renderDozPlanned(); else renderDozv();
+  if(_dozvTab==='planned') renderDozPlanned(); else { renderDozv(); updateDozPlannedBadge(); }
 }
 function renderDozv(){
   const search=(document.getElementById('dozv-search')||{}).value||'';
