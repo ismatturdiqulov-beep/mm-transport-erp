@@ -5838,13 +5838,31 @@ async function markPlannedDozvDone(id){
   const { error } = await sbClient.from('doz_planned').update({ status:'done' }).eq('id', id);
   if (error) { alert('Не удалось обновить: '+error.message); return; }
   p.status='done';
+  // Нейтральная формулировка — "Задача выполнена" не обязательно значит "дозвол
+  // получен" (могла закрыться и по другой причине), чтобы не вводить контрагента в
+  // заблуждение (решение пользователя 2026-08-09).
+  if(p.fleetId){
+    const fl=FLEET.find(f=>f.id===p.fleetId);
+    if(fl&&fl.kontragentId){
+      const details=`${p.country}, ${fmt(p.date)}`+(p.queueNum?`, № ${p.queueNum}`:'');
+      notifyKontragent(fl.kontragentId, `📦 Заявка на дозвол для ПС «${fl.label}» перенесена в архив.\n${details}\n<i>Подробности уточняйте у администратора.</i>`);
+    }
+  }
   toast('Задача выполнена: '+p.country);
   renderDozPlanned();
 }
 async function deletePlannedDozv(id){
+  const p=DOZ_PLANNED.find(x=>x.id===id); if(!p) return;
   if(!confirm('Удалить запись из очереди?')) return;
   const { error } = await sbClient.from('doz_planned').delete().eq('id', id);
   if (error) { alert('Не удалось удалить: '+error.message); return; }
+  if(p.fleetId){
+    const fl=FLEET.find(f=>f.id===p.fleetId);
+    if(fl&&fl.kontragentId){
+      const details=`${p.country}, ${fmt(p.date)}`+(p.queueNum?`, № ${p.queueNum}`:'');
+      notifyKontragent(fl.kontragentId, `🗑 Заявка на дозвол для ПС «${fl.label}» удалена из очереди.\n${details}\n<i>Подробности уточняйте у администратора.</i>`);
+    }
+  }
   DOZ_PLANNED = DOZ_PLANNED.filter(x=>x.id!==id);
   renderDozPlanned();
 }
