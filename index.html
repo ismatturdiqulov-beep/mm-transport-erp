@@ -864,6 +864,9 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
         <button id="wb-tab-hyt" class="btn primary" onclick="switchWaybillTab('hyt')" style="font-size:12px;padding:4px 12px;">ХЮТ</button>
         <button id="wb-tab-shyt" class="btn" onclick="switchWaybillTab('shyt')" style="font-size:12px;padding:4px 12px;">ШЮТ</button>
       </div>
+      <div class="filter-bar">
+        <input type="text" placeholder="Поиск по номеру, тягачу, прицепу, водителю..." id="waybills-search" oninput="renderWaybills()">
+      </div>
       <div class="section">
         <table class="tbl">
           <thead><tr><th>№</th><th>Дата</th><th>Тягач</th><th>Прицеп</th><th>Водитель 1</th><th>Водитель 2</th><th>Срок дн.</th><th>Срок до</th><th></th></tr></thead>
@@ -873,6 +876,9 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
     </div>
 
     <div id="docs-panel-poa" style="display:none;">
+      <div class="filter-bar">
+        <input type="text" placeholder="Поиск по номеру, ФИО, паспорту..." id="poa-search" oninput="renderPoa()">
+      </div>
       <div class="section">
         <table class="tbl">
           <thead><tr><th>№</th><th>Тип</th><th>Дата</th><th>ФИО</th><th>Паспорт</th><th>Принят</th><th>Срок до</th><th>Статус</th><th></th></tr></thead>
@@ -882,6 +888,9 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
     </div>
 
     <div id="docs-panel-labor" style="display:none;">
+      <div class="filter-bar">
+        <input type="text" placeholder="Поиск по номеру, ФИО, паспорту, адресу..." id="labor-search" oninput="renderLabor()">
+      </div>
       <div class="section">
         <table class="tbl">
           <thead><tr><th>№</th><th>Дата</th><th>ФИО</th><th>Срок дн.</th><th>Срок до</th><th>Паспорт</th><th>Адрес</th><th>Статус</th><th></th></tr></thead>
@@ -3150,17 +3159,18 @@ function mapWaybillFromDb(r) {
     fleetId: r.fleet_id||'', truckId: r.truck_id||'', trailerId: r.trailer_id||'',
     driver1Id: r.driver1_id||'', driver2Id: r.driver2_id||'',
     mileageStart: r.mileage_start, depTime: r.dep_time||'', prefix: r.prefix||'', fullNum: r.full_num||'',
-    mechanicName: r.mechanic_name||'', medicName: r.medic_name||'' };
+    mechanicName: r.mechanic_name||'', medicName: r.medic_name||'', createdAt: r.created_at||'' };
 }
 function mapPoaFromDb(r) {
   return { id: r.id, num: r.num||'', date: r.date||'', name: r.name||'', passport: r.passport||'',
-    expires: r.expires||'', hired: r.hired||'', personId: r.person_id||'', kind: r.kind||'customs' };
+    expires: r.expires||'', hired: r.hired||'', personId: r.person_id||'', kind: r.kind||'customs',
+    createdAt: r.created_at||'' };
 }
 function mapLaborFromDb(r) {
   return { id: r.id, num: r.num||'', name: r.name||'', days: r.days||'', date: r.date||'',
     passport: r.passport||'', address: r.address||'', personId: r.person_id||'',
     passportIssuedBy: r.passport_issued_by||'', passportIssuedDate: r.passport_issued_date||'',
-    probationMonths: r.probation_months, planRevenue: r.plan_revenue };
+    probationMonths: r.probation_months, planRevenue: r.plan_revenue, createdAt: r.created_at||'' };
 }
 function mapTelegramLinkFromDb(r) {
   return { id: r.id, kontragentId: r.kontragent_id||'', telegramUserId: r.telegram_user_id||null,
@@ -8204,7 +8214,16 @@ function switchWaybillTab(tab){
   renderWaybills();
 }
 function renderWaybills(){
-  const data=WAYBILLS.filter(w=>w.dir===waybillTab);
+  const search=(document.getElementById('waybills-search')||{}).value||'';
+  let data=WAYBILLS.filter(w=>w.dir===waybillTab);
+  if(search){
+    const q=search.toLowerCase();
+    data=data.filter(w=>((w.fullNum||w.num||'')+''+w.truck+w.trailer+w.drv1+w.drv2).toLowerCase().includes(q));
+  }
+  // Новые сверху: по дате, а при совпадении дня — по времени фактического создания
+  // записи (для старых путёвок, созданных до этого поля, тай-брейк просто не сработает
+  // осмысленно — по решению пользователя 2026-08-04 это ожидаемо и чинить не нужно).
+  data=[...data].sort((a,b)=>(new Date(b.date)-new Date(a.date))||(new Date(b.createdAt||0)-new Date(a.createdAt||0)));
   document.getElementById('waybills-tbody').innerHTML=data.map(w=>{
     const until=new Date(w.date); until.setDate(until.getDate()+(w.days||45));
     const untilStr=until.toISOString().split('T')[0];
@@ -8711,7 +8730,16 @@ function printLabor(id){
 // POA
 const POA_KIND_LABEL = {customs:'Таможня/Госорг.', asmap:'АСМАП/МДП', visa:'Виза'};
 function renderPoa(){
-  document.getElementById('poa-tbody').innerHTML=POA.map(p=>{
+  const search=(document.getElementById('poa-search')||{}).value||'';
+  let data=POA;
+  if(search){
+    const q=search.toLowerCase();
+    data=data.filter(p=>((p.num||'')+p.name+(p.passport||'')).toLowerCase().includes(q));
+  }
+  // Новые сверху: по дате, а при совпадении дня — по времени фактического создания
+  // записи (решение пользователя 2026-08-04, тот же приём, что у ТИР/Дозвол/Кассы).
+  data=[...data].sort((a,b)=>(new Date(b.date)-new Date(a.date))||(new Date(b.createdAt||0)-new Date(a.createdAt||0)));
+  document.getElementById('poa-tbody').innerHTML=data.map(p=>{
     const exp=isExp(p.expires);
     return `<tr>
       <td class="mono">${p.num}</td><td><span class="tag gray">${POA_KIND_LABEL[p.kind]||'—'}</span></td><td>${fmt(p.date)}</td><td>${p.name}</td>
@@ -8725,7 +8753,16 @@ function renderPoa(){
 
 // LABOR
 function renderLabor(){
-  document.getElementById('labor-tbody').innerHTML=LABOR.map(l=>{
+  const search=(document.getElementById('labor-search')||{}).value||'';
+  let data=LABOR;
+  if(search){
+    const q=search.toLowerCase();
+    data=data.filter(l=>((l.num||'')+l.name+(l.passport||'')+(l.address||'')).toLowerCase().includes(q));
+  }
+  // Новые сверху: по дате, а при совпадении дня — по времени фактического создания
+  // записи (решение пользователя 2026-08-04, тот же приём, что у ТИР/Дозвол/Кассы).
+  data=[...data].sort((a,b)=>(new Date(b.date)-new Date(a.date))||(new Date(b.createdAt||0)-new Date(a.createdAt||0)));
+  document.getElementById('labor-tbody').innerHTML=data.map(l=>{
     const end=new Date(l.date); end.setDate(end.getDate()+parseInt(l.days));
     const s=laborStatus(l);
     return `<tr>
