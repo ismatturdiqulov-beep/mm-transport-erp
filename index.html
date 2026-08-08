@@ -686,8 +686,11 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
         </select>
         <button class="btn" onclick="printYearRegistry('dozv')">🖨 Реестр за год</button>
       </div>
-      <div id="dozv-filters-planned" style="display:none;">
+      <div id="dozv-filters-planned" style="display:none;align-items:center;gap:10px;">
         <button class="btn primary" onclick="openPlannedDozvModal()">+ Добавить в очередь</button>
+        <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text2);white-space:nowrap;" title="По умолчанию — старые записи сверху (по дате создания). С галочкой — сверху записи с самой близкой датой очереди, с подсветкой по срочности.">
+          <input type="checkbox" id="dozv-planned-priority" onchange="renderDozPlanned()"> Сортировать по приоритету
+        </label>
       </div>
     </div>
     <div class="section" id="dozv-section-normal">
@@ -702,7 +705,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
     <div class="section" id="dozv-section-planned" style="display:none;">
       <table class="tbl">
         <thead><tr>
-          <th>Страна</th><th>Номер очереди</th><th>Дата</th><th>ПС</th><th>Примечание</th><th>Действия</th>
+          <th>ПС</th><th>Страна</th><th>Дата очереди</th><th>Номер очереди</th><th>Примечание</th><th>Действия</th>
         </tr></thead>
         <tbody id="dozv-planned-tbody"></tbody>
       </table>
@@ -1256,12 +1259,12 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
     <div class="modal-head"><h3>📋 Добавить в очередь</h3><span class="modal-close" onclick="closeModal('modal-planned-dozv')">×</span></div>
     <div class="modal-body">
       <div class="form-grid-2">
+        <div class="form-row"><label>ПС (если уже известно)</label><select id="pd-fleet"><option value="">— не выбрано —</option></select></div>
         <div class="form-row"><label>Страна *</label><select id="pd-country"></select></div>
-        <div class="form-row"><label>Номер очереди</label><input type="text" id="pd-queue-num" placeholder="Если есть, например Китай"></div>
       </div>
       <div class="form-grid-2">
-        <div class="form-row"><label>Дата</label><input type="date" id="pd-date"></div>
-        <div class="form-row"><label>ПС (если уже известно)</label><select id="pd-fleet"><option value="">— не выбрано —</option></select></div>
+        <div class="form-row"><label>Дата очереди</label><input type="date" id="pd-date"></div>
+        <div class="form-row"><label>Номер очереди</label><input type="text" id="pd-queue-num" placeholder="Если есть, например Китай"></div>
       </div>
       <div class="form-row"><label>Примечание</label><input type="text" id="pd-note" placeholder="Например: едет через Таджикистан вместо Казахстана"></div>
     </div>
@@ -5740,17 +5743,31 @@ function openPlannedDozvModal(){
 async function _savePlannedDozvImpl(){
   const country=document.getElementById('pd-country').value;
   if(!country){ alert('Выберите страну'); return; }
+  const fleetId=document.getElementById('pd-fleet').value||null;
+  const queueNum=document.getElementById('pd-queue-num').value||null;
+  const date=document.getElementById('pd-date').value||todayStr;
+  const note=document.getElementById('pd-note').value||null;
   const record={
-    company_id: CURRENT_PROFILE.company_id, country,
-    queue_num: document.getElementById('pd-queue-num').value||null,
-    date: document.getElementById('pd-date').value||todayStr,
-    fleet_id: document.getElementById('pd-fleet').value||null,
-    note: document.getElementById('pd-note').value||null,
-    status: 'planned',
+    company_id: CURRENT_PROFILE.company_id, country, queue_num: queueNum,
+    date, fleet_id: fleetId, note, status: 'planned',
   };
   const { data, error } = await sbClient.from('doz_planned').insert(record).select().single();
   if (error) { alert('Не удалось сохранить: '+error.message); return; }
   DOZ_PLANNED.push(mapDozPlannedFromDb(data));
+  // Уведомляем контрагента, ответственного за ПС (карточка ПС → "Контрагент
+  // (ответственный)") — только если ПС указано, иначе уведомлять некого
+  // (решение пользователя 2026-08-04).
+  if(fleetId){
+    const fl=FLEET.find(f=>f.id===fleetId);
+    if(fl&&fl.kontragentId){
+      const lines=[`📋 Для вашего ПС «${fl.label}» поставлена в очередь заявка на дозвол.`,
+        `Страна: ${country}`];
+      if(queueNum) lines.push(`Номер очереди: ${queueNum}`);
+      lines.push(`Ожидаемая дата очереди: ${fmt(date)}`);
+      if(note) lines.push(`Примечание: ${note}`);
+      notifyKontragent(fl.kontragentId, lines.join('\n'));
+    }
+  }
   closeModal('modal-planned-dozv');
   toast('Добавлено в очередь: '+country);
   renderDozPlanned();
@@ -5772,18 +5789,37 @@ async function deletePlannedDozv(id){
   renderDozPlanned();
 }
 function renderDozPlanned(){
+  const priorityMode=(document.getElementById('dozv-planned-priority')||{}).checked;
   // Только активные (status='planned') — выполненные просто уходят из вида, как и
   // договаривались (решение пользователя 2026-08-04), отдельного экрана-архива для них нет.
-  const data=[...DOZ_PLANNED].filter(p=>p.status==='planned')
-    .sort((a,b)=>(new Date(b.date)-new Date(a.date))||(new Date(b.createdAt||0)-new Date(a.createdAt||0)));
+  let data=[...DOZ_PLANNED].filter(p=>p.status==='planned');
+  if(priorityMode){
+    // По приоритету — самая близкая (или уже просроченная) дата очереди наверх, вне
+    // зависимости от того, когда создана сама запись (решение пользователя 2026-08-04).
+    data.sort((a,b)=>new Date(a.date)-new Date(b.date));
+  } else {
+    // По умолчанию — по времени фактического создания записи, старые сверху (это не то
+    // же самое, что дата очереди — запись, созданная позже, может иметь более раннюю
+    // дату очереди, и наоборот).
+    data.sort((a,b)=>new Date(a.createdAt||0)-new Date(b.createdAt||0));
+  }
   const tb=document.getElementById('dozv-planned-tbody'); if(!tb) return;
   tb.innerHTML=data.map(p=>{
     const fl=p.fleetId?FLEET.find(f=>f.id===p.fleetId):null;
+    // Подсветка по срочности даты очереди — только в режиме "по приоритету": дата уже
+    // прошла или через ≤7 дней — красный, через ≤21 день — жёлтый (решение пользователя
+    // 2026-08-04, пороги согласованы).
+    let dateCell=fmt(p.date);
+    if(priorityMode&&p.date){
+      const days=daysDiff(p.date,todayStr);
+      if(days<=7) dateCell=`<span class="tag red">${fmt(p.date)}</span>`;
+      else if(days<=21) dateCell=`<span class="tag amber">${fmt(p.date)}</span>`;
+    }
     return `<tr>
-      <td>${p.country}</td>
-      <td class="mono">${p.queueNum||'—'}</td>
-      <td>${fmt(p.date)}</td>
       <td>${fl?fl.label:'—'}</td>
+      <td>${p.country}</td>
+      <td>${dateCell}</td>
+      <td class="mono">${p.queueNum||'—'}</td>
       <td style="font-size:12px;color:var(--text2);">${p.note||'—'}</td>
       <td style="white-space:nowrap;">
         <button class="btn xs primary" onclick="markPlannedDozvDone('${p.id}')">✅ Задача выполнена</button>
