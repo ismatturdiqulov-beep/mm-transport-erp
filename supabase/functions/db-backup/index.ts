@@ -95,7 +95,17 @@ async function buildBackupPayload() {
   };
   companyIds.forEach((cid) => ensure(cid));
 
-  const directTables = TABLES.filter((t) => !['trip_legs', 'trip_expenses', 'trip_payments', 'trip_surcharges', 'person_docs'].includes(t));
+  // 'companies' — особый случай: у строки этой таблицы своя компания определяется
+  // полем id (сама себе компания), а не company_id, которого у неё вообще нет — без
+  // этой развилки строки companies молча выпадали из бэкапа целиком (id компании как
+  // ключ группировки создавался через companyIds выше, но сама строка внутрь никогда
+  // не попадала — баг найден и исправлен сразу, до того как строить восстановление
+  // поверх этого формата, 2026-08-10).
+  for (const row of byTable.companies || []) {
+    ensure(row.id).companies = ensure(row.id).companies || [];
+    ensure(row.id).companies.push(row);
+  }
+  const directTables = TABLES.filter((t) => !['companies', 'trip_legs', 'trip_expenses', 'trip_payments', 'trip_surcharges', 'person_docs'].includes(t));
   for (const t of directTables) {
     for (const row of byTable[t] || []) {
       const cid = row.company_id;
