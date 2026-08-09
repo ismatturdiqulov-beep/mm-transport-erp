@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>MM Transport — офлайн-просмотр бэкапа</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root{
+    --bg:#f5f4f0; --surface:#fff; --border:#e2e0d8; --text:#1a1a1a; --text2:#555; --text3:#888;
+    --accent:#2563eb; --red:#dc2626; --green:#16a34a; --amber:#d97706;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#17181c; --surface:#212228; --border:#33343c; --text:#eee; --text2:#aaa; --text3:#777;
+      --accent:#5b8def; --red:#f87171; --green:#4ade80; --amber:#fbbf24; }
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:-apple-system,Segoe UI,Arial,sans-serif;background:var(--bg);color:var(--text);font-size:14px;}
+  .wrap{max-width:1200px;margin:0 auto;padding:20px;}
+  h1{font-size:18px;margin:0 0 4px;}
+  .sub{color:var(--text3);font-size:12px;margin-bottom:18px;}
+  .warn{background:rgba(217,119,6,.12);border:1px solid var(--amber);border-radius:8px;padding:10px 14px;font-size:12.5px;margin-bottom:18px;color:var(--text);}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px;margin-bottom:16px;}
+  label{display:block;font-size:12px;color:var(--text2);margin-bottom:4px;font-weight:600;}
+  input[type=file],input[type=password],input[type=text],select{
+    width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:13px;margin-bottom:12px;
+  }
+  button{background:var(--accent);color:#fff;border:none;padding:9px 18px;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;}
+  button:hover{opacity:.9;}
+  button.secondary{background:var(--border);color:var(--text);}
+  #error{color:var(--red);font-size:13px;margin-top:8px;white-space:pre-wrap;}
+  #openScreen{display:block;}
+  #dataScreen{display:none;}
+  .row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px;}
+  .row > div{flex:1;min-width:200px;}
+  .row label{margin-bottom:4px;}
+  .meta{font-size:12px;color:var(--text3);margin-bottom:10px;}
+  table{width:100%;border-collapse:collapse;font-size:12.5px;}
+  th{background:var(--bg);border:1px solid var(--border);padding:6px 8px;text-align:left;position:sticky;top:0;white-space:nowrap;}
+  td{border:1px solid var(--border);padding:6px 8px;vertical-align:top;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  td:hover{white-space:normal;overflow:visible;}
+  .tblwrap{max-height:65vh;overflow:auto;border:1px solid var(--border);border-radius:8px;}
+  .count{font-size:12px;color:var(--text3);margin:8px 0;}
+  .top-actions{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>📦 MM Transport — офлайн-просмотр бэкапа</h1>
+  <div class="sub">Работает полностью локально, без интернета. Только просмотр — ничего нельзя изменить или сохранить обратно.</div>
+
+  <div id="openScreen">
+    <div class="warn">Файл бэкапа расшифровывается прямо в этом окне браузера — файл и ключ никуда не отправляются, интернет не используется вообще.</div>
+    <div class="card">
+      <label>Файл бэкапа (backup-ГГГГ-ММ-ДД.json.enc)</label>
+      <input type="file" id="fileInput" accept=".enc,.json">
+      <label>Ключ шифрования (тот, что сохранили отдельно от Supabase)</label>
+      <input type="password" id="keyInput" placeholder="base64-ключ">
+      <button onclick="openBackup()">Открыть</button>
+      <div id="error"></div>
+    </div>
+  </div>
+
+  <div id="dataScreen">
+    <div class="top-actions">
+      <div class="meta" id="metaLine"></div>
+      <button class="secondary" onclick="location.reload()">← Открыть другой файл</button>
+    </div>
+    <div class="row">
+      <div>
+        <label>Компания</label>
+        <select id="companySelect" onchange="onCompanyChange()"></select>
+      </div>
+      <div>
+        <label>Раздел</label>
+        <select id="tableSelect" onchange="renderTable()"></select>
+      </div>
+      <div>
+        <label>Поиск</label>
+        <input type="text" id="searchInput" placeholder="Ищет по всем полям..." oninput="renderTable()">
+      </div>
+    </div>
+    <div class="count" id="countLine"></div>
+    <div class="tblwrap"><table id="dataTable"><thead id="tableHead"></thead><tbody id="tableBody"></tbody></table></div>
+  </div>
+</div>
+
+<script>
+let PAYLOAD = null;
+
+const TABLE_LABELS = {
+  companies: 'Компания', company_settings: 'Настройки компании', kontragenty: 'Контрагенты',
+  people: 'Водители', person_docs: 'Документы водителей', transport: 'Транспорт', fleet: 'Подвижной состав',
+  trips: 'Рейсы', trip_legs: 'Плечи рейсов', trip_expenses: 'Расходы по рейсам', trip_payments: 'Оплаты по рейсам',
+  trip_surcharges: 'Штрафы/доплаты', tirs: 'ТИР', dozv: 'Дозволы', doz_planned: 'Ожидаемые дозволы',
+  finance: 'Финансы (начисления/приход)', maintenance: 'ТО и ремонты', kassa_wallets: 'Кошельки',
+  kassa: 'Касса', waybills: 'Путёвки', poa: 'Доверенности', labor: 'Трудовые договоры',
+  telegram_links: 'Telegram-привязки', driver_messages: 'Сообщения от водителей', notification_log: 'Журнал уведомлений',
+};
+
+async function decryptFile(fileBytes, keyB64) {
+  const iv = fileBytes.slice(0, 12);
+  const ciphertext = fileBytes.slice(12);
+  let keyRaw;
+  try {
+    keyRaw = Uint8Array.from(atob(keyB64.trim()), (c) => c.charCodeAt(0));
+  } catch {
+    throw new Error('Ключ не похож на корректный base64 — проверьте, что скопировали его целиком.');
+  }
+  if (keyRaw.length !== 32) throw new Error(`Ключ должен быть 32 байта, получено ${keyRaw.length} — проверьте ключ.`);
+  const key = await crypto.subtle.importKey('raw', keyRaw, { name: 'AES-GCM' }, false, ['decrypt']);
+  let plainBuf;
+  try {
+    plainBuf = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ciphertext);
+  } catch {
+    throw new Error('Не удалось расшифровать — неверный ключ или повреждённый файл.');
+  }
+  return new TextDecoder().decode(plainBuf);
+}
+
+async function openBackup() {
+  const errEl = document.getElementById('error');
+  errEl.textContent = '';
+  const file = document.getElementById('fileInput').files[0];
+  const keyB64 = document.getElementById('keyInput').value;
+  if (!file) { errEl.textContent = 'Выберите файл бэкапа.'; return; }
+  if (!keyB64) { errEl.textContent = 'Введите ключ шифрования.'; return; }
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const json = await decryptFile(bytes, keyB64);
+    PAYLOAD = JSON.parse(json);
+  } catch (e) {
+    errEl.textContent = e.message || String(e);
+    return;
+  }
+  document.getElementById('openScreen').style.display = 'none';
+  document.getElementById('dataScreen').style.display = 'block';
+  document.getElementById('metaLine').textContent = 'Бэкап от ' + new Date(PAYLOAD.generated_at).toLocaleString('ru-RU');
+
+  const companyIds = Object.keys(PAYLOAD.companies || {});
+  const companySel = document.getElementById('companySelect');
+  companySel.innerHTML = companyIds.map((cid) => {
+    const compRow = (PAYLOAD.companies[cid].companies || [])[0];
+    const label = compRow ? compRow.name : cid;
+    return `<option value="${cid}">${label}</option>`;
+  }).join('');
+  onCompanyChange();
+}
+
+function onCompanyChange() {
+  const cid = document.getElementById('companySelect').value;
+  const bucket = PAYLOAD.companies[cid] || {};
+  const tableSel = document.getElementById('tableSelect');
+  const availableTables = Object.keys(TABLE_LABELS).filter((t) => (bucket[t] || []).length > 0);
+  tableSel.innerHTML = availableTables.map((t) => `<option value="${t}">${TABLE_LABELS[t]} (${bucket[t].length})</option>`).join('');
+  renderTable();
+}
+
+function renderTable() {
+  const cid = document.getElementById('companySelect').value;
+  const table = document.getElementById('tableSelect').value;
+  const bucket = (PAYLOAD.companies[cid] || {})[table] || [];
+  const q = document.getElementById('searchInput').value.trim().toLowerCase();
+
+  const rows = !q ? bucket : bucket.filter((row) =>
+    Object.values(row).some((v) => v !== null && v !== undefined && String(typeof v === 'object' ? JSON.stringify(v) : v).toLowerCase().includes(q))
+  );
+
+  const head = document.getElementById('tableHead');
+  const body = document.getElementById('tableBody');
+  document.getElementById('countLine').textContent = `Показано: ${rows.length} из ${bucket.length}`;
+
+  if (!rows.length) { head.innerHTML = ''; body.innerHTML = '<tr><td style="padding:16px;text-align:center;color:var(--text3)">Нет данных</td></tr>'; return; }
+
+  const cols = Object.keys(rows[0]);
+  head.innerHTML = '<tr>' + cols.map((c) => `<th>${c}</th>`).join('') + '</tr>';
+  body.innerHTML = rows.map((row) => '<tr>' + cols.map((c) => {
+    let v = row[c];
+    if (v === null || v === undefined) v = '';
+    else if (typeof v === 'object') v = JSON.stringify(v);
+    return `<td title="${String(v).replace(/"/g, '&quot;')}">${v}</td>`;
+  }).join('') + '</tr>').join('');
+}
+</script>
+</body>
+</html>
