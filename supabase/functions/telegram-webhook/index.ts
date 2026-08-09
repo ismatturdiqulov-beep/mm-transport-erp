@@ -19,6 +19,11 @@ import { createClient } from 'npm:@supabase/supabase-js@2';
 const TELEGRAM_BOT_TOKEN = Deno.env.get('TELEGRAM_BOT_TOKEN')!;
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+// Разовый секретный код для привязки ЛИЧНОГО Telegram владельца платформы (для
+// уведомлений о бэкапах — см. owner_notify, миграция 40) — отдельно от обычной
+// привязки контрагентов через telegram_links/link_code. Не хранится в БД, просто
+// секрет функции, сравнивается напрямую.
+const OWNER_LINK_CODE = Deno.env.get('OWNER_LINK_CODE');
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
@@ -316,6 +321,19 @@ Deno.serve(async (req) => {
   }
 
   if (!message.text) return new Response('ok');
+
+  // Привязка ЛИЧНОГО Telegram владельца платформы — команда /admin_link <код>,
+  // код разовый, задаётся секретом функции (не виден в коде/git). Если код совпал —
+  // запоминаем chat_id в owner_notify, чтобы бэкап-функция знала, кому слать
+  // уведомления об успехе/сбое бэкапа (решение пользователя 2026-08-10).
+  if (OWNER_LINK_CODE && text === `/admin_link ${OWNER_LINK_CODE}`) {
+    await supabase.from('owner_notify').upsert(
+      { chat_id: chatId, telegram_username: username, linked_at: new Date().toISOString() },
+      { onConflict: 'chat_id' }
+    );
+    await sendMessage(chatId, '✅ Готово! Этот чат привязан для уведомлений о резервных копиях.');
+    return new Response('ok');
+  }
 
   if (text === '/start') {
     await sendMessage(chatId,
