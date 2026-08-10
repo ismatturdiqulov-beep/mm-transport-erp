@@ -569,6 +569,16 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
       </div>
       <button class="btn primary" style="margin-top:10px;" onclick="saveFxRates()">💾 Сохранить курсы</button>
     </div>
+    <div class="section" id="owner-notify-settings-block" style="padding:20px;margin-top:14px;display:none;">
+      <div style="font-size:13px;font-weight:600;margin-bottom:4px;">🔔 Уведомления владельцу в Telegram</div>
+      <div style="font-size:11.5px;color:var(--text3);margin-bottom:14px;">Личные Telegram-уведомления владельцу платформы о бизнес-событиях (отдельно от уведомлений контрагентам). Уведомления о бэкапах сюда не входят — они всегда включены.</div>
+      <div style="display:flex;flex-direction:column;gap:10px;">
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;"><input type="checkbox" id="ons-tir-dozv" style="width:16px;height:16px;"> Выдача/возврат ТИР и Дозволов</label>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;"><input type="checkbox" id="ons-kontragent-charges" style="width:16px;height:16px;"> Начисления и приходы по контрагентам</label>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;"><input type="checkbox" id="ons-kassa" style="width:16px;height:16px;"> Приходы/расходы в кассе</label>
+      </div>
+      <button class="btn primary" style="margin-top:12px;" onclick="saveOwnerNotifySettings()">💾 Сохранить</button>
+    </div>
     <div class="section" style="padding:20px;margin-top:14px;">
       <div style="font-size:13px;font-weight:600;margin-bottom:4px;">📥 Импорт данных из Excel</div>
       <div style="font-size:11.5px;color:var(--text3);margin-bottom:14px;">
@@ -3188,7 +3198,7 @@ function mapCompanyFromDb(r) {
     id: r.id, name: r.name||'', address: r.address||'', phone: r.phone||'', email: r.email||'',
     bankAccount: r.bank_account||'', bankName: r.bank_name||'', inn: r.inn||'', mfo: r.mfo||'',
     oked: r.oked||'', directorName: r.director_name||'', logoUrl: r.logo_url||'',
-    asmapCode: r.asmap_code||'',
+    asmapCode: r.asmap_code||'', accountType: r.account_type||'',
   };
 }
 
@@ -3309,6 +3319,7 @@ async function loadAllData() {
     if (cs.buy_prices && Object.keys(cs.buy_prices).length) BUY_PRICES = cs.buy_prices;
     if (cs.asmaf_registries) ASMAF_REGISTRIES = cs.asmaf_registries;
     if (cs.doz_registries) DOZ_REGISTRIES = cs.doz_registries;
+    if (cs.owner_notify_settings) OWNER_NOTIFY_SETTINGS = {...OWNER_NOTIFY_SETTINGS, ...cs.owner_notify_settings};
   }
   KONTRAGENTY = byTable.kontragenty.map(mapKontragentFromDb);
   PEOPLE = byTable.people.map(r => mapPersonFromDb(r, byTable.person_docs));
@@ -3411,6 +3422,9 @@ function escapeHtml(s){
 // telegram-notify сам это проверяет по company_id вызывающего — решение
 // пользователя 2026-08-10. Не блокирует основное действие при ошибке, как и
 // notifyKontragent.
+function ownerNotifyEnabled(key){
+  return OWNER_NOTIFY_SETTINGS[key]!==false;
+}
 async function notifyOwner(message){
   try{
     const { data: { session } } = await sbClient.auth.getSession();
@@ -3877,6 +3891,12 @@ const _defaultIcons = {cash:'💵', card:'💳', bank:'🏦'};
 KASSA_WALLETS.forEach(w=>{ if(!w.icon) w.icon = _defaultIcons[w.id]||'💰'; });
 let TRIPS = ld('mm_trips', []);
 let FX_RATES = ld('mm_fx_rates', {USD:12700,EUR:13800,RUB:140,TRY:370,KZT:28});
+// Переключатели личных Telegram-уведомлений владельцу (решение пользователя
+// 2026-08-10) — по умолчанию всё включено, чтобы поведение не изменилось молча
+// для уже работающих уведомлений (ТИР/Дозвол). Ключи kontragentCharges/kassa
+// пока ничего не гасят (события ещё не подключены), заведены заранее, чтобы не
+// трогать этот блок настроек ещё раз, когда те уведомления появятся.
+let OWNER_NOTIFY_SETTINGS = {tirDozv:true, kontragentCharges:true, kassa:true};
 let TRIP_COUNTER = ld('mm_trip_counter', {prefix:'MM', counters:{}}); // counters: {2026: 5, 2025: 12}
 let MAINTENANCE = ld('mm_maintenance', []);
 let WAYBILL_SETTINGS = ld('mm_waybill_settings', {prefixHyt:'МНП-', prefixShyt:'', mechanicName:'', medicName:'', mechanics:[], medics:[]});
@@ -3956,6 +3976,7 @@ async function saveCompanySettings(){
     tir_types: TIR_TYPES, doz_prices: DOZ_PRICES, doz_countries: DOZ_COUNTRIES,
     fx_rates: FX_RATES, trip_counter: TRIP_COUNTER, waybill_settings: WAYBILL_SETTINGS,
     buy_prices: BUY_PRICES, asmaf_registries: ASMAF_REGISTRIES, doz_registries: DOZ_REGISTRIES,
+    owner_notify_settings: OWNER_NOTIFY_SETTINGS,
     updated_at: new Date().toISOString(),
   };
   const { error } = await sbClient.from('company_settings').upsert(record);
@@ -4661,16 +4682,16 @@ function transferTir() {
         }
         toast(`ТИР передан: ${t.num} → ${kg.name} (${fl.label}). Начислено: ${fmtN(price)}${tripId?' · Расход добавлен в рейс':''}`);
         notifyKontragent(kg.id, `📋 Вам передан ТИР № ${t.num} (${t.type}), действителен до ${fmt(t.expires)}.\nНачислено на баланс: ${fmtN(price)} сум.\n💰 ${kgBalanceLine(kg.id)}`);
-        notifyOwner(`📋 Для ПС ${fl.label} выдан ТИР № ${t.num} (${t.type}).\nКонтрагент: ${kg.name}\nНачислено: ${fmtN(price)} сум.\n💰 ${kgBalanceLine(kg.id)}`);
+        if(ownerNotifyEnabled('tirDozv')) notifyOwner(`📋 Для ПС ${fl.label} выдан ТИР № ${t.num} (${t.type}).\nКонтрагент: ${kg.name}\nНачислено: ${fmtN(price)} сум.\n💰 ${kgBalanceLine(kg.id)}`);
       } else {
         toast(`ТИР передан: ${t.num} → ${fl.label}`);
         notifyKontragent(kg.id, `📋 Вам передан ТИР № ${t.num} (${t.type}), действителен до ${fmt(t.expires)}.`);
-        notifyOwner(`📋 Для ПС ${fl.label} выдан ТИР № ${t.num} (${t.type}).\nКонтрагент: ${kg.name}`);
+        if(ownerNotifyEnabled('tirDozv')) notifyOwner(`📋 Для ПС ${fl.label} выдан ТИР № ${t.num} (${t.type}).\nКонтрагент: ${kg.name}`);
       }
     } else {
       toast(`ТИР передан: ${t.num} → ${fl.label}`);
       notifyKontragent(kg.id, `📋 Вам передан ТИР № ${t.num} (${t.type}), действителен до ${fmt(t.expires)}.`);
-      notifyOwner(`📋 Для ПС ${fl.label} выдан ТИР № ${t.num} (${t.type}).\nКонтрагент: ${kg.name}`);
+      if(ownerNotifyEnabled('tirDozv')) notifyOwner(`📋 Для ПС ${fl.label} выдан ТИР № ${t.num} (${t.type}).\nКонтрагент: ${kg.name}`);
     }
     closeModal('modal-transfer-tir'); renderTir();
   });
@@ -4708,7 +4729,7 @@ async function _returnTirToOfficeImpl() {
   if(flForNotify){
     const kgForNotify=getFleetKontragent(flForNotify);
     notifyKontragent(kgForNotify.id, `↩️ Вы сдали ТИР № ${t.num} в офис.${used?' Отмечен как использованный.':(comp>0?` Зачёт на баланс: ${fmtN(comp)} сум.\n💰 ${kgBalanceLine(kgForNotify.id)}`:' Неиспользованный.')}`);
-    notifyOwner(`↩️ ПС ${flForNotify.label}: ТИР № ${t.num} сдан в офис.${used?' Использован.':(comp>0?` Зачёт: ${fmtN(comp)} сум.\n💰 ${kgBalanceLine(kgForNotify.id)}`:' Неиспользован.')}`);
+    if(ownerNotifyEnabled('tirDozv')) notifyOwner(`↩️ ПС ${flForNotify.label}: ТИР № ${t.num} сдан в офис.${used?' Использован.':(comp>0?` Зачёт: ${fmtN(comp)} сум.\n💰 ${kgBalanceLine(kgForNotify.id)}`:' Неиспользован.')}`);
   }
   closeModal('modal-return-tir');
   toast('ТИР '+t.num+' принят в офис. '+(used?'Использован.':'Неиспользован'+(t.comp>0?', зачёт: '+fmtN(t.comp):'.')));
@@ -4821,11 +4842,11 @@ async function performDozvTransfer(d, fl, tripId, date){
         }
       toast(`Дозвол выдан: ${d.num} → ${fl.label}. Начислено: ${fmtN(price)}${tripId?' · Расход добавлен в рейс':''}`);
       notifyKontragent(kg.id, `📄 Вам передан Дозвол № ${d.num} (${d.country}${d.epermit?', Е-ПЕРМИТ':''}).\nНачислено на баланс: ${fmtN(price)} сум.\n💰 ${kgBalanceLine(kg.id)}`);
-      notifyOwner(`📄 Для ПС ${fl.label} выдан Дозвол ${d.country} № ${d.num}${d.epermit?' (Е-ПЕРМИТ)':''}.\nКонтрагент: ${kg.name}\nНачислено: ${fmtN(price)} сум.\n💰 ${kgBalanceLine(kg.id)}`);
+      if(ownerNotifyEnabled('tirDozv')) notifyOwner(`📄 Для ПС ${fl.label} выдан Дозвол ${d.country} № ${d.num}${d.epermit?' (Е-ПЕРМИТ)':''}.\nКонтрагент: ${kg.name}\nНачислено: ${fmtN(price)} сум.\n💰 ${kgBalanceLine(kg.id)}`);
     } else {
       toast(`Дозвол выдан: ${d.num} → ${fl.label} (цена не задана)`);
       notifyKontragent(kg.id, `📄 Вам передан Дозвол № ${d.num} (${d.country}${d.epermit?', Е-ПЕРМИТ':''}).`);
-      notifyOwner(`📄 Для ПС ${fl.label} выдан Дозвол ${d.country} № ${d.num}${d.epermit?' (Е-ПЕРМИТ)':''}.\nКонтрагент: ${kg.name}`);
+      if(ownerNotifyEnabled('tirDozv')) notifyOwner(`📄 Для ПС ${fl.label} выдан Дозвол ${d.country} № ${d.num}${d.epermit?' (Е-ПЕРМИТ)':''}.\nКонтрагент: ${kg.name}`);
     }
   }
   return true;
@@ -4875,7 +4896,7 @@ async function _returnDozToOfficeImpl() {
   if(flcForNotify){
     const kgForNotify=getFleetKontragent(flcForNotify);
     notifyKontragent(kgForNotify.id, `↩️ Вы сдали Дозвол № ${d.num} в офис.${used?' Отмечен как использованный.':(comp>0?` Зачёт на баланс: ${fmtN(comp)} сум.\n💰 ${kgBalanceLine(kgForNotify.id)}`:' Неиспользованный.')}`);
-    notifyOwner(`↩️ ПС ${flcForNotify.label}: Дозвол № ${d.num} сдан в офис.${used?' Использован.':(comp>0?` Зачёт: ${fmtN(comp)} сум.\n💰 ${kgBalanceLine(kgForNotify.id)}`:' Неиспользован.')}`);
+    if(ownerNotifyEnabled('tirDozv')) notifyOwner(`↩️ ПС ${flcForNotify.label}: Дозвол № ${d.num} сдан в офис.${used?' Использован.':(comp>0?` Зачёт: ${fmtN(comp)} сум.\n💰 ${kgBalanceLine(kgForNotify.id)}`:' Неиспользован.')}`);
   }
   closeModal('modal-return-dozv');
   toast('Дозвол '+d.num+' принят в офис.'+(d.comp>0?' Зачёт: '+fmtN(d.comp):''));
@@ -4894,7 +4915,7 @@ async function _closeEpermitImpl() {
   d.used=true; d.returnedOffice=returnedOffice; d.returnedMt='epermit-auto';
   closeModal('modal-close-epermit');
   toast('Е-ПЕРМИТ '+d.num+' закрыт (использован)');
-  notifyOwner(`🔒 Е-ПЕРМИТ № ${d.num} (${d.country}) закрыт (использован). ПС: ${d.plate||'—'}, контрагент: ${d.person||'—'}.`);
+  if(ownerNotifyEnabled('tirDozv')) notifyOwner(`🔒 Е-ПЕРМИТ № ${d.num} (${d.country}) закрыт (использован). ПС: ${d.plate||'—'}, контрагент: ${d.person||'—'}.`);
   renderDozv();
 }
 
@@ -5417,6 +5438,26 @@ function renderSettings(){
     const el=document.getElementById('fx-'+c);
     if(el) el.value=FX_RATES[c]||0;
   });
+  // Уведомления владельцу — блок виден только в компании владельца платформы
+  // (account_type='admin'); в компаниях-подписчиках эти переключатели всё равно
+  // ни на что не влияют на сервере, показывать их там только сбивало бы с толку.
+  const onsBlock=document.getElementById('owner-notify-settings-block');
+  if(onsBlock){
+    onsBlock.style.display = COMPANY.accountType==='admin' ? 'block' : 'none';
+    document.getElementById('ons-tir-dozv').checked = ownerNotifyEnabled('tirDozv');
+    document.getElementById('ons-kontragent-charges').checked = ownerNotifyEnabled('kontragentCharges');
+    document.getElementById('ons-kassa').checked = ownerNotifyEnabled('kassa');
+  }
+}
+
+function saveOwnerNotifySettings(){
+  OWNER_NOTIFY_SETTINGS = {
+    tirDozv: document.getElementById('ons-tir-dozv').checked,
+    kontragentCharges: document.getElementById('ons-kontragent-charges').checked,
+    kassa: document.getElementById('ons-kassa').checked,
+  };
+  saveCompanySettings();
+  toast('Настройки уведомлений владельцу сохранены');
 }
 
 function saveFxRates(){
@@ -7652,7 +7693,7 @@ async function _generateAsmafRegistryImpl(){
   ASMAF_REGISTRIES.push({id:genId(),num:regNum,date,tirs:selected.map(t=>t.id)});
   saveAll(); saveCompanySettings(); closeModal('modal-asmaf-registry');
   toast(`Реестр №${regNum} сформирован. ${selected.length} ТИР сдано в АСМАП.`);
-  notifyOwner(`📋 Реестр №${regNum}: сдано в АСМАП ${selected.length} ТИР (${selected.map(t=>t.num).join(', ')}).`);
+  if(ownerNotifyEnabled('tirDozv')) notifyOwner(`📋 Реестр №${regNum}: сдано в АСМАП ${selected.length} ТИР (${selected.map(t=>t.num).join(', ')}).`);
   renderTir();
   // Print registry
   printAsmafRegistry(regNum, date, selected);
