@@ -2535,7 +2535,15 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
       <!-- Поля только для топлива. Сумма/Литры/Цена за литр — три взаимосвязанных
            поля (Сумма = Литры × Цена); заполняете любые два, третье считается само
            через calcFuelPrice(source) — часть волонтёров привыкла указывать сумму
-           и литры, часть — литры и цену за литр (решение пользователя 2026-08-04). -->
+           и литры, часть — литры и цену за литр (решение пользователя 2026-08-04).
+           Чекбокс "Ввожу сумму и цену" переключает, какое поле — результат: по
+           умолчанию Литры — вводимое значение (считаются Сумма/Цена), с галочкой —
+           Литры сами становятся результатом (решение пользователя 2026-08-10, без
+           галочки было неоднозначно, какое поле пересчитывать при правке). -->
+      <label style="display:flex;align-items:center;gap:6px;font-size:12px;margin-bottom:8px;">
+        <input type="checkbox" id="te-fuel-reverse" onchange="onFuelReverseToggle()" style="width:15px;height:15px;">
+        Ввожу сумму и цену за литр (посчитать литры)
+      </label>
       <div id="te-fuel-block" style="background:var(--surface2);border-radius:var(--radius);padding:10px;margin-bottom:8px;">
         <div class="form-grid-2">
           <div class="form-row"><label>Литры (л)</label><input type="number" id="te-liters" placeholder="0" oninput="calcFuelPrice('liters')"></div>
@@ -10603,28 +10611,40 @@ function toggleFuelFields(cat){
   const fb=document.getElementById('te-fuel-block');
   if(fb) fb.style.display=cat==='fuel'?'block':'none';
 }
+// Переключатель режима: без галочки — Литры вводится вручную, а Сумма/Цена
+// пересчитывают друг друга через Литры (обычный сценарий — известны литры и
+// цена на заправке). С галочкой — наоборот, известна сумма чека и цена за литр,
+// а Литры становится результатом и блокируется от ручного ввода — решение
+// пользователя 2026-08-10 (без этого было неоднозначно, какое поле пересчитывать
+// при правке уже заполненной формы).
+function onFuelReverseToggle(){
+  const reverse=document.getElementById('te-fuel-reverse').checked;
+  const litersEl=document.getElementById('te-liters');
+  litersEl.readOnly=reverse;
+  litersEl.style.background=reverse?'var(--surface2)':'';
+  litersEl.style.color=reverse?'var(--text3)':'';
+  calcFuelPrice(reverse?'price':undefined);
+}
 // source — какое из трёх полей (amount/liters/price) сейчас редактирует
 // пользователь. Считаем то, что он НЕ трогает, по двум остальным. Без source
 // (смена валюты/курса) — просто обновляем строку конвертации, ничего не пересчитываем.
 function calcFuelPrice(source){
   const litersEl=document.getElementById('te-liters');
   const priceEl=document.getElementById('te-price-per-l');
+  const reverse=(document.getElementById('te-fuel-reverse')||{}).checked;
   const liters=parseFloat(litersEl.value)||0;
   const price=parseFloat(priceEl.value)||0;
   let amount=numVal('te-amount');
-  // Три поля, одна формула (Сумма = Литры × Цена) — какое бы ни поменяли, считаем
-  // ТРЕТЬЕ (то, что сейчас пустое), а не всегда одно и то же поле. Раньше при вводе
-  // "Сумма" + "Цена за литр" литры не считались вообще — эта пара направлений
-  // отсутствовала (баг найден пользователем 2026-08-10).
-  if(source==='amount'){
+  if(reverse){
+    // Литры — всегда результат, никогда вход; считаем при любой правке Суммы/Цены.
+    if(source!=='liters') litersEl.value=(amount>0&&price>0)?Math.round(amount/price*100)/100:'';
+  } else if(source==='amount'){
     if(liters>0) priceEl.value=amount>0?Math.round(amount/liters):'';
-    else if(price>0) litersEl.value=amount>0?Math.round(amount/price*100)/100:'';
   } else if(source==='liters'){
     if(price>0) setNumVal('te-amount', liters*price);
     else if(amount>0) priceEl.value=liters>0?Math.round(amount/liters):'';
   } else if(source==='price'){
     if(liters>0) setNumVal('te-amount', liters*price);
-    else if(amount>0) litersEl.value=price>0?Math.round(amount/price*100)/100:'';
   }
   amount=numVal('te-amount');
   const currency=(document.getElementById('te-currency')||{}).value||'UZS';
@@ -10677,6 +10697,10 @@ function openTripExpense(tripId){
   document.getElementById('te-save-btn').textContent='Добавить расход';
   document.getElementById('te-date').value=todayStr;
   ['te-amount','te-desc','te-country','te-liters','te-price-per-l','te-custom-rate'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+  document.getElementById('te-fuel-reverse').checked=false;
+  document.getElementById('te-liters').readOnly=false;
+  document.getElementById('te-liters').style.background='';
+  document.getElementById('te-liters').style.color='';
   document.getElementById('te-cat').value='fuel';
   document.getElementById('te-currency').value='UZS';
   document.getElementById('te-wallet').value='cash';
@@ -10699,6 +10723,10 @@ function editTripExpense(tripId,expId){
   setNumVal('te-amount', exp.amountOrig!=null?exp.amountOrig:exp.amount);
   document.getElementById('te-custom-rate').value=exp.customRate||'';
   document.getElementById('te-liters').value=exp.liters||'';
+  document.getElementById('te-fuel-reverse').checked=false;
+  document.getElementById('te-liters').readOnly=false;
+  document.getElementById('te-liters').style.background='';
+  document.getElementById('te-liters').style.color='';
   document.getElementById('te-country').value=exp.country||'';
   document.getElementById('te-wallet').value=exp.wallet||'cash';
   document.getElementById('te-desc').value=exp.desc||'';
