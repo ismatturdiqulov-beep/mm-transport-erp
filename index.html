@@ -3406,6 +3406,27 @@ function escapeHtml(s){
   return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
+// Уведомление владельцу платформы (лично) о событиях по ТИР/Дозвол — выдача,
+// возврат, закрытие. Работает только для компании владельца (account_type='admin'),
+// telegram-notify сам это проверяет по company_id вызывающего — решение
+// пользователя 2026-08-10. Не блокирует основное действие при ошибке, как и
+// notifyKontragent.
+async function notifyOwner(message){
+  try{
+    const { data: { session } } = await sbClient.auth.getSession();
+    if(!session) return;
+    const resp = await fetch(SUPABASE_URL+'/functions/v1/telegram-notify', {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json', 'apikey': SUPABASE_ANON_KEY, 'Authorization': 'Bearer '+session.access_token },
+      body: JSON.stringify({ ownerNotify:true, message }),
+    });
+    if(!resp.ok){
+      const text=await resp.text().catch(()=>'');
+      console.error('Owner notify failed:', resp.status, text);
+    }
+  }catch(e){ console.error('Owner notify failed', e); }
+}
+
 // То же самое, что notifyKontragent, но возвращает результат ({sent, reason}) —
 // нужен для ручной отправки/рассылки, чтобы показать диспетчеру отчёт (скольким
 // реально ушло, у кого нет привязки к боту). Автоматические уведомления (начисление,
@@ -4640,13 +4661,16 @@ function transferTir() {
         }
         toast(`ТИР передан: ${t.num} → ${kg.name} (${fl.label}). Начислено: ${fmtN(price)}${tripId?' · Расход добавлен в рейс':''}`);
         notifyKontragent(kg.id, `📋 Вам передан ТИР № ${t.num} (${t.type}), действителен до ${fmt(t.expires)}.\nНачислено на баланс: ${fmtN(price)} сум.\n💰 ${kgBalanceLine(kg.id)}`);
+        notifyOwner(`📋 Для ПС ${fl.label} выдан ТИР № ${t.num} (${t.type}).\nКонтрагент: ${kg.name}\nНачислено: ${fmtN(price)} сум.\n💰 ${kgBalanceLine(kg.id)}`);
       } else {
         toast(`ТИР передан: ${t.num} → ${fl.label}`);
         notifyKontragent(kg.id, `📋 Вам передан ТИР № ${t.num} (${t.type}), действителен до ${fmt(t.expires)}.`);
+        notifyOwner(`📋 Для ПС ${fl.label} выдан ТИР № ${t.num} (${t.type}).\nКонтрагент: ${kg.name}`);
       }
     } else {
       toast(`ТИР передан: ${t.num} → ${fl.label}`);
       notifyKontragent(kg.id, `📋 Вам передан ТИР № ${t.num} (${t.type}), действителен до ${fmt(t.expires)}.`);
+      notifyOwner(`📋 Для ПС ${fl.label} выдан ТИР № ${t.num} (${t.type}).\nКонтрагент: ${kg.name}`);
     }
     closeModal('modal-transfer-tir'); renderTir();
   });
@@ -4684,6 +4708,7 @@ async function _returnTirToOfficeImpl() {
   if(flForNotify){
     const kgForNotify=getFleetKontragent(flForNotify);
     notifyKontragent(kgForNotify.id, `↩️ Вы сдали ТИР № ${t.num} в офис.${used?' Отмечен как использованный.':(comp>0?` Зачёт на баланс: ${fmtN(comp)} сум.\n💰 ${kgBalanceLine(kgForNotify.id)}`:' Неиспользованный.')}`);
+    notifyOwner(`↩️ ПС ${flForNotify.label}: ТИР № ${t.num} сдан в офис.${used?' Использован.':(comp>0?` Зачёт: ${fmtN(comp)} сум.\n💰 ${kgBalanceLine(kgForNotify.id)}`:' Неиспользован.')}`);
   }
   closeModal('modal-return-tir');
   toast('ТИР '+t.num+' принят в офис. '+(used?'Использован.':'Неиспользован'+(t.comp>0?', зачёт: '+fmtN(t.comp):'.')));
@@ -4796,9 +4821,11 @@ async function performDozvTransfer(d, fl, tripId, date){
         }
       toast(`Дозвол выдан: ${d.num} → ${fl.label}. Начислено: ${fmtN(price)}${tripId?' · Расход добавлен в рейс':''}`);
       notifyKontragent(kg.id, `📄 Вам передан Дозвол № ${d.num} (${d.country}${d.epermit?', Е-ПЕРМИТ':''}).\nНачислено на баланс: ${fmtN(price)} сум.\n💰 ${kgBalanceLine(kg.id)}`);
+      notifyOwner(`📄 Для ПС ${fl.label} выдан Дозвол ${d.country} № ${d.num}${d.epermit?' (Е-ПЕРМИТ)':''}.\nКонтрагент: ${kg.name}\nНачислено: ${fmtN(price)} сум.\n💰 ${kgBalanceLine(kg.id)}`);
     } else {
       toast(`Дозвол выдан: ${d.num} → ${fl.label} (цена не задана)`);
       notifyKontragent(kg.id, `📄 Вам передан Дозвол № ${d.num} (${d.country}${d.epermit?', Е-ПЕРМИТ':''}).`);
+      notifyOwner(`📄 Для ПС ${fl.label} выдан Дозвол ${d.country} № ${d.num}${d.epermit?' (Е-ПЕРМИТ)':''}.\nКонтрагент: ${kg.name}`);
     }
   }
   return true;
@@ -4848,6 +4875,7 @@ async function _returnDozToOfficeImpl() {
   if(flcForNotify){
     const kgForNotify=getFleetKontragent(flcForNotify);
     notifyKontragent(kgForNotify.id, `↩️ Вы сдали Дозвол № ${d.num} в офис.${used?' Отмечен как использованный.':(comp>0?` Зачёт на баланс: ${fmtN(comp)} сум.\n💰 ${kgBalanceLine(kgForNotify.id)}`:' Неиспользованный.')}`);
+    notifyOwner(`↩️ ПС ${flcForNotify.label}: Дозвол № ${d.num} сдан в офис.${used?' Использован.':(comp>0?` Зачёт: ${fmtN(comp)} сум.\n💰 ${kgBalanceLine(kgForNotify.id)}`:' Неиспользован.')}`);
   }
   closeModal('modal-return-dozv');
   toast('Дозвол '+d.num+' принят в офис.'+(d.comp>0?' Зачёт: '+fmtN(d.comp):''));
@@ -4866,6 +4894,7 @@ async function _closeEpermitImpl() {
   d.used=true; d.returnedOffice=returnedOffice; d.returnedMt='epermit-auto';
   closeModal('modal-close-epermit');
   toast('Е-ПЕРМИТ '+d.num+' закрыт (использован)');
+  notifyOwner(`🔒 Е-ПЕРМИТ № ${d.num} (${d.country}) закрыт (использован). ПС: ${d.plate||'—'}, контрагент: ${d.person||'—'}.`);
   renderDozv();
 }
 
@@ -7623,6 +7652,7 @@ async function _generateAsmafRegistryImpl(){
   ASMAF_REGISTRIES.push({id:genId(),num:regNum,date,tirs:selected.map(t=>t.id)});
   saveAll(); saveCompanySettings(); closeModal('modal-asmaf-registry');
   toast(`Реестр №${regNum} сформирован. ${selected.length} ТИР сдано в АСМАП.`);
+  notifyOwner(`📋 Реестр №${regNum}: сдано в АСМАП ${selected.length} ТИР (${selected.map(t=>t.num).join(', ')}).`);
   renderTir();
   // Print registry
   printAsmafRegistry(regNum, date, selected);

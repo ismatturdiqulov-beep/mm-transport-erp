@@ -53,6 +53,25 @@ function keyboardFor(kgType: string | null | undefined) {
   return hasFullAccess(kgType) ? tenantKeyboard : driverKeyboard;
 }
 
+// Админ-меню владельца платформы — запрос по кнопке, а не автоматическая сводка по
+// расписанию (решение пользователя 2026-08-10). Работает только с данными ЕГО
+// СОБСТВЕННОЙ компании (companies.account_type='admin'), а не компаний-клиентов —
+// подтверждено пользователем отдельно.
+const BTN_ADMIN_KASSA = '💰 Касса';
+const BTN_ADMIN_KONTRAGENTY = '👥 Контрагенты';
+const BTN_ADMIN_TIRDOZV = '📋 ТИР/Дозволы';
+const BTN_ADMIN_DEADLINES = '⏰ Сроки';
+const BTN_ADMIN_DIALOGS = '💬 Диалоги';
+const BTN_ADMIN_FLEET = '🚛 ПС';
+const adminKeyboard = {
+  keyboard: [
+    [{ text: BTN_ADMIN_KASSA }, { text: BTN_ADMIN_KONTRAGENTY }],
+    [{ text: BTN_ADMIN_TIRDOZV }, { text: BTN_ADMIN_DEADLINES }],
+    [{ text: BTN_ADMIN_DIALOGS }, { text: BTN_ADMIN_FLEET }],
+  ],
+  resize_keyboard: true,
+};
+
 async function tg(method: string, payload: any) {
   const resp = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/${method}`, {
     method: 'POST',
@@ -197,6 +216,212 @@ async function createDriverMessage(opts: {
   return { data, error };
 }
 
+// ============================================================================
+// Админ-меню владельца платформы (по запросу, не сводкой) — работает только с
+// данными компании самого владельца, companies.account_type='admin'.
+// ============================================================================
+
+let _adminCompanyIdCache: string | null = null;
+async function getAdminCompanyId(): Promise<string | null> {
+  if (_adminCompanyIdCache) return _adminCompanyIdCache;
+  const { data } = await supabase.from('companies').select('id').eq('account_type', 'admin').maybeSingle();
+  _adminCompanyIdCache = data?.id || null;
+  return _adminCompanyIdCache;
+}
+
+// Касса: остаток по каждому кошельку = initial_balance + приход − расход, как на
+// странице "Касса" в приложении. Переводы между кошельками в базе не хранятся типом
+// 'transfer' — приложение пишет их парой строк (expense в источник + income в
+// назначение, см. transferBetweenWallets в index.html), поэтому отдельная обработка
+// 'transfer' не нужна.
+async function getKassaSummaryText(companyId: string): Promise<string> {
+  const { data: wallets } = await supabase.from('kassa_wallets').select('id, name, icon, initial_balance')
+    .eq('company_id', companyId).neq('active', false);
+  if (!wallets || !wallets.length) return 'Кошельки не настроены.';
+  const { data: ops } = await supabase.from('kassa').select('wallet, type, amount').eq('company_id', companyId);
+  const lines = wallets.map((w: any) => {
+    const walletOps = (ops || []).filter((o: any) => o.wallet === w.id);
+    const inc = walletOps.filter((o: any) => o.type === 'income' || o.type === 'trip_payment')
+      .reduce((s: number, o: any) => s + Number(o.amount || 0), 0);
+    const exp = walletOps.filter((o: any) => o.type === 'expense' || o.type === 'payout')
+      .reduce((s: number, o: any) => s + Number(o.amount || 0), 0);
+    const bal = Number(w.initial_balance || 0) + inc - exp;
+    return `${w.icon || '💰'} ${w.name}: <b>${fmtN(bal)} сум</b>`;
+  });
+  return lines.join('\n');
+}
+
+async function findKontragenty(companyId: string, query: string): Promise<{ id: string; name: string }[]> {
+  const { data } = await supabase.from('kontragenty').select('id, name').eq('company_id', companyId)
+    .ilike('name', `%${query}%`).limit(5);
+  return data || [];
+}
+async function getKontragentSummaryText(kontragentId: string, name: string): Promise<string> {
+  const bal = await getBalance(kontragentId);
+  const balLabel = bal < 0 ? `Долг: ${fmtN(-bal)} сум` : bal > 0 ? `Переплата: ${fmtN(bal)} сум` : 'Баланс: 0';
+  const opsText = await getLastOperationsText(kontragentId);
+  return `👤 <b>${name}</b>\n💰 ${balLabel}\n\n📊 Последние операции:\n${opsText}`;
+}
+
+// Те же состояния, что tirGetState()/dozGetState() в index.html — здесь мирим
+// напрямую с сырыми колонками БД (snake_case), так как у Edge Function нет
+// camelCase-слоя маппинга, которым пользуется браузерный код.
+function tirState(t: any): string {
+  if (t.returned_asmap) return 'asmaf';
+  if (t.transferred && t.returned_office) return 'office';
+  if (t.transferred && !t.returned_office) return 'issued';
+  return 'free';
+}
+function dozState(d: any): string {
+  if (d.epermit && d.used === true) return 'closed';
+  if (d.returned_mt) return 'mintrans';
+  if (d.issued && d.returned_office) return 'office';
+  if (d.issued && !d.returned_office) return 'issued';
+  return 'free';
+}
+function daysDiff(d1: string, d2: string): number {
+  return Math.floor((new Date(d1).getTime() - new Date(d2).getTime()) / 86400000);
+}
+
+async function getTirDozvSummaryText(companyId: string): Promise<string> {
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const { data: tirs } = await supabase.from('tirs')
+    .select('expires, transferred, returned_office, returned_asmap').eq('company_id', companyId);
+  const { data: dozv } = await supabase.from('dozv')
+    .select('expires, epermit, used, issued, returned_office, returned_mt').eq('company_id', companyId);
+
+  const tirFree = (tirs || []).filter((t: any) => tirState(t) === 'free').length;
+  const tirIssued = (tirs || []).filter((t: any) => tirState(t) === 'issued').length;
+  const tirSoon = (tirs || []).filter((t: any) =>
+    tirState(t) !== 'asmaf' && t.expires && daysDiff(t.expires, todayStr) <= 10).length;
+
+  const dozFree = (dozv || []).filter((d: any) => dozState(d) === 'free').length;
+  const dozIssued = (dozv || []).filter((d: any) => dozState(d) === 'issued').length;
+  const dozSoon = (dozv || []).filter((d: any) => {
+    const st = dozState(d);
+    return st !== 'closed' && st !== 'mintrans' && d.expires && daysDiff(d.expires, todayStr) <= 10;
+  }).length;
+
+  return `📋 <b>ТИР:</b>\nСвободно в офисе: ${tirFree}\nНа руках: ${tirIssued}\nСрок истекает ≤10 дн.: ${tirSoon}\n\n`
+    + `📄 <b>Дозволы:</b>\nСвободно в офисе: ${dozFree}\nНа руках: ${dozIssued}\nСрок истекает ≤10 дн.: ${dozSoon}`;
+}
+
+// "Сроки" в боте — упрощённая версия страницы "Сроки" (топ-10 ближайших/просроченных
+// суммарно, а не полный список по каждому из 14 типов документов) — решение
+// пользователя 2026-08-10. Источники данных те же, что у getDeadlinesByType() в
+// index.html: transport.docs (jsonb) + transport.techpass/contract_end, и
+// person_docs (реляционная таблица, а не people.docs — people.docs собирается в
+// браузере ИЗ person_docs через DOC_TYPE_REVERSE, см. mapPersonFromDb).
+const DEADLINE_LABELS: Record<string, string> = {
+  t_lic: 'Лицензия транспорта', t_svid: 'Свидетельство о допущении', t_tech: 'Техосмотр',
+  t_dopog: 'ДОПОГ транспорта', t_tacho: 'Сертификат тахографа (машина)', t_osago: 'ОСАГО',
+  t_techpass: 'Техпаспорт', t_rent: 'Договор аренды',
+};
+async function getDeadlinesSummaryText(companyId: string): Promise<string> {
+  const todayStr = new Date().toISOString().slice(0, 10);
+  type Item = { label: string; name: string; date: string; daysLeft: number };
+  const items: Item[] = [];
+  const push = (label: string, name: string, date: string | null | undefined) => {
+    if (!date) return;
+    const daysLeft = daysDiff(date, todayStr);
+    // techpass в базе иногда хранит номер документа, а не дату (реальные данные,
+    // проверено 2026-08-10) — new Date('AAF 2993271') даёт Invalid Date → NaN,
+    // такую запись просто пропускаем, а не шлём "просрочено на NaN дн.".
+    if (!Number.isFinite(daysLeft)) return;
+    items.push({ label, name, date, daysLeft });
+  };
+
+  const { data: transport } = await supabase.from('transport')
+    .select('callsign, plate, docs, techpass, owner, contract_end').eq('company_id', companyId).neq('active', false);
+  (transport || []).forEach((t: any) => {
+    const d = t.docs || {};
+    const n = (t.callsign || '') + (t.plate ? ` (${t.plate})` : '');
+    push(DEADLINE_LABELS.t_lic, n, d.lic?.to);
+    push(DEADLINE_LABELS.t_svid, n, d.svid?.to);
+    push(DEADLINE_LABELS.t_tech, n, d.tech?.to);
+    push(DEADLINE_LABELS.t_dopog, n, d.dopog?.to);
+    push(DEADLINE_LABELS.t_tacho, n, d.tacho?.to);
+    (d.osago || []).forEach((o: any) => { if (o.to) push(DEADLINE_LABELS.t_osago, n + (o.country ? ` (${o.country})` : ''), o.to); });
+    push(DEADLINE_LABELS.t_techpass, n, t.techpass);
+    if (t.owner === 'Аренда') push(DEADLINE_LABELS.t_rent, n, t.contract_end);
+  });
+
+  const { data: people } = await supabase.from('people').select('id, name').eq('company_id', companyId).neq('active', false);
+  const peopleIds = (people || []).map((p: any) => p.id);
+  if (peopleIds.length) {
+    const { data: docs } = await supabase.from('person_docs').select('person_id, doc_type, expires').in('person_id', peopleIds);
+    (docs || []).forEach((doc: any) => {
+      if (!doc.expires) return;
+      const personName = (people || []).find((p: any) => p.id === doc.person_id)?.name || '';
+      push(PERSON_DOC_LABELS[doc.doc_type] || doc.doc_type, personName, doc.expires);
+    });
+  }
+
+  items.sort((a, b) => a.daysLeft - b.daysLeft);
+  const top = items.slice(0, 10);
+  if (!top.length) return 'Ближайших сроков не найдено.';
+  return top.map((i) => {
+    const mark = i.daysLeft <= 7 ? '🔴' : i.daysLeft <= 30 ? '🟡' : '⚪';
+    const daysLabel = i.daysLeft < 0 ? `просрочено на ${-i.daysLeft} дн.` : `через ${i.daysLeft} дн.`;
+    return `${mark} ${i.label} — ${i.name}: ${fmtDate(i.date)} (${daysLabel})`;
+  }).join('\n');
+}
+
+// Диалоги: последние сообщения от контрагентов (не только необработанные — владелец
+// просил "какие сообщения приходили", то есть недавнюю активность в целом).
+async function getRecentDialogsText(companyId: string): Promise<string> {
+  const { data: msgs } = await supabase.from('driver_messages')
+    .select('message_text, photo_url, voice_url, status, created_at, telegram_link_id')
+    .eq('company_id', companyId).order('created_at', { ascending: false }).limit(5);
+  if (!msgs || !msgs.length) return 'Сообщений пока не было.';
+
+  const linkIds = [...new Set(msgs.map((m: any) => m.telegram_link_id).filter(Boolean))];
+  const { data: links } = linkIds.length
+    ? await supabase.from('telegram_links').select('id, kontragent_id').in('id', linkIds)
+    : { data: [] as any[] };
+  const kgIds = [...new Set((links || []).map((l: any) => l.kontragent_id))];
+  const { data: kgs } = kgIds.length
+    ? await supabase.from('kontragenty').select('id, name').in('id', kgIds)
+    : { data: [] as any[] };
+  const nameFor = (linkId: string) => {
+    const link = (links || []).find((l: any) => l.id === linkId);
+    return (kgs || []).find((k: any) => k.id === link?.kontragent_id)?.name || 'Неизвестный';
+  };
+
+  return msgs.map((m: any) => {
+    const who = nameFor(m.telegram_link_id);
+    const content = m.message_text || (m.photo_url ? '📷 Фото' : m.voice_url ? '🎤 Голосовое' : '(пусто)');
+    const mark = m.status === 'new' ? '🆕 ' : '';
+    return `${mark}<b>${who}</b>: ${content}`;
+  }).join('\n');
+}
+
+async function findFleet(companyId: string, query: string): Promise<{ id: string; label: string }[]> {
+  const { data } = await supabase.from('fleet').select('id, label').eq('company_id', companyId)
+    .ilike('label', `%${query}%`).limit(5);
+  return data || [];
+}
+async function getFleetCardText(fleetId: string): Promise<string> {
+  const { data: f } = await supabase.from('fleet').select('*').eq('id', fleetId).single();
+  if (!f) return 'ПС не найдено.';
+  const [{ data: kg }, { data: truck }, { data: trailer }, { data: driver }] = await Promise.all([
+    f.kontragent_id ? supabase.from('kontragenty').select('name').eq('id', f.kontragent_id).single() : Promise.resolve({ data: null }),
+    f.truck_id ? supabase.from('transport').select('callsign, plate').eq('id', f.truck_id).single() : Promise.resolve({ data: null }),
+    f.trailer_id ? supabase.from('transport').select('callsign, plate').eq('id', f.trailer_id).single() : Promise.resolve({ data: null }),
+    f.driver_id ? supabase.from('people').select('name').eq('id', f.driver_id).single() : Promise.resolve({ data: null }),
+  ]);
+  const lines = [
+    `🚛 <b>${f.label}</b>`,
+    `Контрагент: ${(kg as any)?.name || '—'}`,
+    `Тягач: ${truck ? `${(truck as any).callsign} (${(truck as any).plate || '—'})` : '—'}`,
+    trailer ? `Прицеп: ${(trailer as any).callsign} (${(trailer as any).plate || '—'})` : null,
+    `Водитель: ${(driver as any)?.name || '—'}`,
+    `План: ${f.plan > 0 ? fmtN(f.plan) + ' сум' : '—'}`,
+    `Баланс: ${fmtN(f.balance || 0)} сум`,
+  ].filter(Boolean);
+  return lines.join('\n');
+}
+
 Deno.serve(async (req) => {
   if (req.method !== 'POST') return new Response('ok');
 
@@ -230,6 +455,78 @@ Deno.serve(async (req) => {
   const chatId: number = message.chat.id;
   const username: string | null = message.from?.username ?? null;
   const text: string = (message.text || message.caption || '').trim();
+
+  // --- Владелец платформы (уже привязан через /admin_link) — админ-меню по
+  // запросу вместо сводки. Проверяем раньше обычной привязки контрагента: чат
+  // владельца никогда не встретится в telegram_links, но так явнее по смыслу.
+  const { data: ownerRow } = await supabase
+    .from('owner_notify')
+    .select('id, pending_query')
+    .eq('chat_id', chatId)
+    .maybeSingle();
+
+  if (ownerRow) {
+    const adminCompanyId = await getAdminCompanyId();
+    if (!adminCompanyId) {
+      await sendMessage(chatId, 'Не удалось определить компанию владельца (account_type=admin). Обратитесь к разработчику.', adminKeyboard);
+      return new Response('ok');
+    }
+
+    if (ownerRow.pending_query === 'kontragent' && text) {
+      await supabase.from('owner_notify').update({ pending_query: null }).eq('id', ownerRow.id);
+      const matches = await findKontragenty(adminCompanyId, text);
+      if (!matches.length) {
+        await sendMessage(chatId, `Контрагент по запросу «${text}» не найден.`, adminKeyboard);
+      } else if (matches.length > 1) {
+        await sendMessage(chatId, `Найдено несколько совпадений, уточните запрос:\n${matches.map((k) => `• ${k.name}`).join('\n')}`, adminKeyboard);
+      } else {
+        await sendMessage(chatId, await getKontragentSummaryText(matches[0].id, matches[0].name), adminKeyboard);
+      }
+      return new Response('ok');
+    }
+    if (ownerRow.pending_query === 'fleet' && text) {
+      await supabase.from('owner_notify').update({ pending_query: null }).eq('id', ownerRow.id);
+      const matches = await findFleet(adminCompanyId, text);
+      if (!matches.length) {
+        await sendMessage(chatId, `ПС по запросу «${text}» не найдено.`, adminKeyboard);
+      } else if (matches.length > 1) {
+        await sendMessage(chatId, `Найдено несколько совпадений, уточните запрос:\n${matches.map((f) => `• ${f.label}`).join('\n')}`, adminKeyboard);
+      } else {
+        await sendMessage(chatId, await getFleetCardText(matches[0].id), adminKeyboard);
+      }
+      return new Response('ok');
+    }
+
+    if (text === BTN_ADMIN_KASSA) {
+      await sendMessage(chatId, await getKassaSummaryText(adminCompanyId), adminKeyboard);
+      return new Response('ok');
+    }
+    if (text === BTN_ADMIN_KONTRAGENTY) {
+      await supabase.from('owner_notify').update({ pending_query: 'kontragent' }).eq('id', ownerRow.id);
+      await sendMessage(chatId, 'Введите имя контрагента (можно часть имени):', adminKeyboard);
+      return new Response('ok');
+    }
+    if (text === BTN_ADMIN_TIRDOZV) {
+      await sendMessage(chatId, await getTirDozvSummaryText(adminCompanyId), adminKeyboard);
+      return new Response('ok');
+    }
+    if (text === BTN_ADMIN_DEADLINES) {
+      await sendMessage(chatId, await getDeadlinesSummaryText(adminCompanyId), adminKeyboard);
+      return new Response('ok');
+    }
+    if (text === BTN_ADMIN_DIALOGS) {
+      await sendMessage(chatId, await getRecentDialogsText(adminCompanyId), adminKeyboard);
+      return new Response('ok');
+    }
+    if (text === BTN_ADMIN_FLEET) {
+      await supabase.from('owner_notify').update({ pending_query: 'fleet' }).eq('id', ownerRow.id);
+      await sendMessage(chatId, 'Введите позывной/метку ПС (можно часть):', adminKeyboard);
+      return new Response('ok');
+    }
+
+    await sendMessage(chatId, 'Выберите, что посмотреть:', adminKeyboard);
+    return new Response('ok');
+  }
 
   // Уже привязан?
   const { data: existingLink } = await supabase

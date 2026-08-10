@@ -65,8 +65,31 @@ Deno.serve(async (req) => {
   } catch {
     return new Response('Bad request', { status: 400, headers: corsHeaders });
   }
-  const { kontragentId, message } = body;
-  if (!kontragentId || !message) return new Response('Bad request: kontragentId and message required', { status: 400, headers: corsHeaders });
+  const { kontragentId, message, ownerNotify } = body;
+  if (!message) return new Response('Bad request: message required', { status: 400, headers: corsHeaders });
+
+  // Уведомление владельцу платформы (выдача/возврат ТИР-Дозвол и т.п., решение
+  // пользователя 2026-08-10) — только если вызывающий сам принадлежит компании
+  // владельца (account_type='admin'), иначе любая компания-подписчик SaaS могла бы
+  // слать сообщения в личный Telegram владельца.
+  if (ownerNotify) {
+    const { data: adminCompany } = await supabaseAdmin
+      .from('companies')
+      .select('id')
+      .eq('account_type', 'admin')
+      .maybeSingle();
+    if (!adminCompany || adminCompany.id !== profile.company_id) {
+      return new Response(JSON.stringify({ sent: false, reason: 'forbidden' }), { status: 403, headers: corsHeaders });
+    }
+    const { data: owners } = await supabaseAdmin.from('owner_notify').select('chat_id');
+    if (!owners || !owners.length) {
+      return new Response(JSON.stringify({ sent: false, reason: 'not_linked' }), { status: 200, headers: corsHeaders });
+    }
+    await Promise.all(owners.map((o: any) => sendMessage(o.chat_id, message)));
+    return new Response(JSON.stringify({ sent: true }), { status: 200, headers: corsHeaders });
+  }
+
+  if (!kontragentId) return new Response('Bad request: kontragentId and message required', { status: 400, headers: corsHeaders });
 
   // Владелец платформы (role='owner') не привязан ни к одной компании — этому
   // эндпойнту он всё равно не нужен (уведомления шлёт сама компания-арендатор),
