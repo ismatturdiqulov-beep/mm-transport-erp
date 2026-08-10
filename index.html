@@ -4975,7 +4975,10 @@ async function _saveChargeImpl(){
   const { data, error } = await sbClient.from('finance').insert(financeRecord).select().single();
   if (error) { alert('Не удалось сохранить начисление: '+error.message); return; }
   FINANCE.push(mapFinanceFromDb(data));
-  if(f) notifyKontragent(f.kontragentId, `💸 Вам начислено: ${fmtN(amount)} сум${desc?' ('+desc+')':''}.\n💰 ${kgBalanceLine(f.kontragentId)}`);
+  if(f){
+    notifyKontragent(f.kontragentId, `💸 Вам начислено: ${fmtN(amount)} сум${desc?' ('+desc+')':''}.\n💰 ${kgBalanceLine(f.kontragentId)}`);
+    if(ownerNotifyEnabled('kontragentCharges')) notifyOwner(`💸 Начислено ${getFleetKontragent(f).name} (${f.label}): ${fmtN(amount)} сум${desc?' ('+desc+')':''}.\n💰 ${kgBalanceLine(f.kontragentId)}`);
+  }
   if(modal) delete modal.dataset.fleetId;
   closeModal('modal-charge');
   document.getElementById('ch-amount').value='';
@@ -5055,6 +5058,7 @@ async function savePlanCharges(){
   const rows=[...document.querySelectorAll('.plan-charge-check')].filter(c=>c.checked);
   if(!rows.length){ toast('Ничего не выбрано'); return; }
   let count=0;
+  let totalAmount=0;
   for(const chk of rows){
     const fleetId=chk.dataset.fleet;
     const f=FLEET.find(x=>x.id===fleetId); if(!f) continue;
@@ -5070,9 +5074,14 @@ async function savePlanCharges(){
     if (!error) FINANCE.push(mapFinanceFromDb(data));
     notifyKontragent(f.kontragentId, `📅 Начислен ежемесячный план: ${fmtN(amount)} сум (${desc}).\n💰 ${kgBalanceLine(f.kontragentId)}`);
     count++;
+    totalAmount+=amount;
   }
   closeModal('modal-plan-charge');
   toast(`План начислен: ${count} арендатор(ов)`);
+  // Один сводный итог владельцу вместо N отдельных сообщений — при начислении
+  // сразу многим арендаторам поштучные уведомления были бы спамом (решение
+  // пользователя 2026-08-10).
+  if(count>0 && ownerNotifyEnabled('kontragentCharges')) notifyOwner(`📅 Начислен план (${desc}): ${count} арендатор(ов), всего ${fmtN(totalAmount)} сум.`);
   renderFleet(); renderTenants(); renderDashboard();
 }
 
@@ -5105,7 +5114,10 @@ async function _savePaymentImpl(){
     from_name:person, description:desc||('Оплата от '+person), amount, finance_id:data.id,
   }).select().single();
   if (!kErr) KASSA.push(mapKassaFromDb(kData));
-  if(f) notifyKontragent(f.kontragentId, `✅ Учтён ваш приход: ${fmtN(amount)} сум${desc?' ('+desc+')':''}.\n💰 ${kgBalanceLine(f.kontragentId)}`);
+  if(f){
+    notifyKontragent(f.kontragentId, `✅ Учтён ваш приход: ${fmtN(amount)} сум${desc?' ('+desc+')':''}.\n💰 ${kgBalanceLine(f.kontragentId)}`);
+    if(ownerNotifyEnabled('kontragentCharges')) notifyOwner(`✅ Приход от ${person} (${f.label}): ${fmtN(amount)} сум${desc?' ('+desc+')':''}.\n💰 ${kgBalanceLine(f.kontragentId)}`);
+  }
   if(modal) delete modal.dataset.fleetId;
   closeModal('modal-payment');
   document.getElementById('pay-amount').value='';
@@ -5135,6 +5147,7 @@ async function _saveVacationImpl(){
   const { data, error } = await sbClient.from('finance').insert(financeRecord).select().single();
   if (error) { alert('Не удалось сохранить отпуск: '+error.message); return; }
   FINANCE.push(mapFinanceFromDb(data));
+  if(f && ownerNotifyEnabled('kontragentCharges')) notifyOwner(`🏖️ ${desc}: ${person} (${f.label}), выплата ${fmtN(amount)} сум.\n💰 ${kgBalanceLine(f.kontragentId)}`);
   if(modal) delete modal.dataset.fleetId;
   closeModal('modal-vacation');
   toast('Отпуск: '+person+' +'+fmtN(amount));
@@ -7304,6 +7317,10 @@ async function chargeKontragentFromKassa({kontragentId, amount, date, desc, wall
   if (kErr) return {error:kErr.message, financeSaved:true};
   KASSA.push(mapKassaFromDb(kData));
   notifyKontragent(k.id, `💸 Вам начислено: ${fmtN(amount)} сум${desc?' ('+desc+')':''}.\n💰 ${kgBalanceLine(k.id)}`);
+  // Один хук на 3 места вызова (операция контрагента "из кассы", расход с
+  // привязкой к контрагенту, выдача с привязкой к контрагенту) — решение
+  // пользователя 2026-08-10.
+  if(ownerNotifyEnabled('kontragentCharges')) notifyOwner(`💸 Начислено ${k.name} (через кассу, ${kassaType==='payout'?'выдача':'расход'}): ${fmtN(amount)} сум${desc?' ('+desc+')':''}.\n💰 ${kgBalanceLine(k.id)}`);
   return {ok:true, financeId:finData.id, kassaId:kData.id};
 }
 
@@ -7353,6 +7370,9 @@ async function _saveKontragentOpImpl(){
   notifyKontragent(k.id, (isIncome
     ? `✅ Учтён ваш приход: ${fmtN(amount)} сум${desc?' ('+desc+')':''}.`
     : `💸 Вам начислено: ${fmtN(amount)} сум${desc?' ('+desc+')':''}.`) + `\n💰 ${kgBalanceLine(k.id)}`);
+  if(ownerNotifyEnabled('kontragentCharges')) notifyOwner((isIncome
+    ? `✅ Приход от ${k.name}: ${fmtN(amount)} сум${desc?' ('+desc+')':''}.`
+    : `💸 Начислено ${k.name}: ${fmtN(amount)} сум${desc?' ('+desc+')':''}.`) + `\n💰 ${kgBalanceLine(k.id)}`);
   closeModal('modal-kontragent-op');
   toast('Операция сохранена'); renderTenants(); renderKassa();
 }
@@ -8461,13 +8481,15 @@ async function _saveExpenseImpl(){
     const r=await chargeKontragentFromKassa({kontragentId, amount, date, desc, wallet, kassaType:'expense', category});
     if(r.error){ alert('Не удалось сохранить расход: '+r.error); return; }
   } else {
+    const toName=document.getElementById('exp-to').value;
     const { data, error } = await sbClient.from('kassa').insert({
       company_id:CURRENT_PROFILE.company_id, wallet, type:'expense', date, category,
-      to_name:document.getElementById('exp-to').value,
+      to_name:toName,
       description:desc, amount,
     }).select().single();
     if (error) { alert('Не удалось сохранить расход: '+error.message); return; }
     KASSA.push(mapKassaFromDb(data));
+    if(ownerNotifyEnabled('kassa')) notifyOwner(`➖ Касса (${walletName(wallet)}): расход ${fmtN(amount)} сум${toName?', '+toName:''}${desc?' ('+desc+')':''}.`);
   }
   closeModal('modal-add-expense');
   document.getElementById('exp-amount').value='';
@@ -8497,6 +8519,11 @@ async function _saveKassaIncomeModalImpl(){
   }).select().single();
   if (error) { alert('Не удалось сохранить приход: '+error.message); return; }
   KASSA.push(mapKassaFromDb(data));
+  if(ownerNotifyEnabled('kassa')){
+    const from=document.getElementById('ki-from').value;
+    const desc=document.getElementById('ki-desc').value;
+    notifyOwner(`➕ Касса (${walletName(document.getElementById('ki-wallet').value)}): приход ${fmtN(amount)} сум${from?', от '+from:''}${desc?' ('+desc+')':''}.`);
+  }
   closeModal('modal-kassa-income');
   document.getElementById('ki-amount').value='';
   toast('Приход: '+fmtN(amount)); renderKassa();
@@ -10955,6 +10982,7 @@ async function _saveTripPaymentImpl(){
     from_name:fromName, trip_id:trip.id, description:`Оплата рейса ${legRoute}${currNote}${note?' ('+note+')':''}`, amount };
   const { data:kData, error:kErr } = await sbClient.from('kassa').insert(kassaRecord).select().single();
   if (!kErr) KASSA.push(mapKassaFromDb(kData));
+  if(ownerNotifyEnabled('kassa')) notifyOwner(`➕ Касса (${walletName(wallet)}): оплата по рейсу ${legRoute}${fromName?', от '+fromName:''} — ${fmtN(amount)} сум${currNote}.`);
   closeModal('modal-trip-payment');
   const currStr=currency!=='UZS'?` (${amountOrig} ${currency})`:'';
   toast('Оплата записана: '+fmtN(amount)+' сум'+currStr);renderTrips();
@@ -11911,6 +11939,7 @@ async function _saveKassaPayoutImpl(){
     }).select().single();
     if (error) { alert('Не удалось сохранить выдачу: '+error.message); return; }
     KASSA.push(mapKassaFromDb(data));
+    if(ownerNotifyEnabled('kassa')) notifyOwner(`➖ Касса (${walletName(wallet)}): выдача ${fmtN(amount)} сум${to?', '+to:''}${desc?' ('+desc+')':''}.`);
   }
   // Привязываем аванс к рейсу
   if(tripId){
@@ -12372,6 +12401,7 @@ async function _saveMaintImpl(){
       maintenance_id: newMaintId,
     }).select().single();
     if (!kErr) KASSA.push(mapKassaFromDb(kData));
+    if(ownerNotifyEnabled('kassa')) notifyOwner(`➖ Касса (${walletName(wallet)}): ${mt.label} · ${tName} — ${fmtN(totalCostUzs)} сум (${items.length} работ).`);
   }
 
   closeModal('modal-new-maint');
