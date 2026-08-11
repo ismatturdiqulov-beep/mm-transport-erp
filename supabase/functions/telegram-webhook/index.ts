@@ -437,9 +437,16 @@ function truncateForButton(text: string): string {
   // задачи в отображении (полный текст всё равно хранится в базе целиком).
   return text.length > 60 ? text.slice(0, 57) + '…' : text;
 }
-function taskListText(theme: string, tasks: any[]): string {
+// Дата теперь у ПАЧКИ (темы), не у каждой задачи по отдельности — решение
+// пользователя 2026-08-11 после первого живого теста ("мы же пишем тему на пачку
+// задачи, там и должно стоять дата"). Если тема не написана (кнопка "Без темы"),
+// сама дата и подставляется вместо темы — тогда вторая строка с датой была бы
+// просто повтором, поэтому её не дублируем.
+function taskListText(theme: string, date: string, tasks: any[]): string {
   const done = tasks.filter((t) => t.status === 'done').length;
-  return `📝 <b>${theme}</b>\n${done}/${tasks.length} выполнено`;
+  const dateLabel = fmtDate(date);
+  const dateLine = theme !== dateLabel ? `\n${dateLabel}` : '';
+  return `📝 <b>${theme}</b>${dateLine}\n${done}/${tasks.length} выполнено`;
 }
 function taskListKeyboard(tasks: any[]) {
   return {
@@ -451,9 +458,11 @@ function taskListKeyboard(tasks: any[]) {
 }
 // Списки с хотя бы одной открытой задачей — полностью закрытые списки не лезут
 // в актив каждый раз (доступны на сайте), только то, что реально ещё не сделано.
+// Старые сверху (ascending) — то, что дольше всего висит нерешённым, должно
+// решаться в первую очередь, решение пользователя 2026-08-11.
 async function getOpenTaskLists(companyId: string): Promise<{ list: any; tasks: any[] }[]> {
-  const { data: lists } = await supabase.from('owner_task_lists').select('id, theme')
-    .eq('company_id', companyId).order('created_at', { ascending: true });
+  const { data: lists } = await supabase.from('owner_task_lists').select('id, theme, date')
+    .eq('company_id', companyId).order('date', { ascending: true });
   if (!lists || !lists.length) return [];
   const { data: allTasks } = await supabase.from('owner_tasks').select('id, list_id, text, status')
     .in('list_id', lists.map((l: any) => l.id)).order('created_at', { ascending: true });
@@ -471,12 +480,11 @@ async function sendTaskLists(chatId: number, companyId: string) {
   } else {
     for (const { list, tasks } of openLists) {
       await tg('sendMessage', {
-        chat_id: chatId, text: taskListText(list.theme, tasks), parse_mode: 'HTML',
+        chat_id: chatId, text: taskListText(list.theme, list.date, tasks), parse_mode: 'HTML',
         reply_markup: taskListKeyboard(tasks),
       });
     }
   }
-  await sendMessage(chatId, 'Чтобы добавить новую пачку задач — пришлите тему следующим сообщением.', adminKeyboard);
 }
 // Тап по задаче в уже отправленном чек-листе — переключает туда-обратно (как
 // в настоящем чек-листе можно и снять галочку), перерисовывает то же сообщение.
@@ -487,12 +495,12 @@ async function toggleTaskAndRerender(chatId: number, messageId: number, taskId: 
   await supabase.from('owner_tasks').update({
     status: newStatus, completed_at: newStatus === 'done' ? new Date().toISOString() : null,
   }).eq('id', taskId);
-  const { data: list } = await supabase.from('owner_task_lists').select('id, theme').eq('id', task.list_id).maybeSingle();
+  const { data: list } = await supabase.from('owner_task_lists').select('id, theme, date').eq('id', task.list_id).maybeSingle();
   if (!list) return;
   const { data: tasks } = await supabase.from('owner_tasks').select('id, text, status')
     .eq('list_id', task.list_id).order('created_at', { ascending: true });
   await tg('editMessageText', {
-    chat_id: chatId, message_id: messageId, text: taskListText(list.theme, tasks || []), parse_mode: 'HTML',
+    chat_id: chatId, message_id: messageId, text: taskListText(list.theme, list.date, tasks || []), parse_mode: 'HTML',
     reply_markup: taskListKeyboard(tasks || []),
   });
 }
@@ -521,6 +529,16 @@ Deno.serve(async (req) => {
       await sendMessage(chatId, `✅ Сообщение принято по машине ${fleet?.label || ''} и передано диспетчеру.`);
     } else if (taskM) {
       await toggleTaskAndRerender(chatId, cq.message.message_id, taskM[1]);
+      await tg('answerCallbackQuery', { callback_query_id: cq.id });
+    } else if (cq.data === 'task_skip_theme') {
+      // "Без темы" — тема становится самой датой создания, решение пользователя
+      // 2026-08-11 ("если тему не пишем, то тема будет дата создания задачи").
+      const { data: ownerRow } = await supabase.from('owner_notify').select('id').eq('chat_id', chatId).maybeSingle();
+      if (ownerRow) {
+        const theme = fmtDate(new Date().toISOString().slice(0, 10));
+        await supabase.from('owner_notify').update({ pending_query: 'task_items', pending_task_theme: theme }).eq('id', ownerRow.id);
+        await sendMessage(chatId, `Тема «${theme}» — теперь пришлите задачи (каждая с новой строки).`, adminKeyboard);
+      }
       await tg('answerCallbackQuery', { callback_query_id: cq.id });
     } else {
       await tg('answerCallbackQuery', { callback_query_id: cq.id });
@@ -574,7 +592,7 @@ Deno.serve(async (req) => {
         .insert(items.map((t) => ({ list_id: list.id, company_id: adminCompanyId, text: t })))
         .select();
       await tg('sendMessage', {
-        chat_id: chatId, text: taskListText(theme, tasks || []), parse_mode: 'HTML',
+        chat_id: chatId, text: taskListText(list.theme, list.date, tasks || []), parse_mode: 'HTML',
         reply_markup: taskListKeyboard(tasks || []),
       });
       return new Response('ok');
@@ -634,6 +652,10 @@ Deno.serve(async (req) => {
     if (text === BTN_ADMIN_TASKS) {
       await supabase.from('owner_notify').update({ pending_query: 'task_theme' }).eq('id', ownerRow.id);
       await sendTaskLists(chatId, adminCompanyId);
+      await tg('sendMessage', {
+        chat_id: chatId, text: 'Чтобы добавить новую пачку задач — пришлите тему следующим сообщением, или пропустите:',
+        reply_markup: { inline_keyboard: [[{ text: '⏭ Без темы', callback_data: 'task_skip_theme' }]] },
+      });
       return new Response('ok');
     }
 

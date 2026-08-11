@@ -749,6 +749,10 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
       <div>
         <h2>Задачи и заметки</h2>
         <div class="ph-sub">Ставите пачками через Telegram-бота (тема + пункты) — здесь отмечаете, комментируете и удаляете</div>
+        <div style="display:flex;gap:6px;margin-top:6px;">
+          <button id="ot-tab-active" class="btn primary" onclick="switchOwnerTasksTab('active')" style="font-size:12px;padding:4px 12px;">Активные</button>
+          <button id="ot-tab-archive" class="btn" onclick="switchOwnerTasksTab('archive')" style="font-size:12px;padding:4px 12px;">📦 Архив</button>
+        </div>
       </div>
     </div>
     <div class="section" style="padding:20px;">
@@ -1305,12 +1309,26 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
     <div class="modal-head"><h3>✏️ Задача</h3><span class="modal-close" onclick="closeModal('modal-edit-owner-task')">×</span></div>
     <div class="modal-body">
       <div class="form-row"><label>Текст</label><textarea id="ot-text" rows="2"></textarea></div>
-      <div class="form-row"><label>Дата</label><input type="date" id="ot-date"></div>
       <div class="form-row"><label>Комментарий</label><textarea id="ot-comment" rows="3" placeholder="Необязательно"></textarea></div>
     </div>
     <div class="modal-foot">
       <button class="btn" onclick="closeModal('modal-edit-owner-task')">Отмена</button>
       <button class="btn primary" onclick="saveOwnerTaskEdit()">Сохранить</button>
+    </div>
+  </div>
+</div>
+
+<!-- Редактирование пачки задач (тема + дата) -->
+<div class="overlay" id="modal-edit-owner-tasklist">
+  <div class="modal">
+    <div class="modal-head"><h3>✏️ Тема</h3><span class="modal-close" onclick="closeModal('modal-edit-owner-tasklist')">×</span></div>
+    <div class="modal-body">
+      <div class="form-row"><label>Тема</label><input type="text" id="otl-theme"></div>
+      <div class="form-row"><label>Дата</label><input type="date" id="otl-date"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeModal('modal-edit-owner-tasklist')">Отмена</button>
+      <button class="btn primary" onclick="saveOwnerTaskListEdit()">Сохранить</button>
     </div>
   </div>
 </div>
@@ -3125,6 +3143,7 @@ async function enterApp(session) {
   renderDashboard();
   showPage('dashboard');
   subscribeDriverMessages();
+  subscribeOwnerTasks();
 }
 
 // Разделы, которые видит только владелец платформы (companies.account_type='admin') —
@@ -3299,10 +3318,12 @@ function mapDriverMessageFromDb(r) {
 // боту в Telegram (тема + пункты построчно), а отмечает/комментирует/удаляет уже
 // здесь на сайте. См. supabase/functions/telegram-webhook для стороны бота.
 function mapOwnerTaskListFromDb(r) {
-  return { id: r.id, theme: r.theme||'', createdAt: r.created_at||'' };
+  // Дата — на уровне пачки (темы), не у каждой задачи отдельно (решение
+  // пользователя 2026-08-11, миграция 0047).
+  return { id: r.id, theme: r.theme||'', date: r.date||'', createdAt: r.created_at||'' };
 }
 function mapOwnerTaskFromDb(r) {
-  return { id: r.id, listId: r.list_id, text: r.text||'', date: r.date||'', comment: r.comment||'',
+  return { id: r.id, listId: r.list_id, text: r.text||'', comment: r.comment||'',
     status: r.status||'open', assignedTo: r.assigned_to||'', createdAt: r.created_at||'', completedAt: r.completed_at||'' };
 }
 
@@ -3601,6 +3622,38 @@ function subscribeDriverMessages(){
     .subscribe();
 }
 
+// Задачи и заметки ставятся с телефона через Telegram, часто пока сайт открыт на
+// компьютере — без realtime новая пачка/отметка была видна только после F5
+// (баг найден пользователем 2026-08-11, тот же класс, что и у Диалогов в 0032).
+function subscribeOwnerTasks(){
+  if(!COMPANY?.id || COMPANY.accountType!=='admin' || _ownerTasksChannel) return;
+  _ownerTasksChannel = sbClient.channel('owner-tasks-live')
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'owner_task_lists', filter: `company_id=eq.${COMPANY.id}` }, payload=>{
+      OWNER_TASK_LISTS.push(mapOwnerTaskListFromDb(payload.new));
+      renderOwnerTasks();
+    })
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'owner_task_lists', filter: `company_id=eq.${COMPANY.id}` }, payload=>{
+      const l=OWNER_TASK_LISTS.find(x=>x.id===payload.new.id); if(!l) return;
+      Object.assign(l, mapOwnerTaskListFromDb(payload.new));
+      renderOwnerTasks();
+    })
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'owner_tasks', filter: `company_id=eq.${COMPANY.id}` }, payload=>{
+      OWNER_TASKS.push(mapOwnerTaskFromDb(payload.new));
+      renderOwnerTasks();
+      toast('📝 Новая задача от Telegram-бота');
+    })
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'owner_tasks', filter: `company_id=eq.${COMPANY.id}` }, payload=>{
+      const t=OWNER_TASKS.find(x=>x.id===payload.new.id); if(!t) return;
+      Object.assign(t, mapOwnerTaskFromDb(payload.new));
+      renderOwnerTasks();
+    })
+    .subscribe();
+  // Удаление делаем только с сайта — тот же браузер уже обновляет свои массивы
+  // локально сразу при удалении (deleteOwnerTask/deleteOwnerTaskList), поэтому
+  // отдельный DELETE-листенер не нужен (и не связан с REPLICA IDENTITY нюансами
+  // Postgres Changes для DELETE).
+}
+
 const DM_STATUS_LABEL={new:'Ожидает',accepted:'Принято',rejected:'Отклонено',irrelevant:'Не по работе'};
 const DM_STATUS_COLOR={new:'amber',accepted:'green',rejected:'red',irrelevant:'gray'};
 
@@ -3674,40 +3727,54 @@ function renderDriverMessages(){
 
 // "Задачи и заметки" — списки задач, поставленные через Telegram-бота (тема +
 // пункты построчно, см. supabase/functions/telegram-webhook). Здесь отмечаем,
-// комментируем, редактируем дату и удаляем — сам ввод новых задач через сайт не
-// делаем, только через бота (решение пользователя 2026-08-11).
+// комментируем, редактируем тему/дату и удаляем — сам ввод новых задач через
+// сайт не делаем, только через бота (решение пользователя 2026-08-11). Дата —
+// на уровне пачки/темы целиком, не у каждой задачи (миграция 0047, правка после
+// первого живого теста). Активные/Архив — как у Диалогов: выполненные задачи
+// не должны копиться на одной странице с активными (решение пользователя
+// 2026-08-11), сортировка — старые пачки сверху (то, что дольше висит
+// нерешённым, нужнее решить в первую очередь).
+let _ownerTasksTab='active';
+function switchOwnerTasksTab(tab){
+  _ownerTasksTab=tab;
+  document.getElementById('ot-tab-active').className='btn'+(tab==='active'?' primary':'');
+  document.getElementById('ot-tab-archive').className='btn'+(tab==='archive'?' primary':'');
+  renderOwnerTasks();
+}
 function renderOwnerTasks(){
   const listEl=document.getElementById('owner-tasks-list'); if(!listEl) return;
-  const lists=[...OWNER_TASK_LISTS].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
-  if(!lists.length){
-    listEl.innerHTML='<div style="text-align:center;padding:30px;color:var(--text3)">Задач пока нет — поставьте через Telegram-бота, кнопка «📝 Задачи и заметки».</div>';
-    return;
-  }
+  const lists=[...OWNER_TASK_LISTS].sort((a,b)=>new Date(a.date)-new Date(b.date));
   const rowHtml=(t)=>`<div style="display:flex;align-items:flex-start;gap:8px;padding:8px 0;border-bottom:1px solid var(--border);">
     <input type="checkbox" ${t.status==='done'?'checked':''} onchange="toggleOwnerTaskStatus('${t.id}')" style="width:16px;height:16px;margin-top:2px;flex-shrink:0;">
     <div style="flex:1;min-width:0;">
       <div style="${t.status==='done'?'text-decoration:line-through;color:var(--text3);':''}">${escapeHtml(t.text)}</div>
-      <div style="font-size:11px;color:var(--text3);margin-top:2px;">${fmt(t.date)}${t.comment?' · 💬 '+escapeHtml(t.comment):''}</div>
+      ${t.comment?`<div style="font-size:11px;color:var(--text3);margin-top:2px;">💬 ${escapeHtml(t.comment)}</div>`:''}
     </div>
     <button class="btn xs" onclick="openOwnerTaskEdit('${t.id}')">✏️</button>
     <button class="btn xs danger" onclick="deleteOwnerTask('${t.id}')">✕</button>
   </div>`;
-  listEl.innerHTML = lists.map(list=>{
+  const blocks=[];
+  lists.forEach(list=>{
     const tasks=OWNER_TASKS.filter(t=>t.listId===list.id).sort((a,b)=>new Date(a.createdAt)-new Date(b.createdAt));
-    const open=tasks.filter(t=>t.status!=='done');
-    const done=tasks.filter(t=>t.status==='done');
-    return `<div class="section" style="padding:14px;margin-bottom:12px;">
+    const shown=tasks.filter(t=>_ownerTasksTab==='active'?t.status!=='done':t.status==='done');
+    if(!shown.length) return;
+    const doneCount=tasks.filter(t=>t.status==='done').length;
+    blocks.push(`<div class="section" style="padding:14px;margin-bottom:12px;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-        <div style="font-weight:600;font-size:14px;">📝 ${escapeHtml(list.theme)}</div>
+        <div style="font-weight:600;font-size:14px;">📝 ${escapeHtml(list.theme)} <span style="font-weight:400;color:var(--text3);font-size:12px;">· ${fmt(list.date)}</span></div>
         <div style="display:flex;align-items:center;gap:8px;">
-          <span style="font-size:11px;color:var(--text3);">${done.length}/${tasks.length} выполнено</span>
+          <span style="font-size:11px;color:var(--text3);">${doneCount}/${tasks.length} выполнено</span>
+          <button class="btn xs" onclick="openOwnerTaskListEdit('${list.id}')" title="Изменить тему/дату">✏️</button>
           <button class="btn xs danger" onclick="deleteOwnerTaskList('${list.id}')" title="Удалить весь список">🗑</button>
         </div>
       </div>
-      ${open.map(rowHtml).join('')}
-      ${done.length?`<div style="margin-top:6px;font-size:11px;color:var(--text3);">Выполнено:</div>${done.map(rowHtml).join('')}`:''}
-    </div>`;
-  }).join('');
+      ${shown.map(rowHtml).join('')}
+    </div>`);
+  });
+  listEl.innerHTML = blocks.length ? blocks.join('') :
+    (_ownerTasksTab==='active'
+      ? '<div style="text-align:center;padding:30px;color:var(--text3)">Открытых задач нет — поставьте через Telegram-бота, кнопка «📝 Задачи и заметки».</div>'
+      : '<div style="text-align:center;padding:30px;color:var(--text3)">Архив пуст.</div>');
 }
 async function toggleOwnerTaskStatus(id){
   const t=OWNER_TASKS.find(x=>x.id===id); if(!t) return;
@@ -3723,21 +3790,39 @@ function openOwnerTaskEdit(id){
   _editOwnerTaskId=id;
   openModal('modal-edit-owner-task');
   document.getElementById('ot-text').value=t.text;
-  document.getElementById('ot-date').value=t.date||todayStr;
   document.getElementById('ot-comment').value=t.comment||'';
 }
 async function saveOwnerTaskEdit(){
   const t=OWNER_TASKS.find(x=>x.id===_editOwnerTaskId); if(!t) return;
   const text=document.getElementById('ot-text').value.trim();
   if(!text){ alert('Текст задачи не может быть пустым'); return; }
-  const date=document.getElementById('ot-date').value||todayStr;
   const comment=document.getElementById('ot-comment').value;
-  const { error } = await sbClient.from('owner_tasks').update({ text, date, comment: comment||null }).eq('id', t.id);
+  const { error } = await sbClient.from('owner_tasks').update({ text, comment: comment||null }).eq('id', t.id);
   if(error){ alert('Не удалось сохранить: '+error.message); return; }
-  t.text=text; t.date=date; t.comment=comment;
+  t.text=text; t.comment=comment;
   closeModal('modal-edit-owner-task');
   renderOwnerTasks();
   toast('Задача сохранена');
+}
+let _editOwnerTaskListId=null;
+function openOwnerTaskListEdit(id){
+  const l=OWNER_TASK_LISTS.find(x=>x.id===id); if(!l) return;
+  _editOwnerTaskListId=id;
+  openModal('modal-edit-owner-tasklist');
+  document.getElementById('otl-theme').value=l.theme;
+  document.getElementById('otl-date').value=l.date||todayStr;
+}
+async function saveOwnerTaskListEdit(){
+  const l=OWNER_TASK_LISTS.find(x=>x.id===_editOwnerTaskListId); if(!l) return;
+  const theme=document.getElementById('otl-theme').value.trim();
+  if(!theme){ alert('Тема не может быть пустой'); return; }
+  const date=document.getElementById('otl-date').value||todayStr;
+  const { error } = await sbClient.from('owner_task_lists').update({ theme, date }).eq('id', l.id);
+  if(error){ alert('Не удалось сохранить: '+error.message); return; }
+  l.theme=theme; l.date=date;
+  closeModal('modal-edit-owner-tasklist');
+  renderOwnerTasks();
+  toast('Сохранено');
 }
 async function deleteOwnerTask(id){
   if(!confirm('Удалить эту задачу?')) return;
@@ -4023,6 +4108,7 @@ let DRIVER_MESSAGES = [];
 let OWNER_TASK_LISTS = [];
 let OWNER_TASKS = [];
 let _dmChannel = null;
+let _ownerTasksChannel = null;
 
 // FINANCE — глобальная история всех операций
 // Поля: date, fleetId (на какую ед.ПС), kontragentId, type ('charge'/'payment'/'vacation'), cat, desc, amount, wallet
