@@ -540,6 +540,23 @@ Deno.serve(async (req) => {
         await sendMessage(chatId, `Тема «${theme}» — теперь пришлите задачи (каждая с новой строки).`, adminKeyboard);
       }
       await tg('answerCallbackQuery', { callback_query_id: cq.id });
+    } else if (cq.data === 'task_menu_new') {
+      // Подменю "Задачи и заметки" (2026-08-11) — разводит "добавить пачку" и
+      // "посмотреть текущие" по разным нажатиям, вместо того чтобы каждый раз
+      // при заходе в раздел заново присылать все открытые чек-листы.
+      const { data: ownerRow } = await supabase.from('owner_notify').select('id').eq('chat_id', chatId).maybeSingle();
+      if (ownerRow) {
+        await supabase.from('owner_notify').update({ pending_query: 'task_theme' }).eq('id', ownerRow.id);
+        await tg('sendMessage', {
+          chat_id: chatId, text: 'Пришлите тему следующим сообщением, или пропустите:',
+          reply_markup: { inline_keyboard: [[{ text: '⏭ Без темы', callback_data: 'task_skip_theme' }]] },
+        });
+      }
+      await tg('answerCallbackQuery', { callback_query_id: cq.id });
+    } else if (cq.data === 'task_menu_view') {
+      const adminCompanyId = await getAdminCompanyId();
+      if (adminCompanyId) await sendTaskLists(chatId, adminCompanyId);
+      await tg('answerCallbackQuery', { callback_query_id: cq.id });
     } else {
       await tg('answerCallbackQuery', { callback_query_id: cq.id });
     }
@@ -650,11 +667,15 @@ Deno.serve(async (req) => {
       return new Response('ok');
     }
     if (text === BTN_ADMIN_TASKS) {
-      await supabase.from('owner_notify').update({ pending_query: 'task_theme' }).eq('id', ownerRow.id);
-      await sendTaskLists(chatId, adminCompanyId);
+      // Развилка (решение пользователя 2026-08-11): раньше каждое нажатие сразу
+      // и присылало все открытые чек-листы, и просило тему для новой пачки —
+      // неудобно, если просто хотели глянуть, что ещё не сделано.
       await tg('sendMessage', {
-        chat_id: chatId, text: 'Чтобы добавить новую пачку задач — пришлите тему следующим сообщением, или пропустите:',
-        reply_markup: { inline_keyboard: [[{ text: '⏭ Без темы', callback_data: 'task_skip_theme' }]] },
+        chat_id: chatId, text: 'Что нужно?',
+        reply_markup: { inline_keyboard: [
+          [{ text: '➕ Новая пачка задач', callback_data: 'task_menu_new' }],
+          [{ text: '👀 Посмотреть задачи', callback_data: 'task_menu_view' }],
+        ] },
       });
       return new Response('ok');
     }
