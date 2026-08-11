@@ -89,6 +89,20 @@ async function sendMessage(chatId: number, text: string, keyboard: any = null) {
   await tg('sendMessage', body);
 }
 
+// Служебные вопросы бота владельцу ("Введите тему...", "Что нужно?" и т.п.) не
+// должны копиться в чате — решение пользователя 2026-08-11. Бот умеет удалять
+// только СВОИ сообщения (не пользовательские — ограничение Telegram), поэтому
+// запоминаем id последнего такого сообщения в owner_notify.pending_prompt_msg_id
+// и удаляем его перед следующим шагом (см. вызовы ниже). Финальный контент
+// (сводки, чек-листы, уведомления о событиях) через эту функцию не отправляем —
+// его удалять не нужно, это не мусор, а то, к чему возвращаются.
+async function sendTrackedPrompt(ownerRowId: string, chatId: number, text: string, keyboard: any = null) {
+  const body: any = { chat_id: chatId, text, parse_mode: 'HTML' };
+  if (keyboard) body.reply_markup = keyboard;
+  const res: any = await tg('sendMessage', body);
+  await supabase.from('owner_notify').update({ pending_prompt_msg_id: res?.result?.message_id || null }).eq('id', ownerRowId);
+}
+
 function fmtDate(dateStr: string): string {
   const d = new Date(dateStr);
   return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.${d.getFullYear()}`;
@@ -533,27 +547,30 @@ Deno.serve(async (req) => {
     } else if (cq.data === 'task_skip_theme') {
       // "Без темы" — тема становится самой датой создания, решение пользователя
       // 2026-08-11 ("если тему не пишем, то тема будет дата создания задачи").
+      // Сам тапнутый вопрос ("Пришлите тему...") удаляем сразу — он свою роль
+      // выполнил, копиться в чате незачем (решение пользователя 2026-08-11).
+      await tg('deleteMessage', { chat_id: chatId, message_id: cq.message.message_id });
       const { data: ownerRow } = await supabase.from('owner_notify').select('id').eq('chat_id', chatId).maybeSingle();
       if (ownerRow) {
         const theme = fmtDate(new Date().toISOString().slice(0, 10));
         await supabase.from('owner_notify').update({ pending_query: 'task_items', pending_task_theme: theme }).eq('id', ownerRow.id);
-        await sendMessage(chatId, `Тема «${theme}» — теперь пришлите задачи (каждая с новой строки).`, adminKeyboard);
+        await sendTrackedPrompt(ownerRow.id, chatId, `Тема «${theme}» — теперь пришлите задачи (каждая с новой строки).`, adminKeyboard);
       }
       await tg('answerCallbackQuery', { callback_query_id: cq.id });
     } else if (cq.data === 'task_menu_new') {
       // Подменю "Задачи и заметки" (2026-08-11) — разводит "добавить пачку" и
       // "посмотреть текущие" по разным нажатиям, вместо того чтобы каждый раз
       // при заходе в раздел заново присылать все открытые чек-листы.
+      await tg('deleteMessage', { chat_id: chatId, message_id: cq.message.message_id });
       const { data: ownerRow } = await supabase.from('owner_notify').select('id').eq('chat_id', chatId).maybeSingle();
       if (ownerRow) {
         await supabase.from('owner_notify').update({ pending_query: 'task_theme' }).eq('id', ownerRow.id);
-        await tg('sendMessage', {
-          chat_id: chatId, text: 'Пришлите тему следующим сообщением, или пропустите:',
-          reply_markup: { inline_keyboard: [[{ text: '⏭ Без темы', callback_data: 'task_skip_theme' }]] },
-        });
+        await sendTrackedPrompt(ownerRow.id, chatId, 'Пришлите тему следующим сообщением, или пропустите:',
+          { inline_keyboard: [[{ text: '⏭ Без темы', callback_data: 'task_skip_theme' }]] });
       }
       await tg('answerCallbackQuery', { callback_query_id: cq.id });
     } else if (cq.data === 'task_menu_view') {
+      await tg('deleteMessage', { chat_id: chatId, message_id: cq.message.message_id });
       const adminCompanyId = await getAdminCompanyId();
       if (adminCompanyId) await sendTaskLists(chatId, adminCompanyId);
       await tg('answerCallbackQuery', { callback_query_id: cq.id });
@@ -575,7 +592,7 @@ Deno.serve(async (req) => {
   // владельца никогда не встретится в telegram_links, но так явнее по смыслу.
   const { data: ownerRow } = await supabase
     .from('owner_notify')
-    .select('id, pending_query, pending_task_theme')
+    .select('id, pending_query, pending_task_theme, pending_prompt_msg_id')
     .eq('chat_id', chatId)
     .maybeSingle();
 
@@ -586,9 +603,17 @@ Deno.serve(async (req) => {
       return new Response('ok');
     }
 
+    // Любое новое сообщение владельца "закрывает" предыдущий служебный вопрос
+    // бота — либо это ответ на него, либо он передумал и нажал другую кнопку;
+    // в обоих случаях вопрос больше не нужен в чате.
+    if (ownerRow.pending_prompt_msg_id) {
+      await tg('deleteMessage', { chat_id: chatId, message_id: ownerRow.pending_prompt_msg_id });
+      await supabase.from('owner_notify').update({ pending_prompt_msg_id: null }).eq('id', ownerRow.id);
+    }
+
     if (ownerRow.pending_query === 'task_theme' && text) {
       await supabase.from('owner_notify').update({ pending_query: 'task_items', pending_task_theme: text }).eq('id', ownerRow.id);
-      await sendMessage(chatId, `Тема «${text}» — теперь пришлите задачи (каждая с новой строки).`, adminKeyboard);
+      await sendTrackedPrompt(ownerRow.id, chatId, `Тема «${text}» — теперь пришлите задачи (каждая с новой строки).`, adminKeyboard);
       return new Response('ok');
     }
     if (ownerRow.pending_query === 'task_items' && text) {
@@ -608,6 +633,9 @@ Deno.serve(async (req) => {
       const { data: tasks } = await supabase.from('owner_tasks')
         .insert(items.map((t) => ({ list_id: list.id, company_id: adminCompanyId, text: t })))
         .select();
+      // Явное подтверждение отдельным сообщением (решение пользователя
+      // 2026-08-11) — сам чек-лист ниже не всегда читается как "сохранено".
+      await sendMessage(chatId, `✅ Пачка задач «${list.theme}» сохранена.`, adminKeyboard);
       await tg('sendMessage', {
         chat_id: chatId, text: taskListText(list.theme, list.date, tasks || []), parse_mode: 'HTML',
         reply_markup: taskListKeyboard(tasks || []),
@@ -646,7 +674,7 @@ Deno.serve(async (req) => {
     }
     if (text === BTN_ADMIN_KONTRAGENTY) {
       await supabase.from('owner_notify').update({ pending_query: 'kontragent' }).eq('id', ownerRow.id);
-      await sendMessage(chatId, 'Введите имя контрагента (можно часть имени):', adminKeyboard);
+      await sendTrackedPrompt(ownerRow.id, chatId, 'Введите имя контрагента (можно часть имени):', adminKeyboard);
       return new Response('ok');
     }
     if (text === BTN_ADMIN_TIRDOZV) {
@@ -663,20 +691,17 @@ Deno.serve(async (req) => {
     }
     if (text === BTN_ADMIN_FLEET) {
       await supabase.from('owner_notify').update({ pending_query: 'fleet' }).eq('id', ownerRow.id);
-      await sendMessage(chatId, 'Введите позывной/метку ПС (можно часть):', adminKeyboard);
+      await sendTrackedPrompt(ownerRow.id, chatId, 'Введите позывной/метку ПС (можно часть):', adminKeyboard);
       return new Response('ok');
     }
     if (text === BTN_ADMIN_TASKS) {
       // Развилка (решение пользователя 2026-08-11): раньше каждое нажатие сразу
       // и присылало все открытые чек-листы, и просило тему для новой пачки —
       // неудобно, если просто хотели глянуть, что ещё не сделано.
-      await tg('sendMessage', {
-        chat_id: chatId, text: 'Что нужно?',
-        reply_markup: { inline_keyboard: [
-          [{ text: '➕ Новая пачка задач', callback_data: 'task_menu_new' }],
-          [{ text: '👀 Посмотреть задачи', callback_data: 'task_menu_view' }],
-        ] },
-      });
+      await sendTrackedPrompt(ownerRow.id, chatId, 'Что нужно?', { inline_keyboard: [
+        [{ text: '➕ Новая пачка задач', callback_data: 'task_menu_new' }],
+        [{ text: '👀 Посмотреть задачи', callback_data: 'task_menu_view' }],
+      ] });
       return new Response('ok');
     }
 
@@ -700,11 +725,11 @@ Deno.serve(async (req) => {
         messageText: text ? `📝 Заметка (директор): ${text}` : '📝 Заметка (директор)',
         photoPath, voicePath,
       });
-      await sendMessage(chatId, '📝 Заметка сохранена в Диалогах.', adminKeyboard);
+      await sendTrackedPrompt(ownerRow.id, chatId, '📝 Заметка сохранена в Диалогах.', adminKeyboard);
       return new Response('ok');
     }
 
-    await sendMessage(chatId, 'Выберите, что посмотреть:', adminKeyboard);
+    await sendTrackedPrompt(ownerRow.id, chatId, 'Выберите, что посмотреть:', adminKeyboard);
     return new Response('ok');
   }
 
