@@ -630,16 +630,12 @@ Deno.serve(async (req) => {
         await sendMessage(chatId, 'Не удалось сохранить задачи, попробуйте ещё раз.', adminKeyboard);
         return new Response('ok');
       }
-      const { data: tasks } = await supabase.from('owner_tasks')
-        .insert(items.map((t) => ({ list_id: list.id, company_id: adminCompanyId, text: t })))
-        .select();
-      // Явное подтверждение отдельным сообщением (решение пользователя
-      // 2026-08-11) — сам чек-лист ниже не всегда читается как "сохранено".
+      await supabase.from('owner_tasks')
+        .insert(items.map((t) => ({ list_id: list.id, company_id: adminCompanyId, text: t })));
+      // Только подтверждение в чате (решение пользователя 2026-08-11) — сам
+      // чек-лист сразу не присылаем, чтобы не копился в переписке; смотреть его
+      // отдельно через "📝 Задачи и заметки" → "👀 Посмотреть задачи".
       await sendMessage(chatId, `✅ Пачка задач «${list.theme}» сохранена.`, adminKeyboard);
-      await tg('sendMessage', {
-        chat_id: chatId, text: taskListText(list.theme, list.date, tasks || []), parse_mode: 'HTML',
-        reply_markup: taskListKeyboard(tasks || []),
-      });
       return new Response('ok');
     }
 
