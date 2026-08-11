@@ -307,6 +307,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
     <div class="nav-item active" onclick="showPage('dashboard')"><span class="ico">⬛</span><span>Дашборд</span></div>
     <div class="nav-item" onclick="showPage('deadlines')"><span class="ico">📅</span><span>Сроки</span></div>
     <div class="nav-item" onclick="showPage('driver-messages')"><span class="ico">💬</span><span>Диалоги</span><span id="dm-badge" style="display:none;background:var(--red);color:#fff;border-radius:10px;font-size:10px;font-weight:700;padding:1px 6px;margin-left:auto;"></span></div>
+    <div class="nav-item" id="nav-owner-tasks" onclick="showPage('owner-tasks')" style="display:none;"><span class="ico">📝</span><span>Задачи и заметки</span></div>
     <div class="nav-item" onclick="showPage('settings')"><span class="ico">⚙️</span><span>Настройки цен</span></div>
     <div class="nav-lbl">Документы</div>
     <div class="nav-item" onclick="showPage('tir')"><span class="ico">📋</span><span>ТИР Карнет</span></div>
@@ -739,6 +740,19 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
     </div>
     <div class="section" style="padding:20px;">
       <div id="dm-list"></div>
+    </div>
+  </div>
+
+  <!-- ===== ЗАДАЧИ И ЗАМЕТКИ (только владелец платформы) ===== -->
+  <div class="page" id="page-owner-tasks">
+    <div class="page-hdr">
+      <div>
+        <h2>Задачи и заметки</h2>
+        <div class="ph-sub">Ставите пачками через Telegram-бота (тема + пункты) — здесь отмечаете, комментируете и удаляете</div>
+      </div>
+    </div>
+    <div class="section" style="padding:20px;">
+      <div id="owner-tasks-list"></div>
     </div>
   </div>
 
@@ -1281,6 +1295,22 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
     <div class="modal-foot">
       <button class="btn" onclick="closeModal('modal-planned-dozv')">Отмена</button>
       <button class="btn primary" id="pd-save-btn" onclick="savePlannedDozv()">Сохранить</button>
+    </div>
+  </div>
+</div>
+
+<!-- Редактирование задачи (Задачи и заметки) -->
+<div class="overlay" id="modal-edit-owner-task">
+  <div class="modal">
+    <div class="modal-head"><h3>✏️ Задача</h3><span class="modal-close" onclick="closeModal('modal-edit-owner-task')">×</span></div>
+    <div class="modal-body">
+      <div class="form-row"><label>Текст</label><textarea id="ot-text" rows="2"></textarea></div>
+      <div class="form-row"><label>Дата</label><input type="date" id="ot-date"></div>
+      <div class="form-row"><label>Комментарий</label><textarea id="ot-comment" rows="3" placeholder="Необязательно"></textarea></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeModal('modal-edit-owner-task')">Отмена</button>
+      <button class="btn primary" onclick="saveOwnerTaskEdit()">Сохранить</button>
     </div>
   </div>
 </div>
@@ -3091,9 +3121,20 @@ async function enterApp(session) {
   const emailEl = document.getElementById('current-user-email');
   if (emailEl) emailEl.textContent = CURRENT_USER.email;
 
+  applyAdminUIVisibility();
   renderDashboard();
   showPage('dashboard');
   subscribeDriverMessages();
+}
+
+// Разделы, которые видит только владелец платформы (companies.account_type='admin') —
+// у компаний-подписчиков SaaS их вообще не должно быть в меню, не просто "недоступны",
+// а незаметны — решение пользователя 2026-08-10 (тот же принцип, что и у блока
+// уведомлений владельцу в Настройках).
+function applyAdminUIVisibility(){
+  const isAdmin = COMPANY.accountType === 'admin';
+  const navTasks = document.getElementById('nav-owner-tasks');
+  if (navTasks) navTasks.style.display = isAdmin ? '' : 'none';
 }
 
 // ============ ЗАГРУЗКА ДАННЫХ ИЗ SUPABASE ============
@@ -3254,6 +3295,17 @@ function mapDriverMessageFromDb(r) {
     createdAt: r.created_at||'', photoSignedUrl:'', voiceSignedUrl:'' };
 }
 
+// "Задачи и заметки" (2026-08-11) — списки задач, которые владелец надиктовывает
+// боту в Telegram (тема + пункты построчно), а отмечает/комментирует/удаляет уже
+// здесь на сайте. См. supabase/functions/telegram-webhook для стороны бота.
+function mapOwnerTaskListFromDb(r) {
+  return { id: r.id, theme: r.theme||'', createdAt: r.created_at||'' };
+}
+function mapOwnerTaskFromDb(r) {
+  return { id: r.id, listId: r.list_id, text: r.text||'', date: r.date||'', comment: r.comment||'',
+    status: r.status||'open', assignedTo: r.assigned_to||'', createdAt: r.created_at||'', completedAt: r.completed_at||'' };
+}
+
 function mapTripFromDb(t, legs, expenses, payments, surcharges) {
   const myLegs = legs.filter(l => l.trip_id === t.id).sort((a, b) => (a.leg_num||0) - (b.leg_num||0));
   const legIdOrder = myLegs.map(l => l.id); // позиция в этом массиве = тот самый legIdx, который использует остальной код
@@ -3297,7 +3349,8 @@ function mapTripFromDb(t, legs, expenses, payments, surcharges) {
 async function loadAllData() {
   const tables = ['companies','company_settings','kontragenty','people','person_docs','transport','fleet','trips','trip_legs',
     'trip_expenses','trip_payments','trip_surcharges','tirs','dozv','doz_planned','finance','kassa',
-    'kassa_wallets','maintenance','waybills','poa','labor','telegram_links','driver_messages'];
+    'kassa_wallets','maintenance','waybills','poa','labor','telegram_links','driver_messages',
+    'owner_task_lists','owner_tasks'];
   const results = await Promise.all(tables.map(t => sbClient.from(t).select('*')));
   const byTable = {};
   tables.forEach((t, i) => {
@@ -3369,6 +3422,8 @@ async function loadAllData() {
   TRIPS = byTable.trips.map(t => mapTripFromDb(t, byTable.trip_legs, byTable.trip_expenses, byTable.trip_payments, byTable.trip_surcharges));
   TELEGRAM_LINKS = byTable.telegram_links.map(mapTelegramLinkFromDb);
   DRIVER_MESSAGES = byTable.driver_messages.map(mapDriverMessageFromDb);
+  OWNER_TASK_LISTS = byTable.owner_task_lists.map(mapOwnerTaskListFromDb);
+  OWNER_TASKS = byTable.owner_tasks.map(mapOwnerTaskFromDb);
   // Подписанные ссылки на фото/голос — bucket приватный, обычный публичный URL не
   // сработает. При каждом входе подписываем только НОВЫЕ (необработанные) сообщения —
   // архив (уже принятые/отклонённые) подписывается лениво, только когда диспетчер
@@ -3615,6 +3670,91 @@ function renderDriverMessages(){
     html = done.length ? done.map(cardHtml).join('') : '<div style="text-align:center;padding:30px;color:var(--text3)">Архив пуст</div>';
   }
   list.innerHTML=html;
+}
+
+// "Задачи и заметки" — списки задач, поставленные через Telegram-бота (тема +
+// пункты построчно, см. supabase/functions/telegram-webhook). Здесь отмечаем,
+// комментируем, редактируем дату и удаляем — сам ввод новых задач через сайт не
+// делаем, только через бота (решение пользователя 2026-08-11).
+function renderOwnerTasks(){
+  const listEl=document.getElementById('owner-tasks-list'); if(!listEl) return;
+  const lists=[...OWNER_TASK_LISTS].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
+  if(!lists.length){
+    listEl.innerHTML='<div style="text-align:center;padding:30px;color:var(--text3)">Задач пока нет — поставьте через Telegram-бота, кнопка «📝 Задачи и заметки».</div>';
+    return;
+  }
+  const rowHtml=(t)=>`<div style="display:flex;align-items:flex-start;gap:8px;padding:8px 0;border-bottom:1px solid var(--border);">
+    <input type="checkbox" ${t.status==='done'?'checked':''} onchange="toggleOwnerTaskStatus('${t.id}')" style="width:16px;height:16px;margin-top:2px;flex-shrink:0;">
+    <div style="flex:1;min-width:0;">
+      <div style="${t.status==='done'?'text-decoration:line-through;color:var(--text3);':''}">${escapeHtml(t.text)}</div>
+      <div style="font-size:11px;color:var(--text3);margin-top:2px;">${fmt(t.date)}${t.comment?' · 💬 '+escapeHtml(t.comment):''}</div>
+    </div>
+    <button class="btn xs" onclick="openOwnerTaskEdit('${t.id}')">✏️</button>
+    <button class="btn xs danger" onclick="deleteOwnerTask('${t.id}')">✕</button>
+  </div>`;
+  listEl.innerHTML = lists.map(list=>{
+    const tasks=OWNER_TASKS.filter(t=>t.listId===list.id).sort((a,b)=>new Date(a.createdAt)-new Date(b.createdAt));
+    const open=tasks.filter(t=>t.status!=='done');
+    const done=tasks.filter(t=>t.status==='done');
+    return `<div class="section" style="padding:14px;margin-bottom:12px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+        <div style="font-weight:600;font-size:14px;">📝 ${escapeHtml(list.theme)}</div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span style="font-size:11px;color:var(--text3);">${done.length}/${tasks.length} выполнено</span>
+          <button class="btn xs danger" onclick="deleteOwnerTaskList('${list.id}')" title="Удалить весь список">🗑</button>
+        </div>
+      </div>
+      ${open.map(rowHtml).join('')}
+      ${done.length?`<div style="margin-top:6px;font-size:11px;color:var(--text3);">Выполнено:</div>${done.map(rowHtml).join('')}`:''}
+    </div>`;
+  }).join('');
+}
+async function toggleOwnerTaskStatus(id){
+  const t=OWNER_TASKS.find(x=>x.id===id); if(!t) return;
+  const newStatus = t.status==='done'?'open':'done';
+  const { error } = await sbClient.from('owner_tasks').update({ status:newStatus, completed_at:newStatus==='done'?new Date().toISOString():null }).eq('id', id);
+  if(error){ alert('Не удалось обновить задачу: '+error.message); return; }
+  t.status=newStatus; t.completedAt=newStatus==='done'?new Date().toISOString():'';
+  renderOwnerTasks();
+}
+let _editOwnerTaskId=null;
+function openOwnerTaskEdit(id){
+  const t=OWNER_TASKS.find(x=>x.id===id); if(!t) return;
+  _editOwnerTaskId=id;
+  openModal('modal-edit-owner-task');
+  document.getElementById('ot-text').value=t.text;
+  document.getElementById('ot-date').value=t.date||todayStr;
+  document.getElementById('ot-comment').value=t.comment||'';
+}
+async function saveOwnerTaskEdit(){
+  const t=OWNER_TASKS.find(x=>x.id===_editOwnerTaskId); if(!t) return;
+  const text=document.getElementById('ot-text').value.trim();
+  if(!text){ alert('Текст задачи не может быть пустым'); return; }
+  const date=document.getElementById('ot-date').value||todayStr;
+  const comment=document.getElementById('ot-comment').value;
+  const { error } = await sbClient.from('owner_tasks').update({ text, date, comment: comment||null }).eq('id', t.id);
+  if(error){ alert('Не удалось сохранить: '+error.message); return; }
+  t.text=text; t.date=date; t.comment=comment;
+  closeModal('modal-edit-owner-task');
+  renderOwnerTasks();
+  toast('Задача сохранена');
+}
+async function deleteOwnerTask(id){
+  if(!confirm('Удалить эту задачу?')) return;
+  const { error } = await sbClient.from('owner_tasks').delete().eq('id', id);
+  if(error){ alert('Не удалось удалить: '+error.message); return; }
+  OWNER_TASKS = OWNER_TASKS.filter(t=>t.id!==id);
+  renderOwnerTasks();
+  toast('Задача удалена');
+}
+async function deleteOwnerTaskList(id){
+  if(!confirm('Удалить весь список задач вместе со всеми пунктами?')) return;
+  const { error } = await sbClient.from('owner_task_lists').delete().eq('id', id);
+  if(error){ alert('Не удалось удалить: '+error.message); return; }
+  OWNER_TASK_LISTS = OWNER_TASK_LISTS.filter(l=>l.id!==id);
+  OWNER_TASKS = OWNER_TASKS.filter(t=>t.listId!==id);
+  renderOwnerTasks();
+  toast('Список удалён');
 }
 
 let _dmRespId=null, _dmRespAction=null;
@@ -3880,6 +4020,8 @@ let LABOR = ld('mm_labor', []);
 // (и на наёмного водителя, и на арендатора), а "Водители" — уже производная от него.
 let TELEGRAM_LINKS = [];
 let DRIVER_MESSAGES = [];
+let OWNER_TASK_LISTS = [];
+let OWNER_TASKS = [];
 let _dmChannel = null;
 
 // FINANCE — глобальная история всех операций
@@ -4073,7 +4215,7 @@ function showPage(id) {
   document.getElementById('page-'+id).classList.add('active');
   const nav=document.querySelector(`.nav-item[onclick="showPage('${id}')"]`);
   if(nav) nav.classList.add('active');
-  const titles={dashboard:'Дашборд',deadlines:'Сроки',settings:'Настройки цен',tir:'ТИР Карнет',dozvol:'Дозволы',documents:'Документы к рейсу',tenants:'Контрагенты',kassa:'Касса',fleet:'Подвижной состав',trips:'Рейсы',people:'Водители',transport:'Транспорт',maintenance:'ТО и Ремонты',finance:'История операций',reports:'Отчёты','driver-messages':'Диалоги'};
+  const titles={dashboard:'Дашборд',deadlines:'Сроки',settings:'Настройки цен',tir:'ТИР Карнет',dozvol:'Дозволы',documents:'Документы к рейсу',tenants:'Контрагенты',kassa:'Касса',fleet:'Подвижной состав',trips:'Рейсы',people:'Водители',transport:'Транспорт',maintenance:'ТО и Ремонты',finance:'История операций',reports:'Отчёты','driver-messages':'Диалоги','owner-tasks':'Задачи и заметки'};
   document.getElementById('pageTitle').textContent=titles[id]||'';
   renderPage(id);
 }
@@ -5611,7 +5753,7 @@ function deleteDozCountry(id){ if(!confirm('Удалить страну?')) retu
 
 // ============ RENDER FUNCTIONS ============
 function renderPage(id){
-  const map={dashboard:renderDashboard,deadlines:renderDeadlines,settings:renderSettings,tir:renderTir,dozvol:renderDozvPage,documents:renderDocumentsPage,tenants:renderTenants,kassa:renderKassa,fleet:renderFleet,trips:renderTrips,people:renderPeople,transport:renderTransport,maintenance:renderMaintenance,finance:renderFinance,reports:renderReports,'driver-messages':renderDriverMessages};
+  const map={dashboard:renderDashboard,deadlines:renderDeadlines,settings:renderSettings,tir:renderTir,dozvol:renderDozvPage,documents:renderDocumentsPage,tenants:renderTenants,kassa:renderKassa,fleet:renderFleet,trips:renderTrips,people:renderPeople,transport:renderTransport,maintenance:renderMaintenance,finance:renderFinance,reports:renderReports,'driver-messages':renderDriverMessages,'owner-tasks':renderOwnerTasks};
   if(map[id]) map[id]();
 }
 

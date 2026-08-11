@@ -63,11 +63,13 @@ const BTN_ADMIN_TIRDOZV = '📋 ТИР/Дозволы';
 const BTN_ADMIN_DEADLINES = '⏰ Сроки';
 const BTN_ADMIN_DIALOGS = '💬 Диалоги';
 const BTN_ADMIN_FLEET = '🚛 ПС';
+const BTN_ADMIN_TASKS = '📝 Задачи и заметки';
 const adminKeyboard = {
   keyboard: [
     [{ text: BTN_ADMIN_KASSA }, { text: BTN_ADMIN_KONTRAGENTY }],
     [{ text: BTN_ADMIN_TIRDOZV }, { text: BTN_ADMIN_DEADLINES }],
     [{ text: BTN_ADMIN_DIALOGS }, { text: BTN_ADMIN_FLEET }],
+    [{ text: BTN_ADMIN_TASKS }],
   ],
   resize_keyboard: true,
 };
@@ -206,7 +208,7 @@ async function relayTelegramFile(fileId: string, companyId: string): Promise<str
 }
 
 async function createDriverMessage(opts: {
-  companyId: string; telegramLinkId: string; fleetId: string | null;
+  companyId: string; telegramLinkId: string | null; fleetId: string | null;
   messageText: string | null; photoPath: string | null; voicePath: string | null;
 }) {
   const { data, error } = await supabase.from('driver_messages').insert({
@@ -422,6 +424,79 @@ async function getFleetCardText(fleetId: string): Promise<string> {
   return lines.join('\n');
 }
 
+// ============================================================================
+// Задачи и заметки владельца — чек-лист через Telegram (2026-08-11). Настоящий
+// Telegram-чек-лист (sendChecklist) доступен только через Telegram Business API,
+// не обычным ботам — обсуждено и отклонено пользователем. Имитируем тем же
+// эффектом через inline-клавиатуру: каждая задача — своя кнопка-строка с
+// чекбоксом в тексте (⬜/☑️), тап переключает статус и перерисовывает то же
+// сообщение (editMessageText), без спама новых сообщений — максимально похоже
+// на нативный чек-лист.
+function truncateForButton(text: string): string {
+  // callback_data и текст кнопки Telegram ограничены — с запасом урезаем длинные
+  // задачи в отображении (полный текст всё равно хранится в базе целиком).
+  return text.length > 60 ? text.slice(0, 57) + '…' : text;
+}
+function taskListText(theme: string, tasks: any[]): string {
+  const done = tasks.filter((t) => t.status === 'done').length;
+  return `📝 <b>${theme}</b>\n${done}/${tasks.length} выполнено`;
+}
+function taskListKeyboard(tasks: any[]) {
+  return {
+    inline_keyboard: tasks.map((t) => [{
+      text: `${t.status === 'done' ? '☑️' : '⬜'} ${truncateForButton(t.text)}`,
+      callback_data: `task_toggle:${t.id}`,
+    }]),
+  };
+}
+// Списки с хотя бы одной открытой задачей — полностью закрытые списки не лезут
+// в актив каждый раз (доступны на сайте), только то, что реально ещё не сделано.
+async function getOpenTaskLists(companyId: string): Promise<{ list: any; tasks: any[] }[]> {
+  const { data: lists } = await supabase.from('owner_task_lists').select('id, theme')
+    .eq('company_id', companyId).order('created_at', { ascending: true });
+  if (!lists || !lists.length) return [];
+  const { data: allTasks } = await supabase.from('owner_tasks').select('id, list_id, text, status')
+    .in('list_id', lists.map((l: any) => l.id)).order('created_at', { ascending: true });
+  const out: { list: any; tasks: any[] }[] = [];
+  for (const list of lists) {
+    const tasks = (allTasks || []).filter((t: any) => t.list_id === list.id);
+    if (tasks.some((t: any) => t.status === 'open')) out.push({ list, tasks });
+  }
+  return out;
+}
+async function sendTaskLists(chatId: number, companyId: string) {
+  const openLists = await getOpenTaskLists(companyId);
+  if (!openLists.length) {
+    await sendMessage(chatId, 'Открытых задач нет.', adminKeyboard);
+  } else {
+    for (const { list, tasks } of openLists) {
+      await tg('sendMessage', {
+        chat_id: chatId, text: taskListText(list.theme, tasks), parse_mode: 'HTML',
+        reply_markup: taskListKeyboard(tasks),
+      });
+    }
+  }
+  await sendMessage(chatId, 'Чтобы добавить новую пачку задач — пришлите тему следующим сообщением.', adminKeyboard);
+}
+// Тап по задаче в уже отправленном чек-листе — переключает туда-обратно (как
+// в настоящем чек-листе можно и снять галочку), перерисовывает то же сообщение.
+async function toggleTaskAndRerender(chatId: number, messageId: number, taskId: string) {
+  const { data: task } = await supabase.from('owner_tasks').select('id, list_id, status').eq('id', taskId).maybeSingle();
+  if (!task) return;
+  const newStatus = task.status === 'done' ? 'open' : 'done';
+  await supabase.from('owner_tasks').update({
+    status: newStatus, completed_at: newStatus === 'done' ? new Date().toISOString() : null,
+  }).eq('id', taskId);
+  const { data: list } = await supabase.from('owner_task_lists').select('id, theme').eq('id', task.list_id).maybeSingle();
+  if (!list) return;
+  const { data: tasks } = await supabase.from('owner_tasks').select('id, text, status')
+    .eq('list_id', task.list_id).order('created_at', { ascending: true });
+  await tg('editMessageText', {
+    chat_id: chatId, message_id: messageId, text: taskListText(list.theme, tasks || []), parse_mode: 'HTML',
+    reply_markup: taskListKeyboard(tasks || []),
+  });
+}
+
 Deno.serve(async (req) => {
   if (req.method !== 'POST') return new Response('ok');
 
@@ -432,17 +507,21 @@ Deno.serve(async (req) => {
     return new Response('ok');
   }
 
-  // --- Нажатие inline-кнопки выбора машины ---
+  // --- Нажатие inline-кнопки (выбор машины для сообщения, или чекбокс задачи) ---
   if (update.callback_query) {
     const cq = update.callback_query;
     const chatId: number = cq.message.chat.id;
-    const m = /^docveh:([0-9a-f-]+):([0-9a-f-]+)$/.exec(cq.data || '');
-    if (m) {
-      const [, msgId, fleetId] = m;
+    const docvehM = /^docveh:([0-9a-f-]+):([0-9a-f-]+)$/.exec(cq.data || '');
+    const taskM = /^task_toggle:([0-9a-f-]+)$/.exec(cq.data || '');
+    if (docvehM) {
+      const [, msgId, fleetId] = docvehM;
       const { data: fleet } = await supabase.from('fleet').select('label').eq('id', fleetId).single();
       await supabase.from('driver_messages').update({ fleet_id: fleetId }).eq('id', msgId);
       await tg('answerCallbackQuery', { callback_query_id: cq.id, text: 'Принято' });
       await sendMessage(chatId, `✅ Сообщение принято по машине ${fleet?.label || ''} и передано диспетчеру.`);
+    } else if (taskM) {
+      await toggleTaskAndRerender(chatId, cq.message.message_id, taskM[1]);
+      await tg('answerCallbackQuery', { callback_query_id: cq.id });
     } else {
       await tg('answerCallbackQuery', { callback_query_id: cq.id });
     }
@@ -461,7 +540,7 @@ Deno.serve(async (req) => {
   // владельца никогда не встретится в telegram_links, но так явнее по смыслу.
   const { data: ownerRow } = await supabase
     .from('owner_notify')
-    .select('id, pending_query')
+    .select('id, pending_query, pending_task_theme')
     .eq('chat_id', chatId)
     .maybeSingle();
 
@@ -469,6 +548,35 @@ Deno.serve(async (req) => {
     const adminCompanyId = await getAdminCompanyId();
     if (!adminCompanyId) {
       await sendMessage(chatId, 'Не удалось определить компанию владельца (account_type=admin). Обратитесь к разработчику.', adminKeyboard);
+      return new Response('ok');
+    }
+
+    if (ownerRow.pending_query === 'task_theme' && text) {
+      await supabase.from('owner_notify').update({ pending_query: 'task_items', pending_task_theme: text }).eq('id', ownerRow.id);
+      await sendMessage(chatId, `Тема «${text}» — теперь пришлите задачи (каждая с новой строки).`, adminKeyboard);
+      return new Response('ok');
+    }
+    if (ownerRow.pending_query === 'task_items' && text) {
+      const theme = ownerRow.pending_task_theme || text;
+      await supabase.from('owner_notify').update({ pending_query: null, pending_task_theme: null }).eq('id', ownerRow.id);
+      const items = text.split('\n').map((l) => l.trim()).filter(Boolean);
+      if (!items.length) {
+        await sendMessage(chatId, 'Не нашёл ни одной задачи в сообщении — попробуйте ещё раз.', adminKeyboard);
+        return new Response('ok');
+      }
+      const { data: list, error: listErr } = await supabase.from('owner_task_lists')
+        .insert({ company_id: adminCompanyId, theme }).select().single();
+      if (listErr || !list) {
+        await sendMessage(chatId, 'Не удалось сохранить задачи, попробуйте ещё раз.', adminKeyboard);
+        return new Response('ok');
+      }
+      const { data: tasks } = await supabase.from('owner_tasks')
+        .insert(items.map((t) => ({ list_id: list.id, company_id: adminCompanyId, text: t })))
+        .select();
+      await tg('sendMessage', {
+        chat_id: chatId, text: taskListText(theme, tasks || []), parse_mode: 'HTML',
+        reply_markup: taskListKeyboard(tasks || []),
+      });
       return new Response('ok');
     }
 
@@ -521,6 +629,35 @@ Deno.serve(async (req) => {
     if (text === BTN_ADMIN_FLEET) {
       await supabase.from('owner_notify').update({ pending_query: 'fleet' }).eq('id', ownerRow.id);
       await sendMessage(chatId, 'Введите позывной/метку ПС (можно часть):', adminKeyboard);
+      return new Response('ok');
+    }
+    if (text === BTN_ADMIN_TASKS) {
+      await supabase.from('owner_notify').update({ pending_query: 'task_theme' }).eq('id', ownerRow.id);
+      await sendTaskLists(chatId, adminCompanyId);
+      return new Response('ok');
+    }
+
+    // Свободное сообщение (не кнопка, не ответ на запрос поиска/темы задач) —
+    // заметка на ходу, уходит в "Диалоги" (driver_messages), как и сообщения
+    // контрагентов, помечена как от директора — решение пользователя 2026-08-11.
+    const ownerHasPhoto = Array.isArray(message.photo) && message.photo.length > 0;
+    const ownerHasVoice = !!message.voice;
+    if (text || ownerHasPhoto || ownerHasVoice) {
+      let photoPath: string | null = null;
+      let voicePath: string | null = null;
+      if (ownerHasPhoto) {
+        const best = message.photo[message.photo.length - 1];
+        photoPath = await relayTelegramFile(best.file_id, adminCompanyId);
+      }
+      if (ownerHasVoice) {
+        voicePath = await relayTelegramFile(message.voice.file_id, adminCompanyId);
+      }
+      await createDriverMessage({
+        companyId: adminCompanyId, telegramLinkId: null, fleetId: null,
+        messageText: text ? `📝 Заметка (директор): ${text}` : '📝 Заметка (директор)',
+        photoPath, voicePath,
+      });
+      await sendMessage(chatId, '📝 Заметка сохранена в Диалогах.', adminKeyboard);
       return new Response('ok');
     }
 
