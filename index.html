@@ -4329,7 +4329,18 @@ function closeModal(id) {
   // пользователем 2026-08-01).
   delete document.getElementById(id).dataset.fleetId;
 }
-document.querySelectorAll('.overlay').forEach(o=>o.addEventListener('click',e=>{if(e.target===o)closeModal(o.id);}));
+// Клик по затемнённому фону закрывает окно — но одно только "click.target===o"
+// срабатывало и когда пользователь просто выделял текст в поле мышью и палец
+// (курсор) уезжал за пределы окна прежде чем отпустить кнопку: mouseup на фоне
+// браузер тоже засчитывает как click по фону, хотя пользователь не собирался
+// закрывать окно (баг найден пользователем 2026-08-12). Теперь закрываем только
+// если И нажатие (mousedown), И клик начались/закончились именно на фоне —
+// обычное выделение текста внутри поля начинается не на фоне, значит не закроет.
+document.querySelectorAll('.overlay').forEach(o=>{
+  let downOnOverlay=false;
+  o.addEventListener('mousedown', e=>{ downOnOverlay = (e.target===o); });
+  o.addEventListener('click', e=>{ if(downOnOverlay && e.target===o) closeModal(o.id); });
+});
 
 // Кнопка рядом с крестиком, разворачивающая окно на весь экран — пока только у
 // деталей рейса (решение пользователя 2026-08-01), но написана универсально —
