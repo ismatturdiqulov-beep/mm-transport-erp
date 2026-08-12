@@ -1533,7 +1533,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
     </div>
     <div class="modal-foot">
       <button class="btn" onclick="closeModal('modal-waybill')">Отмена</button>
-      <button class="btn primary" onclick="saveWaybill()">Создать</button>
+      <button class="btn primary" id="wb-save-btn" onclick="saveWaybill()">Создать</button>
     </div>
   </div>
 </div>
@@ -1563,7 +1563,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
     </div>
     <div class="modal-foot">
       <button class="btn" onclick="closeModal('modal-labor')">Отмена</button>
-      <button class="btn primary" onclick="saveLabor()">Сохранить</button>
+      <button class="btn primary" id="lb-save-btn" onclick="saveLabor()">Сохранить</button>
     </div>
   </div>
 </div>
@@ -1577,6 +1577,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
         <select id="poa-kind">
           <option value="customs">Доверенность — таможня/госорганы</option>
           <option value="asmap">Доверенность — АСМАП/МДП</option>
+          <option value="visa">Виза</option>
         </select>
       </div>
       <div class="form-row"><label>Водитель *</label><select id="poa-person" onchange="onPoaPersonChange()"><option value="">— выберите —</option></select></div>
@@ -1591,7 +1592,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
     </div>
     <div class="modal-foot">
       <button class="btn" onclick="closeModal('modal-poa')">Отмена</button>
-      <button class="btn primary" onclick="savePoa()">Сохранить</button>
+      <button class="btn primary" id="poa-save-btn" onclick="savePoa()">Сохранить</button>
     </div>
   </div>
 </div>
@@ -5418,7 +5419,12 @@ async function _saveVacationImpl(){
   renderFleet();
 }
 
+let _editWaybillId=null;
 function openWaybillModal(){
+  _editWaybillId=null;
+  document.getElementById('modal-waybill').querySelector('.modal-head h3').textContent='🗺 Новая путёвка';
+  document.getElementById('wb-save-btn').textContent='Создать';
+  document.getElementById('wb-dir').disabled=false;
   document.getElementById('wb-dir').value = waybillTab;
   document.getElementById('wb-date').value = todayStr;
   const now=new Date();
@@ -5443,6 +5449,40 @@ function openWaybillModal(){
   if(medRow){ medRow.style.display = medics.length>1 ? 'block' : 'none'; }
   if(medSel) medSel.innerHTML=(medics.length>1?'<option value="">— выберите медработника —</option>':'')+medics.map(n=>`<option value="${n}">${n}</option>`).join('');
   openModal('modal-waybill');
+}
+// Номер путёвки завязан на направление (ХЮТ/ШЮТ) и сквозной счётчик по нему —
+// при редактировании направление блокируем, номер не пересчитываем, чтобы не
+// разъехаться с уже выданным/распечатанным документом (решение 2026-08-12).
+function openEditWaybill(id){
+  const w=WAYBILLS.find(x=>x.id===id); if(!w) return;
+  _editWaybillId=id;
+  populateWaybillSelects();
+  document.getElementById('modal-waybill').querySelector('.modal-head h3').textContent='✏️ Редактировать путёвку';
+  document.getElementById('wb-save-btn').textContent='Сохранить изменения';
+  openModal('modal-waybill');
+  document.getElementById('wb-dir').value=w.dir;
+  document.getElementById('wb-dir').disabled=true;
+  document.getElementById('wb-num-preview').textContent=w.fullNum||w.num;
+  document.getElementById('wb-fleet').value=w.fleetId||'';
+  document.getElementById('wb-drv1').value=w.driver1Id||'';
+  document.getElementById('wb-drv2').value=w.driver2Id||'';
+  document.getElementById('wb-mileage').value=w.mileageStart?formatNumberSpaces(String(w.mileageStart)):'';
+  document.getElementById('wb-date').value=w.date||todayStr;
+  document.getElementById('wb-time').value=w.depTime||'';
+  document.getElementById('wb-days').value=w.days||45;
+  const mechanics=WAYBILL_SETTINGS.mechanics||[];
+  const medics=WAYBILL_SETTINGS.medics||[];
+  if(mechanics.length>1 && document.getElementById('wb-mechanic')) document.getElementById('wb-mechanic').value=w.mechanicName||'';
+  if(medics.length>1 && document.getElementById('wb-medic')) document.getElementById('wb-medic').value=w.medicName||'';
+}
+async function deleteWaybill(id){
+  const w=WAYBILLS.find(x=>x.id===id); if(!w) return;
+  if(!confirm(`Удалить путёвку № ${w.fullNum||w.num}?`)) return;
+  const { error } = await sbClient.from('waybills').delete().eq('id', id);
+  if(error){ alert('Не удалось удалить путёвку: '+error.message); return; }
+  WAYBILLS = WAYBILLS.filter(x=>x.id!==id);
+  renderWaybills();
+  toast('Путёвка удалена');
 }
 
 function populateWaybillSelects(){
@@ -5508,9 +5548,12 @@ async function _saveWaybillImpl(){
   const trailer=fleet&&fleet.trailerId?TRANSPORT.find(t=>t.id===fleet.trailerId):null;
   const drv1=PEOPLE.find(p=>p.id===drv1Id);
   const drv2=drv2Id?PEOPLE.find(p=>p.id===drv2Id):null;
-  const num=nextWaybillNum(dir);
+  // При редактировании номер/направление уже фиксированы (см. openEditWaybill) —
+  // не пересчитываем, чтобы не разъехаться с уже выданным документом.
+  const editing=WAYBILLS.find(w=>w.id===_editWaybillId);
+  const num=editing?editing.num:nextWaybillNum(dir);
   const prefix = dir==='shyt' ? (WAYBILL_SETTINGS.prefixShyt||'') : (WAYBILL_SETTINGS.prefixHyt||'');
-  const fullNum = waybillFullNum(dir,num);
+  const fullNum = editing?(editing.fullNum||editing.num):waybillFullNum(dir,num);
   // Один механик/медработник в списке — берём его напрямую (поле выбора скрыто);
   // несколько — берём то, что выбрали в форме.
   const mechanics=WAYBILL_SETTINGS.mechanics||[];
@@ -5530,17 +5573,30 @@ async function _saveWaybillImpl(){
     days: parseInt(document.getElementById('wb-days').value)||45,
     mechanic_name: mechanicName||null, medic_name: medicName||null,
   };
-  const { data, error } = await sbClient.from('waybills').insert(record).select().single();
-  if(error){ alert('Не удалось сохранить путёвку: '+error.message); return; }
-  WAYBILLS.push(mapWaybillFromDb(data));
-  closeModal('modal-waybill');
-  toast('Путёвка создана: '+fullNum);
+  if(_editWaybillId){
+    const { data, error } = await sbClient.from('waybills').update(record).eq('id', _editWaybillId).select().single();
+    if(error){ alert('Не удалось сохранить изменения: '+error.message); return; }
+    const idx=WAYBILLS.findIndex(w=>w.id===_editWaybillId);
+    if(idx>=0) WAYBILLS[idx]=mapWaybillFromDb(data);
+    closeModal('modal-waybill');
+    toast('Путёвка обновлена: '+fullNum);
+  } else {
+    const { data, error } = await sbClient.from('waybills').insert(record).select().single();
+    if(error){ alert('Не удалось сохранить путёвку: '+error.message); return; }
+    WAYBILLS.push(mapWaybillFromDb(data));
+    closeModal('modal-waybill');
+    toast('Путёвка создана: '+fullNum);
+  }
   renderWaybills();
 }
 
 function personDocNum(p){ const doc=(p.docs&&p.docs.inter)?p.docs.inter:(p.docs&&p.docs.pass?p.docs.pass:null); return doc; }
 
+let _editLaborId=null;
 function openLaborModal(){
+  _editLaborId=null;
+  document.getElementById('modal-labor').querySelector('.modal-head h3').textContent='📃 Трудовой договор';
+  document.getElementById('lb-save-btn').textContent='Сохранить';
   document.getElementById('lb-name').value='';
   document.getElementById('lb-num').value='';
   document.getElementById('lb-days').value=364;
@@ -5554,6 +5610,35 @@ function openLaborModal(){
   const drivers=PEOPLE.filter(p=>p.active!==false);
   document.getElementById('lb-person').innerHTML='<option value="">— выберите —</option>'+drivers.map(p=>`<option value="${p.id}">${p.name}</option>`).join('');
   openModal('modal-labor');
+}
+function openEditLabor(id){
+  const l=LABOR.find(x=>x.id===id); if(!l) return;
+  _editLaborId=id;
+  const drivers=PEOPLE.filter(p=>p.active!==false);
+  document.getElementById('lb-person').innerHTML='<option value="">— выберите —</option>'+drivers.map(p=>`<option value="${p.id}">${p.name}</option>`).join('');
+  document.getElementById('modal-labor').querySelector('.modal-head h3').textContent='✏️ Редактировать трудовой договор';
+  document.getElementById('lb-save-btn').textContent='Сохранить изменения';
+  openModal('modal-labor');
+  document.getElementById('lb-person').value=l.personId||'';
+  document.getElementById('lb-name').value=l.name||'';
+  document.getElementById('lb-num').value=l.num||'';
+  document.getElementById('lb-days').value=l.days||364;
+  document.getElementById('lb-date').value=l.date||todayStr;
+  document.getElementById('lb-probation').value=l.probationMonths||3;
+  document.getElementById('lb-plan-revenue').value=l.planRevenue?formatNumberSpaces(String(l.planRevenue)):'';
+  document.getElementById('lb-passport').value=l.passport||'';
+  document.getElementById('lb-passport-org').value=l.passportIssuedBy||'';
+  document.getElementById('lb-passport-date').value=l.passportIssuedDate||'';
+  document.getElementById('lb-address').value=l.address||'';
+}
+async function deleteLabor(id){
+  const l=LABOR.find(x=>x.id===id); if(!l) return;
+  if(!confirm(`Удалить трудовой договор № ${l.num} (${l.name})?`)) return;
+  const { error } = await sbClient.from('labor').delete().eq('id', id);
+  if(error){ alert('Не удалось удалить: '+error.message); return; }
+  LABOR = LABOR.filter(x=>x.id!==id);
+  renderLabor();
+  toast('Трудовой договор удалён');
 }
 
 function onLaborPersonChange(){
@@ -5587,15 +5672,28 @@ async function _saveLaborImpl(){
     probation_months:parseFloat(document.getElementById('lb-probation').value)||0,
     plan_revenue:numVal('lb-plan-revenue'),
   };
-  const { data, error } = await sbClient.from('labor').insert(record).select().single();
-  if (error) { alert('Не удалось сохранить трудовой договор: '+error.message); return; }
-  LABOR.push(mapLaborFromDb(data));
-  closeModal('modal-labor');
-  toast('Трудовой договор: '+name);
+  if(_editLaborId){
+    const { data, error } = await sbClient.from('labor').update(record).eq('id', _editLaborId).select().single();
+    if (error) { alert('Не удалось сохранить изменения: '+error.message); return; }
+    const idx=LABOR.findIndex(l=>l.id===_editLaborId);
+    if(idx>=0) LABOR[idx]=mapLaborFromDb(data);
+    closeModal('modal-labor');
+    toast('Трудовой договор обновлён: '+name);
+  } else {
+    const { data, error } = await sbClient.from('labor').insert(record).select().single();
+    if (error) { alert('Не удалось сохранить трудовой договор: '+error.message); return; }
+    LABOR.push(mapLaborFromDb(data));
+    closeModal('modal-labor');
+    toast('Трудовой договор: '+name);
+  }
   renderLabor();
 }
 
+let _editPoaId=null;
 function openPoaModal(){
+  _editPoaId=null;
+  document.getElementById('modal-poa').querySelector('.modal-head h3').textContent='📝 Доверенность / Виза';
+  document.getElementById('poa-save-btn').textContent='Сохранить';
   document.getElementById('poa-kind').value='customs';
   document.getElementById('poa-name').value='';
   document.getElementById('poa-num').value='';
@@ -5606,6 +5704,32 @@ function openPoaModal(){
   const drivers=PEOPLE.filter(p=>p.active!==false);
   document.getElementById('poa-person').innerHTML='<option value="">— выберите —</option>'+drivers.map(p=>`<option value="${p.id}">${p.name}</option>`).join('');
   openModal('modal-poa');
+}
+function openEditPoa(id){
+  const p=POA.find(x=>x.id===id); if(!p) return;
+  _editPoaId=id;
+  const drivers=PEOPLE.filter(x=>x.active!==false);
+  document.getElementById('poa-person').innerHTML='<option value="">— выберите —</option>'+drivers.map(x=>`<option value="${x.id}">${x.name}</option>`).join('');
+  document.getElementById('modal-poa').querySelector('.modal-head h3').textContent='✏️ Редактировать доверенность / визу';
+  document.getElementById('poa-save-btn').textContent='Сохранить изменения';
+  openModal('modal-poa');
+  document.getElementById('poa-kind').value=p.kind||'customs';
+  document.getElementById('poa-person').value=p.personId||'';
+  document.getElementById('poa-name').value=p.name||'';
+  document.getElementById('poa-num').value=p.num||'';
+  document.getElementById('poa-date').value=p.date||todayStr;
+  document.getElementById('poa-passport').value=p.passport||'';
+  document.getElementById('poa-exp').value=p.expires||'';
+  document.getElementById('poa-hired').value=p.hired||'';
+}
+async function deletePoa(id){
+  const p=POA.find(x=>x.id===id); if(!p) return;
+  if(!confirm(`Удалить документ «${p.name}» (№ ${p.num||'—'})?`)) return;
+  const { error } = await sbClient.from('poa').delete().eq('id', id);
+  if(error){ alert('Не удалось удалить: '+error.message); return; }
+  POA = POA.filter(x=>x.id!==id);
+  renderPoa();
+  toast('Документ удалён');
 }
 
 function onPoaPersonChange(){
@@ -5631,11 +5755,20 @@ async function _savePoaImpl(){
     expires:document.getElementById('poa-exp').value||null,
     hired:document.getElementById('poa-hired').value||null,
   };
-  const { data, error } = await sbClient.from('poa').insert(record).select().single();
-  if (error) { alert('Не удалось сохранить: '+error.message); return; }
-  POA.push(mapPoaFromDb(data));
-  closeModal('modal-poa');
-  toast('Доверенность: '+name);
+  if(_editPoaId){
+    const { data, error } = await sbClient.from('poa').update(record).eq('id', _editPoaId).select().single();
+    if (error) { alert('Не удалось сохранить изменения: '+error.message); return; }
+    const idx=POA.findIndex(p=>p.id===_editPoaId);
+    if(idx>=0) POA[idx]=mapPoaFromDb(data);
+    closeModal('modal-poa');
+    toast('Документ обновлён: '+name);
+  } else {
+    const { data, error } = await sbClient.from('poa').insert(record).select().single();
+    if (error) { alert('Не удалось сохранить: '+error.message); return; }
+    POA.push(mapPoaFromDb(data));
+    closeModal('modal-poa');
+    toast('Доверенность: '+name);
+  }
   renderPoa();
 }
 
@@ -8913,7 +9046,7 @@ function renderWaybills(){
       <td>${w.drv1||'—'}</td><td>${w.drv2||'—'}</td>
       <td>${w.days}</td>
       <td><span class="tag ${isExp(untilStr)?'red':expSoon(untilStr)?'amber':'green'}">${fmt(until.toISOString())}</span></td>
-      <td><button class="btn" onclick="printWaybill('${w.id}')">🖨</button></td>
+      <td style="white-space:nowrap;"><button class="btn" onclick="printWaybill('${w.id}')">🖨</button> <button class="btn xs" onclick="openEditWaybill('${w.id}')" title="Редактировать">✏️</button> <button class="btn xs danger" onclick="deleteWaybill('${w.id}')" title="Удалить">🗑</button></td>
     </tr>`;
   }).join('');
 }
@@ -9426,7 +9559,7 @@ function renderPoa(){
       <td class="mono">${p.passport||'—'}</td><td>${fmt(p.hired)}</td>
       <td><span class="tag ${exp?'red':expSoon(p.expires)?'amber':'gray'}">${fmt(p.expires)}</span></td>
       <td><span class="tag ${exp?'red':expSoon(p.expires)?'amber':'green'}">${exp?'Истекла':expSoon(p.expires)?'Скоро':'Активна'}</span></td>
-      <td>${p.kind!=='visa'?`<button class="btn" onclick="printPoa('${p.id}')">🖨</button>`:''}</td>
+      <td style="white-space:nowrap;">${p.kind!=='visa'?`<button class="btn" onclick="printPoa('${p.id}')">🖨</button> `:''}<button class="btn xs" onclick="openEditPoa('${p.id}')" title="Редактировать">✏️</button> <button class="btn xs danger" onclick="deletePoa('${p.id}')" title="Удалить">🗑</button></td>
     </tr>`;
   }).join('');
 }
@@ -9452,7 +9585,7 @@ function renderLabor(){
       <td class="mono">${l.passport||'—'}</td>
       <td style="font-size:11px;color:var(--text2);max-width:160px;">${l.address||'—'}</td>
       <td><span class="tag ${s.c}">${s.l}</span></td>
-      <td><button class="btn" onclick="printLabor('${l.id}')">🖨</button></td>
+      <td style="white-space:nowrap;"><button class="btn" onclick="printLabor('${l.id}')">🖨</button> <button class="btn xs" onclick="openEditLabor('${l.id}')" title="Редактировать">✏️</button> <button class="btn xs danger" onclick="deleteLabor('${l.id}')" title="Удалить">🗑</button></td>
     </tr>`;
   }).join('');
 }
