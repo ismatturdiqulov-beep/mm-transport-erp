@@ -517,6 +517,20 @@ async function toggleTaskAndRerender(chatId: number, messageId: number, taskId: 
     chat_id: chatId, message_id: messageId, text: taskListText(list.theme, list.date, tasks || []), parse_mode: 'HTML',
     reply_markup: taskListKeyboard(tasks || []),
   });
+  // editMessageText умеет нести только инлайн-кнопки самого чек-листа, а
+  // обычную (нижнюю) клавиатуру — нет. После серии отметок клиент Telegram
+  // сворачивает её, раз её давно не переотправляли (баг найден пользователем
+  // 2026-08-11: кнопки пропадали после отметки задач, возвращались только
+  // после следующего обычного сообщения). Переотправляем коротким служебным
+  // сообщением — самоудалится при следующем действии, тот же механизм, что и
+  // у остальных служебных подсказок.
+  const { data: ownerRow } = await supabase.from('owner_notify').select('id, pending_prompt_msg_id').eq('chat_id', chatId).maybeSingle();
+  if (ownerRow) {
+    if (ownerRow.pending_prompt_msg_id) {
+      await tg('deleteMessage', { chat_id: chatId, message_id: ownerRow.pending_prompt_msg_id });
+    }
+    await sendTrackedPrompt(ownerRow.id, chatId, '✓', adminKeyboard);
+  }
 }
 
 Deno.serve(async (req) => {
