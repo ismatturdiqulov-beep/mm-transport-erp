@@ -7202,6 +7202,7 @@ async function updateTransport(id){
     purchase_price: owner==='ММ'?(numVal('at-purchase-price')||null):null,
     balance_date: owner==='ММ'?(document.getElementById('at-balance-date')?.value||null):null,
     asmap_include: document.getElementById('at-asmap-include')?.checked||false,
+    docs: getTransportDocsFromModal(),
   };
   const { error } = await sbClient.from('transport').update(updates).eq('id', id);
   if (error) { alert('Не удалось сохранить изменения: '+error.message); return; }
@@ -7209,7 +7210,8 @@ async function updateTransport(id){
     model:updates.model, owner:updates.owner, year:updates.year, respId, resp:updates.resp,
     techpass:updates.techpass, vin:updates.vin, contract_start:updates.contract_start, contract_end:contract_end,
     contractNum:updates.contract_num||'', contractPrice:updates.contract_price, contractStatus:updates.contract_status,
-    purchasePrice:updates.purchase_price, balanceDate:updates.balance_date||'', asmapInclude:updates.asmap_include });
+    purchasePrice:updates.purchase_price, balanceDate:updates.balance_date||'', asmapInclude:updates.asmap_include,
+    docs:updates.docs });
   closeModal('modal-add-transport');
   document.querySelector('#modal-add-transport .modal-head h3').textContent='🚛 Добавить транспорт';
   document.querySelector('#modal-add-transport .modal-foot .btn.primary').onclick=saveTransport;
@@ -10502,12 +10504,16 @@ function getDeadlinesByType(){
   });
   PEOPLE.filter(p=>p.active!==false).forEach(p=>{
     const d=p.docs||{};
-    push('p_pass', p.name, d.pass?.to);
-    push('p_inter', p.name, d.inter?.to);
-    push('p_lic', p.name, d.lic?.to);
-    push('p_mnp', p.name, d.mnp?.to);
-    push('p_tacho', p.name, d.tacho?.to);
-    push('p_adr', p.name, d.adr?.to);
+    // Позывной вместо ФИО — короче, места в таблице занимает меньше (решение
+    // пользователя 2026-08-12); если позывной не заполнен, показываем ФИО, а не
+    // пустую ячейку.
+    const pn=p.short||p.name;
+    push('p_pass', pn, d.pass?.to);
+    push('p_inter', pn, d.inter?.to);
+    push('p_lic', pn, d.lic?.to);
+    push('p_mnp', pn, d.mnp?.to);
+    push('p_tacho', pn, d.tacho?.to);
+    push('p_adr', pn, d.adr?.to);
   });
   Object.keys(byType).forEach(k=>byType[k].sort((a,b)=>new Date(a.date)-new Date(b.date)));
   return byType;
