@@ -707,7 +707,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
     <div class="section" id="dozv-section-normal">
       <table class="tbl">
         <thead><tr>
-          <th>#</th><th>Документ</th><th>Период действия</th>
+          <th>#</th><th>Страна / вид</th><th>Серия и номер</th><th>Период действия</th>
           <th>ПС / Водитель</th><th>Статус</th><th>Действия</th>
         </tr></thead>
         <tbody id="dozv-tbody"></tbody>
@@ -3982,6 +3982,18 @@ let DOZ_COUNTRIES = ld('mm_doz_countries', [
   {id:'dc6', name:'Азербайджан', days:90, kinds:['Двусторонний','Транзит']},
   {id:'dc7', name:'Китай', days:90, kinds:['Двусторонний','Транзит']},
 ]);
+// Флаг рядом со страной в таблице Дозволов (решение пользователя 2026-08-12) —
+// список стран редактируется в Настройках свободным текстом, поэтому это не
+// исчерпывающий справочник, а лучшее покрытие для реальных маршрутов; для
+// страны, которой здесь нет, флаг просто не показывается, ничего не ломается.
+const COUNTRY_FLAGS = {
+  'Казахстан':'🇰🇿', 'Киргизия':'🇰🇬', 'Грузия':'🇬🇪', 'Россия':'🇷🇺', 'Турция':'🇹🇷',
+  'Азербайджан':'🇦🇿', 'Китай':'🇨🇳', 'Узбекистан':'🇺🇿', 'Таджикистан':'🇹🇯',
+  'Туркменистан':'🇹🇲', 'Иран':'🇮🇷', 'Афганистан':'🇦🇫', 'Беларусь':'🇧🇾',
+  'Украина':'🇺🇦', 'Молдова':'🇲🇩', 'Армения':'🇦🇲', 'ОАЭ':'🇦🇪', 'Пакистан':'🇵🇰',
+  'Монголия':'🇲🇳', 'Индия':'🇮🇳', 'Польша':'🇵🇱', 'Германия':'🇩🇪',
+  'Литва':'🇱🇹', 'Латвия':'🇱🇻', 'Эстония':'🇪🇪',
+};
 
 // TIR статусы: '' = свободен, 'issued' = на руках, 'office' = в офисе, 'asmaf' = сдан в АСМАП
 // Поля: transferred=дата передачи водителю, returnedOffice=дата возврата в офис, returnedAsmaf=дата сдачи в АСМАП
@@ -6356,13 +6368,14 @@ function renderDozv(){
     const statusSub=usedTxt!=='—'?('Исп.: '+(d.used===true?'да':'нет')):'';
     return `<tr>
       <td>${i+1}</td>
-      <td style="font-size:11px">${d.country} · <span class="tag gray">${d.kind}</span><br><span class="mono">${d.num}</span> ${d.epermit?'<span class="tag blue">Е-ПЕР</span>':'<span class="tag amber">Бум.</span>'}</td>
+      <td style="font-size:11px">${COUNTRY_FLAGS[d.country]||''} ${d.country} · <span class="tag gray">${d.kind}</span></td>
+      <td style="font-size:11px"><span class="mono">${d.num}</span> ${d.epermit?'<span class="tag blue">Е-ПЕР</span>':'<span class="tag amber">Бум.</span>'}</td>
       <td style="font-size:11px">Получен: ${fmt(d.received)}<br>Срок: ${expTag}</td>
       <td>${personDisplay}</td>
       <td><span class="tag ${s.c}">${s.l}</span>${statusSub?'<br><span style="font-size:10px;color:var(--text3)">'+statusSub+'</span>':''}</td>
       <td style="white-space:nowrap;">${actions} <button class="btn xs" onclick="showDozHistory('${d.id}')" title="История передач/возвратов">ℹ</button> ${editDozBtn} ${delDozBtn}</td>
     </tr>`;
-  }).join('')||'<tr><td colspan="6" style="text-align:center;padding:30px;color:var(--text3)">Нет данных</td></tr>';
+  }).join('')||'<tr><td colspan="7" style="text-align:center;padding:30px;color:var(--text3)">Нет данных</td></tr>';
 }
 
 // KONTRAGENTY — единый справочник, баланс = сумма по единицам ПС
