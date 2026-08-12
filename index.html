@@ -1806,6 +1806,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
         <div class="form-row"><label>Телефон</label><input type="text" id="ap-phone" placeholder="+998 90 000 00 00"></div>
         <div class="form-row"><label>ПИНФЛ</label><input type="text" id="ap-pinfl" placeholder="1234567890123456"></div>
       </div>
+      <div class="form-row"><label>Адрес проживания</label><input type="text" id="ap-address"></div>
       <div class="form-row">
         <label>Связать с контрагентом (если водитель = арендатор)</label>
         <select id="ap-kontragent-link" onchange="onPersonKontragentLinkChange()"><option value="">— Не связывать —</option></select>
@@ -1954,6 +1955,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
         <div class="form-row"><label>Паспорт</label><input type="text" id="ak-passport" placeholder="FA 0000000"></div>
       </div>
       <div class="form-row"><label>ПИНФЛ</label><input type="text" id="ak-pinfl" placeholder="30000000000000" maxlength="14"></div>
+      <div class="form-row"><label>Адрес проживания</label><input type="text" id="ak-address"></div>
       <div class="form-grid-2">
         <div class="form-row"><label>№ Договора</label><input type="text" id="ak-num" placeholder="№ 25/2026"></div>
         <div class="form-row"><label>Дата договора</label><input type="date" id="ak-date"></div>
@@ -3166,7 +3168,7 @@ function mapKontragentFromDb(r) {
   return {
     id: r.id, name: r.name, short: r.short||'',
     type: r.type === 'driver_mm' ? 'mm' : r.type,
-    phone: r.phone||'', passport: r.passport||'', pinfl: r.pinfl||'',
+    phone: r.phone||'', passport: r.passport||'', pinfl: r.pinfl||'', address: r.address||'',
     active: r.active, contract_num: r.contract_num||'', contract_date: r.contract_date||'',
     contract_end: r.contract_end||'', note: r.note||'', ops: r.ops || [],
   };
@@ -7508,6 +7510,7 @@ async function _saveKontragentImpl(){
     phone: document.getElementById('ak-phone')?.value||'',
     passport: document.getElementById('ak-passport')?.value||'',
     pinfl: document.getElementById('ak-pinfl')?.value||'', active:true,
+    address: document.getElementById('ak-address')?.value||'',
     contract_num: document.getElementById('ak-num').value,
     contract_date: document.getElementById('ak-date').value || null,
     contract_end: document.getElementById('ak-end').value || null,
@@ -9726,6 +9729,7 @@ function openEditKontragent(id){
       <div class="form-row"><label>Паспорт</label><input type="text" id="ek-passport" value="${k.passport||''}" class="edit-field"></div>
     </div>
     <div class="form-row"><label>ПИНФЛ</label><input type="text" id="ek-pinfl" value="${k.pinfl||''}" maxlength="14" class="edit-field"></div>
+    <div class="form-row"><label>Адрес проживания</label><input type="text" id="ek-address" value="${k.address||''}" class="edit-field"></div>
     <div class="form-grid-2">
       <div class="form-row"><label>№ Договора</label><input type="text" id="ek-num" value="${k.contract_num||''}" class="edit-field"></div>
       <div class="form-row"><label>Дата договора</label><input type="date" id="ek-date" value="${k.contract_date||''}" class="edit-field"></div>
@@ -9806,6 +9810,7 @@ async function saveEditKontragent(){
     phone: document.getElementById('ek-phone').value,
     passport: document.getElementById('ek-passport').value,
     pinfl: document.getElementById('ek-pinfl').value,
+    address: document.getElementById('ek-address').value,
     contract_num: document.getElementById('ek-num').value,
     contract_date: document.getElementById('ek-date').value || null,
     contract_end: document.getElementById('ek-end').value || null,
@@ -9829,7 +9834,7 @@ async function saveEditKontragent(){
   // ровно один водитель, но на всякий случай обновляем всех, у кого стоит эта привязка.
   const linkedPeople=PEOPLE.filter(p=>p.kontragentId===k.id);
   if(linkedPeople.length){
-    const peopleUpdates={ name:updates.name, short:updates.short, phone:updates.phone, passport:updates.passport, pinfl:updates.pinfl };
+    const peopleUpdates={ name:updates.name, short:updates.short, phone:updates.phone, passport:updates.passport, pinfl:updates.pinfl, address:updates.address };
     const { error: pErr } = await sbClient.from('people').update(peopleUpdates).in('id', linkedPeople.map(p=>p.id));
     if (!pErr) linkedPeople.forEach(p=>Object.assign(p, peopleUpdates));
   }
@@ -9921,6 +9926,7 @@ function onPersonKontragentLinkChange(){
   fill('ap-short', k.short);
   fill('ap-phone', k.phone);
   fill('ap-pinfl', k.pinfl);
+  fill('ap-address', k.address);
   if(k.passport){
     fill('ap-pass-num', k.passport);
     const docsSection=document.getElementById('ap-docs');
