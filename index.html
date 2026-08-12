@@ -307,7 +307,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
     <div class="nav-item active" onclick="showPage('dashboard')"><span class="ico">⬛</span><span>Дашборд</span></div>
     <div class="nav-item" onclick="showPage('deadlines')"><span class="ico">📅</span><span>Сроки</span></div>
     <div class="nav-item" onclick="showPage('driver-messages')"><span class="ico">💬</span><span>Диалоги</span><span id="dm-badge" style="display:none;background:var(--red);color:#fff;border-radius:10px;font-size:10px;font-weight:700;padding:1px 6px;margin-left:auto;"></span></div>
-    <div class="nav-item" id="nav-owner-tasks" onclick="showPage('owner-tasks')" style="display:none;"><span class="ico">📝</span><span>Задачи и заметки</span></div>
+    <div class="nav-item" id="nav-owner-tasks" onclick="showPage('owner-tasks')" style="display:none;"><span class="ico">📝</span><span>Задачи и заметки</span><span id="owner-tasks-badge" style="display:none;background:var(--red);color:#fff;border-radius:10px;font-size:10px;font-weight:700;padding:1px 6px;margin-left:auto;"></span></div>
     <div class="nav-item" onclick="showPage('settings')"><span class="ico">⚙️</span><span>Настройки цен</span></div>
     <div class="nav-lbl">Документы</div>
     <div class="nav-item" onclick="showPage('tir')"><span class="ico">📋</span><span>ТИР Карнет</span></div>
@@ -3143,6 +3143,7 @@ async function enterApp(session) {
   if (emailEl) emailEl.textContent = CURRENT_USER.email;
 
   applyAdminUIVisibility();
+  updateOwnerTasksBadge();
   renderDashboard();
   showPage('dashboard');
   subscribeDriverMessages();
@@ -3603,6 +3604,15 @@ function updateDmBadge(){
   badge.textContent=n; badge.style.display=n>0?'inline-block':'none';
 }
 
+// Счётчик открытых задач на пункте меню "Задачи и заметки" — забыли добавить
+// при первой сборке раздела (решение пользователя 2026-08-12), тот же паттерн,
+// что у бейджа "Диалоги".
+function updateOwnerTasksBadge(){
+  const badge=document.getElementById('owner-tasks-badge'); if(!badge) return;
+  const n=OWNER_TASKS.filter(t=>t.status==='open').length;
+  badge.textContent=n; badge.style.display=n>0?'inline-block':'none';
+}
+
 // Раньше новое сообщение от контрагента появлялось у диспетчера только после
 // перезагрузки страницы (список грузился один раз при входе) — баг найден
 // пользователем 2026-07-20. Подписка на Postgres Changes показывает его сразу.
@@ -3642,13 +3652,13 @@ function subscribeOwnerTasks(){
     })
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'owner_tasks', filter: `company_id=eq.${COMPANY.id}` }, payload=>{
       OWNER_TASKS.push(mapOwnerTaskFromDb(payload.new));
-      renderOwnerTasks();
+      renderOwnerTasks(); updateOwnerTasksBadge();
       toast('📝 Новая задача от Telegram-бота');
     })
     .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'owner_tasks', filter: `company_id=eq.${COMPANY.id}` }, payload=>{
       const t=OWNER_TASKS.find(x=>x.id===payload.new.id); if(!t) return;
       Object.assign(t, mapOwnerTaskFromDb(payload.new));
-      renderOwnerTasks();
+      renderOwnerTasks(); updateOwnerTasksBadge();
     })
     .subscribe();
   // Удаление делаем только с сайта — тот же браузер уже обновляет свои массивы
@@ -3785,7 +3795,7 @@ async function toggleOwnerTaskStatus(id){
   const { error } = await sbClient.from('owner_tasks').update({ status:newStatus, completed_at:newStatus==='done'?new Date().toISOString():null }).eq('id', id);
   if(error){ alert('Не удалось обновить задачу: '+error.message); return; }
   t.status=newStatus; t.completedAt=newStatus==='done'?new Date().toISOString():'';
-  renderOwnerTasks();
+  renderOwnerTasks(); updateOwnerTasksBadge();
 }
 let _editOwnerTaskId=null;
 function openOwnerTaskEdit(id){
@@ -3832,7 +3842,7 @@ async function deleteOwnerTask(id){
   const { error } = await sbClient.from('owner_tasks').delete().eq('id', id);
   if(error){ alert('Не удалось удалить: '+error.message); return; }
   OWNER_TASKS = OWNER_TASKS.filter(t=>t.id!==id);
-  renderOwnerTasks();
+  renderOwnerTasks(); updateOwnerTasksBadge();
   toast('Задача удалена');
 }
 async function deleteOwnerTaskList(id){
@@ -3841,7 +3851,7 @@ async function deleteOwnerTaskList(id){
   if(error){ alert('Не удалось удалить: '+error.message); return; }
   OWNER_TASK_LISTS = OWNER_TASK_LISTS.filter(l=>l.id!==id);
   OWNER_TASKS = OWNER_TASKS.filter(t=>t.listId!==id);
-  renderOwnerTasks();
+  renderOwnerTasks(); updateOwnerTasksBadge();
   toast('Список удалён');
 }
 
