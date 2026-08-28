@@ -577,6 +577,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
         <label style="display:flex;align-items:center;gap:8px;font-size:13px;"><input type="checkbox" id="ons-tir-dozv" style="width:16px;height:16px;"> Выдача/возврат ТИР и Дозволов</label>
         <label style="display:flex;align-items:center;gap:8px;font-size:13px;"><input type="checkbox" id="ons-kontragent-charges" style="width:16px;height:16px;"> Начисления и приходы по контрагентам</label>
         <label style="display:flex;align-items:center;gap:8px;font-size:13px;"><input type="checkbox" id="ons-kassa" style="width:16px;height:16px;"> Приходы/расходы в кассе</label>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;"><input type="checkbox" id="ons-deadlines" style="width:16px;height:16px;"> Приближающиеся сроки (документы, ТИР/Дозвол на руках)</label>
       </div>
       <button class="btn primary" style="margin-top:12px;" onclick="saveOwnerNotifySettings()">💾 Сохранить</button>
     </div>
@@ -4160,7 +4161,7 @@ let FX_RATES = ld('mm_fx_rates', {USD:12700,EUR:13800,RUB:140,TRY:370,KZT:28});
 // для уже работающих уведомлений (ТИР/Дозвол). Ключи kontragentCharges/kassa
 // пока ничего не гасят (события ещё не подключены), заведены заранее, чтобы не
 // трогать этот блок настроек ещё раз, когда те уведомления появятся.
-let OWNER_NOTIFY_SETTINGS = {tirDozv:true, kontragentCharges:true, kassa:true};
+let OWNER_NOTIFY_SETTINGS = {tirDozv:true, kontragentCharges:true, kassa:true, deadlines:true};
 let TRIP_COUNTER = ld('mm_trip_counter', {prefix:'MM', counters:{}}); // counters: {2026: 5, 2025: 12}
 let MAINTENANCE = ld('mm_maintenance', []);
 let WAYBILL_SETTINGS = ld('mm_waybill_settings', {prefixHyt:'МНП-', prefixShyt:'', mechanicName:'', medicName:'', mechanics:[], medics:[]});
@@ -5867,6 +5868,7 @@ function renderSettings(){
     document.getElementById('ons-tir-dozv').checked = ownerNotifyEnabled('tirDozv');
     document.getElementById('ons-kontragent-charges').checked = ownerNotifyEnabled('kontragentCharges');
     document.getElementById('ons-kassa').checked = ownerNotifyEnabled('kassa');
+    document.getElementById('ons-deadlines').checked = ownerNotifyEnabled('deadlines');
   }
 }
 
@@ -5875,6 +5877,7 @@ function saveOwnerNotifySettings(){
     tirDozv: document.getElementById('ons-tir-dozv').checked,
     kontragentCharges: document.getElementById('ons-kontragent-charges').checked,
     kassa: document.getElementById('ons-kassa').checked,
+    deadlines: document.getElementById('ons-deadlines').checked,
   };
   saveCompanySettings();
   toast('Настройки уведомлений владельцу сохранены');
@@ -6018,7 +6021,6 @@ function renderPage(id){
 function renderDashboard(){
   const tirOn=TIRS.filter(t=>tirGetState(t)==='issued').length;
   const tirOffice=TIRS.filter(t=>tirGetState(t)==='office').length;
-  const dozProb=DOZV.filter(d=>!d.epermit&&!d.returnedMt&&(isExp(d.expires)||expSoon(d.expires,14))).length;
   // Задолженность считаем по контрагентам-арендаторам (getKontragentBalance — общий баланс
   // человека по всем его ПС + генерик-операциям), а не суммой fleet.balance по единицам ПС —
   // баланс на карточке ПС убрали как избыточный/путающий с балансом контрагента, решение
@@ -6067,13 +6069,34 @@ function renderDashboard(){
     const multiMonthWarn=monthsBack>1?` (у некоторых пропущено ${monthsBack} мес. подряд!)`:'';
     alerts+=`<div class="alert amber"><span class="ai">📅</span><span class="at">Пора начислить план за ${monthLabelFromDateStr(earliestYm+'-01')} — ${pendingPlan.length} арендатор(ов) ещё не начислено${multiMonthWarn}</span><span class="ad"><button class="btn xs primary" onclick="openPlanChargeModal()">Начислить</button></span></div>`;
   }
-  // Договоры аренды истекли
-  FLEET.filter(f=>f.contract_end&&isExp(f.contract_end)).forEach(t=>{
-    alerts+=`<div class="alert red"><span class="ai">!</span><span class="at">Договор аренды истёк: <b>${t.name}</b> (${t.callsign})</span><span class="ad">${fmt(t.contract_end)}</span></div>`;
+  // Договоры аренды ПС — раньше предупреждал только когда УЖЕ истёк, хотя на карточке
+  // ПС заранее (за 60 дней) уже показывалось "скоро" жёлтым — на дашборде этого 60-
+  // дневного окна не было вообще (баг найден пользователем 2026-08-12). Заодно
+  // исправлена опечатка: FLEET не имеет полей name/callsign — это поля контрагента/
+  // транспорта, alert печатал "undefined".
+  FLEET.filter(f=>f.contract_end&&isExp(f.contract_end)).forEach(f=>{
+    const kg=getFleetKontragent(f);
+    alerts+=`<div class="alert red"><span class="ai">!</span><span class="at">Договор аренды истёк: <b>${kg.name}</b> (${f.label})</span><span class="ad">${fmt(f.contract_end)}</span></div>`;
   });
-  // Доверенности
-  POA.filter(p=>isExp(p.expires)).slice(0,2).forEach(p=>{
+  FLEET.filter(f=>f.contract_end&&!isExp(f.contract_end)&&expSoon(f.contract_end,60)).forEach(f=>{
+    const kg=getFleetKontragent(f);
+    alerts+=`<div class="alert amber"><span class="ai">!</span><span class="at">Договор аренды истекает через ${daysDiff(f.contract_end,todayStr)} дн.: <b>${kg.name}</b> (${f.label})</span><span class="ad">${fmt(f.contract_end)}</span></div>`;
+  });
+  // Доверенности — та же правка: раньше только просроченные (и максимум 2 штуки),
+  // теперь и заранее (30 дней, как на самой странице Доверенностей), без ограничения
+  // по количеству.
+  POA.filter(p=>isExp(p.expires)).forEach(p=>{
     alerts+=`<div class="alert amber"><span class="ai">!</span><span class="at">Доверенность истекла: ${p.name}</span><span class="ad">${fmt(p.expires)}</span></div>`;
+  });
+  POA.filter(p=>p.expires&&!isExp(p.expires)&&expSoon(p.expires,30)).forEach(p=>{
+    alerts+=`<div class="alert amber"><span class="ai">!</span><span class="at">Доверенность истекает через ${daysDiff(p.expires,todayStr)} дн.: ${p.name}</span><span class="ad">${fmt(p.expires)}</span></div>`;
+  });
+  // Документы транспорта и водителей (лицензия, техосмотр, ОСАГО, права, медсправка
+  // и т.д.) — функция уже была написана, но нигде не подключалась, поэтому эти сроки
+  // были видны только на странице "Сроки", не на дашборде (найдено пользователем
+  // 2026-08-16).
+  getDocAlerts().forEach(a=>{
+    alerts+=`<div class="alert ${a.level}"><span class="ai">📋</span><span class="at">${a.msg}</span></div>`;
   });
   // ТО алерты
   getMaintAlerts().forEach(a=>{
@@ -6811,6 +6834,7 @@ function personCard(p){
     <div class="pc-brigade" style="font-size:11px;color:var(--text2);margin-bottom:4px">${p.name}</div>
     ${p.phone?`<div class="pc-brigade" style="font-size:11px;font-family:var(--mono)">${p.phone}</div>`:''}
     ${kgLinked?`<div class="pc-brigade"><span class="tag ${kgLinked.type==='mm'?'green':'blue'}">${kgLinked.short||kgLinked.name}</span></div>`:''}
+    ${getPersonDocBadge(p)?`<div class="pc-brigade">${getPersonDocBadge(p)}</div>`:''}
     <div class="pc-foot" style="margin-top:8px;">
       <span class="tag ${p.active?'green':'gray'}">${p.active?'Активен':'Неактивен'}</span>
       <button class="btn xs" onclick="event.stopPropagation();openEditPerson('${p.id}')">✏️</button>
@@ -6857,6 +6881,7 @@ function renderTransport(){
         ${fleetKg?`<div class="trk-row"><span class="lbl">У кого</span><span style="font-size:11px">${fleetKg.short||fleetKg.name}</span></div>`:''}
         ${t.techpass?`<div class="trk-row"><span class="lbl">Техпасп.</span><span class="tag ${techExp?'red':techSoon?'amber':'green'}">${fmt(t.techpass)}</span></div>`:''}
         ${t.owner==='Аренда'&&t.contract_end?`<div class="trk-row"><span class="lbl">Дог. до</span><span class="tag ${contractExp?'red':contractSoon?'amber':'gray'}">${fmt(t.contract_end)}</span></div>`:''}
+        ${getTransportDocBadge(t)?`<div style="text-align:center;margin-top:4px">${getTransportDocBadge(t)}</div>`:''}
         ${!t.active?`<div style="text-align:center;margin-top:4px"><span class="tag gray">Неактивен</span></div>`:''}
         <div class="trk-foot">
           <button class="btn xs" onclick="openTransportDetail('${t.id}')">ℹ</button>
@@ -10452,19 +10477,20 @@ function getDocAlerts(){
     else if(days<=WARN) alerts.push({level:'amber',msg:`🟡 ${days} дн. до истечения: ${label} — <b>${name}</b>`,date:dateStr,type});
   };
   // Transport docs
-  TRANSPORT.filter(t=>t.active).forEach(t=>{
+  TRANSPORT.filter(t=>t.active!==false).forEach(t=>{
     const n=t.callsign+(t.plate?' ('+t.plate+')':'');
     const d=t.docs||{};
     check('Лицензия транспорта',d.lic?.to,n,'transport');
     check('Свидетельство о допущении',d.svid?.to,n,'transport');
     check('Техосмотр',d.tech?.to,n,'transport');
     check('ДОПОГ транспорта',d.dopog?.to,n,'transport');
+    check('Сертификат тахографа (машина)',d.tacho?.to,n,'transport');
     check('Техпаспорт',t.techpass,n,'transport');
     (d.osago||[]).forEach(o=>{ if(o.to) check(`ОСАГО (${o.country||'?'})`,o.to,n,'transport'); });
     if(t.owner==='Аренда') check('Договор аренды',t.contract_end,n,'transport');
   });
   // Driver docs
-  PEOPLE.filter(p=>p.active).forEach(p=>{
+  PEOPLE.filter(p=>p.active!==false).forEach(p=>{
     const d=p.docs||{};
     check('Загранпаспорт',d.inter?.to,p.name,'driver');
     check('Водительские права',d.lic?.to,p.name,'driver');
