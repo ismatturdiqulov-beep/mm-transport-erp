@@ -6789,6 +6789,8 @@ function fleetCard(f){
       <button class="btn xs green-btn" onclick="fleetPay('${f.id}')">+ Приход</button>
       ${kg.type==='tenant'?`<button class="btn xs" onclick="fleetVac('${f.id}')">Отпуск</button>`:''}
       <button class="btn xs" onclick="openFleetHistory('${f.id}')" title="Акт сверки">📋 Акт</button>
+      <button class="btn xs" onclick="printFleetCardBrief('${f.id}')" title="Краткая карточка — для заказчика (заявки/инвойсы)">🖨 Кратк.</button>
+      <button class="btn xs" onclick="printFleetCardFull('${f.id}')" title="Подробная карточка — для внутреннего использования">🖨 Подр.</button>
       <button class="btn xs" style="margin-left:auto" onclick="openFleetEdit('${f.id}')">✏️</button>
       <button class="btn xs ${f.active?'danger':'green-btn'}" onclick="toggleFleet('${f.id}')">${f.active?'✕':'✓'}</button>
     </div>
@@ -6815,6 +6817,8 @@ function fleetRow(f,i){
       <button class="btn xs" onclick="fleetCharge('${f.id}')">+ Нач.</button>
       <button class="btn xs green-btn" onclick="fleetPay('${f.id}')">+ Приход</button>
       <button class="btn xs" onclick="openFleetHistory('${f.id}')">📋 Акт</button>
+      <button class="btn xs" onclick="printFleetCardBrief('${f.id}')" title="Краткая карточка — для заказчика">🖨 Кратк.</button>
+      <button class="btn xs" onclick="printFleetCardFull('${f.id}')" title="Подробная карточка — для внутреннего использования">🖨 Подр.</button>
       <button class="btn xs" onclick="openFleetEdit('${f.id}')">✏️</button>
       <button class="btn xs ${f.active?'danger':'green-btn'}" onclick="toggleFleet('${f.id}')">${f.active?'✕':'✓'}</button>
     </td>
@@ -8487,6 +8491,113 @@ function printFleetHistory(){
   <table><thead><tr><th>Дата</th><th>Тип</th><th>Категория</th><th>Описание</th><th>Начислено</th><th>Приход</th></tr></thead>
   <tbody>${rows}</tbody></table>
   <div style="margin-top:14px;text-align:right"><button onclick="window.print()" style="padding:8px 16px;cursor:pointer;font-size:13px">🖨 Распечатать</button></div>
+  </body></html>`);
+  win.document.close();
+}
+
+// Карточка ПС (2026-08-28) — две печатные формы. Краткая: только данные транспорта
+// и водителя, безопасна для передачи заказчику (заявки/инвойсы) — никаких балансов
+// или внутренних договорных условий. Подробная: всё по ПС включая баланс, договор
+// аренды и сроки всех документов — помечена "для внутреннего использования",
+// решение пользователя не давать ей "отправить заказчику" ни на сайте, ни в боте.
+function printFleetCardBrief(fleetId){
+  const f=FLEET.find(x=>x.id===fleetId); if(!f) return;
+  const truck=getFleetTruck(f), trailer=getFleetTrailer(f);
+  const driver=PEOPLE.find(p=>p.id===f.driverId);
+  const vehRow=(t)=>{
+    if(!t) return '';
+    const d=t.docs||{};
+    const dopogOk=d.dopog&&d.dopog.to&&!isExp(d.dopog.to);
+    const weight=d.weight&&(d.weight.net||d.weight.gross)?`${d.weight.net||'—'} / ${d.weight.gross||'—'} кг`:'—';
+    return `<tr><td>${t.type||'—'}</td><td>${t.callsign}</td><td>${t.plate||'—'}</td><td>${[t.brand,t.model].filter(Boolean).join(' ')||'—'}</td><td>${t.year||'—'}</td><td>${weight}</td><td>${dopogOk?'Да':'Нет'}</td></tr>`;
+  };
+  const vehRows=[vehRow(truck),vehRow(trailer)].filter(Boolean).join('');
+  const dInter=(driver&&driver.docs&&driver.docs.inter)||{};
+  const dLic=(driver&&driver.docs&&driver.docs.lic)||{};
+  const win=window.open('','_blank','width=760,height=600');
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Карточка ПС — ${f.label}</title>
+  <style>
+    body{font-family:'Segoe UI',Arial,sans-serif;padding:24px;font-size:13px;color:#111}
+    h2{margin:0 0 2px;font-size:18px} .co{color:#666;font-size:12px;margin-bottom:18px}
+    h3{font-size:13px;margin:18px 0 8px;text-transform:uppercase;letter-spacing:.3px;color:#333}
+    table{width:100%;border-collapse:collapse;margin-bottom:6px}
+    th{background:#f0efe9;padding:7px 8px;text-align:left;font-size:11px;border:1px solid #ddd}
+    td{padding:7px 8px;border:1px solid #ddd}
+    .drv{display:grid;grid-template-columns:repeat(2,1fr);gap:6px 20px;background:#f8f7f3;border-radius:6px;padding:12px 16px}
+    .drv .l{font-size:10px;color:#888} .drv .v{font-size:13px;font-weight:600}
+    @media print{button{display:none}}
+  </style></head><body>
+  <h2>${COMPANY.name||'ММ Транспорт'}</h2>
+  <div class="co">${COMPANY.address||''}${COMPANY.phone?' · тел. '+COMPANY.phone:''}${COMPANY.inn?' · ИНН '+COMPANY.inn:''}</div>
+  <h3>Транспортное средство</h3>
+  <table><thead><tr><th>Тип</th><th>Позывной</th><th>Гос.номер</th><th>Марка/модель</th><th>Год</th><th>Масса (сн./полн.)</th><th>ДОПОГ</th></tr></thead>
+  <tbody>${vehRows||'<tr><td colspan="7" style="text-align:center;color:#999">Не назначено</td></tr>'}</tbody></table>
+  <h3>Водитель</h3>
+  <div class="drv">
+    <div><div class="l">ФИО</div><div class="v">${driver?driver.name:'—'}</div></div>
+    <div><div class="l">Телефон</div><div class="v">${driver?(driver.phone||'—'):'—'}</div></div>
+    <div><div class="l">Загранпаспорт</div><div class="v">${dInter.num||'—'}${dInter.to?' · до '+fmt(dInter.to):''}</div></div>
+    <div><div class="l">Водительские права</div><div class="v">${dLic.num||'—'}${dLic.to?' · до '+fmt(dLic.to):''}</div></div>
+  </div>
+  <div style="margin-top:20px;text-align:right"><button onclick="window.print()" style="padding:8px 16px;cursor:pointer;font-size:13px">🖨 Распечатать / Сохранить PDF</button></div>
+  </body></html>`);
+  win.document.close();
+}
+function printFleetCardFull(fleetId){
+  const f=FLEET.find(x=>x.id===fleetId); if(!f) return;
+  const kg=getFleetKontragent(f);
+  const truck=getFleetTruck(f), trailer=getFleetTrailer(f);
+  const driver=PEOPLE.find(p=>p.id===f.driverId);
+  const docRow=(label,d)=>d&&(d.num||d.to)?`<tr><td>${label}</td><td>${d.num||'—'}</td><td>${d.from?fmt(d.from):'—'}</td><td>${d.to?fmt(d.to):'—'}</td></tr>`:'';
+  const vehBlock=(t)=>{
+    if(!t) return '<p style="color:#999">Не назначено</p>';
+    const d=t.docs||{};
+    const rows=[
+      docRow('Лицензия',d.lic), docRow('Свидетельство о допущении',d.svid),
+      docRow('Техосмотр',d.tech), docRow('ДОПОГ',d.dopog), docRow('Тахограф (серт.)',d.tacho),
+      ...(d.osago||[]).map(o=>docRow('ОСАГО'+(o.country?' ('+o.country+')':''), o)),
+    ].filter(Boolean).join('');
+    return `<p><b>${t.callsign}</b> · ${t.plate||'—'} · ${[t.brand,t.model].filter(Boolean).join(' ')} ${t.year?'('+t.year+')':''} ${t.vin?'· VIN '+t.vin:''}</p>
+    ${d.tp&&d.tp.num?`<p style="font-size:12px;color:#555">Техпаспорт № ${d.tp.num}${d.tp.date?' от '+fmt(d.tp.date):''}${d.tp.org?', '+d.tp.org:''}</p>`:''}
+    <table><thead><tr><th>Документ</th><th>Номер</th><th>Выдан</th><th>Действ. до</th></tr></thead><tbody>${rows||'<tr><td colspan="4" style="text-align:center;color:#999">Нет данных</td></tr>'}</tbody></table>`;
+  };
+  const dp=driver?(driver.docs||{}):{};
+  const drvRows=driver?[
+    docRow('Паспорт',dp.pass), docRow('Загранпаспорт',dp.inter), docRow('Водит. права',dp.lic),
+    docRow('Мед.справка',dp.mnp), docRow('Тахокарта',dp.tacho), docRow('АДР',dp.adr),
+  ].filter(Boolean).join(''):'';
+  const win=window.open('','_blank','width=800,height=640');
+  win.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Карточка ПС (подробная) — ${f.label}</title>
+  <style>
+    body{font-family:'Segoe UI',Arial,sans-serif;padding:24px;font-size:13px;color:#111}
+    h2{margin:0 0 2px;font-size:18px} .co{color:#666;font-size:12px;margin-bottom:6px}
+    .internal{display:inline-block;background:#fdecea;color:#c0392b;font-size:11px;font-weight:600;padding:3px 8px;border-radius:4px;margin-bottom:16px}
+    h3{font-size:13px;margin:18px 0 8px;text-transform:uppercase;letter-spacing:.3px;color:#333}
+    table{width:100%;border-collapse:collapse;margin-bottom:6px}
+    th{background:#f0efe9;padding:6px 8px;text-align:left;font-size:11px;border:1px solid #ddd}
+    td{padding:6px 8px;border:1px solid #ddd;font-size:12px}
+    .info{display:grid;grid-template-columns:repeat(3,1fr);gap:6px 20px;background:#f8f7f3;border-radius:6px;padding:12px 16px}
+    .info .l{font-size:10px;color:#888} .info .v{font-size:13px;font-weight:600}
+    @media print{button{display:none}}
+  </style></head><body>
+  <h2>${COMPANY.name||'ММ Транспорт'}</h2>
+  <div class="co">Карточка подвижного состава — ${f.label}</div>
+  <div class="internal">Служебный документ — для внутреннего использования</div>
+  <h3>Основные данные</h3>
+  <div class="info">
+    <div><div class="l">Ответственный контрагент</div><div class="v">${kg.name}</div></div>
+    <div><div class="l">Тип</div><div class="v">${kg.type==='mm'?'Собственник (ММ)':'Аренда'}</div></div>
+    <div><div class="l">Баланс</div><div class="v" style="color:${(f.balance||0)<0?'#c0392b':'#1e8449'}">${fmtN(f.balance||0)} сум</div></div>
+    <div><div class="l">Мес. план</div><div class="v">${f.planType==='tekin'?'Текин':f.planType==='mm'?'Собственник':fmtN(f.plan)}</div></div>
+    <div><div class="l">Договор до</div><div class="v">${f.contract_end?fmt(f.contract_end):'—'}</div></div>
+    <div><div class="l">Статус</div><div class="v">${f.active?'Активен':'Неактивен'}</div></div>
+  </div>
+  <h3>Тягач</h3>${vehBlock(truck)}
+  <h3>Прицеп</h3>${vehBlock(trailer)}
+  <h3>Водитель</h3>
+  ${driver?`<p><b>${driver.name}</b> · ${driver.phone||'—'}${driver.address?' · '+driver.address:''}</p>
+  <table><thead><tr><th>Документ</th><th>Номер</th><th>Выдан</th><th>Действ. до</th></tr></thead><tbody>${drvRows||'<tr><td colspan="4" style="text-align:center;color:#999">Нет данных</td></tr>'}</tbody></table>`:'<p style="color:#999">Водитель не назначен</p>'}
+  <div style="margin-top:20px;text-align:right"><button onclick="window.print()" style="padding:8px 16px;cursor:pointer;font-size:13px">🖨 Распечатать / Сохранить PDF</button></div>
   </body></html>`);
   win.document.close();
 }

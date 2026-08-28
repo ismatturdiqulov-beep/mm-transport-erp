@@ -417,24 +417,95 @@ async function findFleet(companyId: string, query: string): Promise<{ id: string
     .ilike('label', `%${query}%`).limit(5);
   return data || [];
 }
-async function getFleetCardText(fleetId: string): Promise<string> {
+// Карточка ПС (2026-08-28) — две отправляемые в бот версии, зеркалящие печатные
+// карточки на сайте (printFleetCardBrief/Full): краткая безопасна для пересылки
+// заказчику (только данные ТС + водителя), подробная — служебная, с балансом и
+// сроками всех документов, без кнопки "переслать" в интерфейсе — решение
+// пользователя ("Подробная — только для своих").
+function isExpDate(dateStr?: string | null): boolean {
+  if (!dateStr) return false;
+  return new Date(dateStr) < new Date();
+}
+// people не хранит docs как jsonb (в отличие от transport) — документы водителя
+// лежат в отдельной таблице person_docs (person_id, doc_type, doc_number, issued,
+// expires, note), тот же формат что на сайте строит mapPersonFromDb() из doc-строк.
+const PERSON_DOC_TYPE_REVERSE: Record<string, string> = {
+  passport: 'pass', international_passport: 'inter', driver_license: 'lic',
+  mnp: 'mnp', tachograph_card: 'tacho', adr_cert: 'adr',
+};
+async function getFleetCardData(fleetId: string) {
   const { data: f } = await supabase.from('fleet').select('*').eq('id', fleetId).single();
-  if (!f) return 'ПС не найдено.';
-  const [{ data: kg }, { data: truck }, { data: trailer }, { data: driver }] = await Promise.all([
+  if (!f) return null;
+  const [{ data: kg }, { data: truck }, { data: trailer }, { data: driver }, { data: driverDocRows }] = await Promise.all([
     f.kontragent_id ? supabase.from('kontragenty').select('name').eq('id', f.kontragent_id).single() : Promise.resolve({ data: null }),
-    f.truck_id ? supabase.from('transport').select('callsign, plate').eq('id', f.truck_id).single() : Promise.resolve({ data: null }),
-    f.trailer_id ? supabase.from('transport').select('callsign, plate').eq('id', f.trailer_id).single() : Promise.resolve({ data: null }),
-    f.driver_id ? supabase.from('people').select('name').eq('id', f.driver_id).single() : Promise.resolve({ data: null }),
+    f.truck_id ? supabase.from('transport').select('callsign, plate, brand, model, year, type, docs').eq('id', f.truck_id).single() : Promise.resolve({ data: null }),
+    f.trailer_id ? supabase.from('transport').select('callsign, plate, brand, model, year, type, docs').eq('id', f.trailer_id).single() : Promise.resolve({ data: null }),
+    f.driver_id ? supabase.from('people').select('name, phone, address').eq('id', f.driver_id).single() : Promise.resolve({ data: null }),
+    f.driver_id ? supabase.from('person_docs').select('doc_type, doc_number, issued, expires, note').eq('person_id', f.driver_id) : Promise.resolve({ data: [] }),
   ]);
+  const dp: Record<string, any> = {};
+  (driverDocRows || []).forEach((d: any) => {
+    const key = PERSON_DOC_TYPE_REVERSE[d.doc_type];
+    if (key) dp[key] = { num: d.doc_number || '', from: d.issued || '', to: d.expires || '', org: d.note || '' };
+  });
+  return { f, kg, truck, trailer, driver, dp };
+}
+function vehLineBrief(t: any): string | null {
+  if (!t) return null;
+  const d = t.docs || {};
+  const dopogOk = d.dopog?.to && !isExpDate(d.dopog.to);
+  const weight = d.weight && (d.weight.net || d.weight.gross) ? `${d.weight.net || '—'}/${d.weight.gross || '—'} кг` : null;
+  return `${t.type || 'ТС'}: ${t.callsign} (${t.plate || '—'}), ${[t.brand, t.model].filter(Boolean).join(' ') || '—'}${t.year ? ', ' + t.year : ''}${weight ? ', масса ' + weight : ''}, ДОПОГ: ${dopogOk ? 'да' : 'нет'}`;
+}
+async function getFleetCardTextBrief(fleetId: string): Promise<string> {
+  const card = await getFleetCardData(fleetId);
+  if (!card) return 'ПС не найдено.';
+  const { f, truck, trailer, driver, dp } = card;
   const lines = [
-    `🚛 <b>${f.label}</b>`,
-    `Контрагент: ${(kg as any)?.name || '—'}`,
-    `Тягач: ${truck ? `${(truck as any).callsign} (${(truck as any).plate || '—'})` : '—'}`,
-    trailer ? `Прицеп: ${(trailer as any).callsign} (${(trailer as any).plate || '—'})` : null,
-    `Водитель: ${(driver as any)?.name || '—'}`,
-    `План: ${f.plan > 0 ? fmtN(f.plan) + ' сум' : '—'}`,
-    `Баланс: ${fmtN(f.balance || 0)} сум`,
+    `🚛 <b>${f.label}</b> — краткая карточка`,
+    vehLineBrief(truck), vehLineBrief(trailer),
+    driver ? `Водитель: ${(driver as any).name}, тел. ${(driver as any).phone || '—'}` : 'Водитель: —',
+    dp.inter?.num ? `Загранпаспорт: ${dp.inter.num}${dp.inter.to ? ' до ' + fmtDate(dp.inter.to) : ''}` : null,
+    dp.lic?.num ? `Вод. права: ${dp.lic.num}${dp.lic.to ? ' до ' + fmtDate(dp.lic.to) : ''}` : null,
   ].filter(Boolean);
+  return lines.join('\n');
+}
+function docLineFull(label: string, d: any): string | null {
+  if (!d || (!d.num && !d.to)) return null;
+  return `  ${label}: ${d.num || '—'}${d.to ? ', до ' + fmtDate(d.to) : ''}`;
+}
+function vehBlockFull(t: any): string {
+  if (!t) return '  не назначено';
+  const d = t.docs || {};
+  const lines = [
+    `  ${t.callsign} · ${t.plate || '—'} · ${[t.brand, t.model].filter(Boolean).join(' ')}${t.year ? ' (' + t.year + ')' : ''}`,
+    docLineFull('Лицензия', d.lic), docLineFull('Свидетельство', d.svid),
+    d.tech?.to ? `  Техосмотр: до ${fmtDate(d.tech.to)}` : null,
+    docLineFull('ДОПОГ', d.dopog), docLineFull('Тахограф', d.tacho),
+    ...(d.osago || []).map((o: any) => docLineFull('ОСАГО' + (o.country ? ' (' + o.country + ')' : ''), o)),
+  ].filter(Boolean);
+  return lines.join('\n');
+}
+async function getFleetCardTextFull(fleetId: string): Promise<string> {
+  const card = await getFleetCardData(fleetId);
+  if (!card) return 'ПС не найдено.';
+  const { f, kg, truck, trailer, driver, dp } = card;
+  const lines = [
+    `🚛 <b>${f.label}</b> — подробная карточка (служебное)`,
+    `Контрагент: ${(kg as any)?.name || '—'}`,
+    `Баланс: ${fmtN(f.balance || 0)} сум`,
+    `План: ${f.plan > 0 ? fmtN(f.plan) + ' сум' : '—'}`,
+    f.contract_end ? `Договор до: ${fmtDate(f.contract_end)}` : null,
+    '',
+    '<b>Тягач:</b>', vehBlockFull(truck),
+    '',
+    '<b>Прицеп:</b>', vehBlockFull(trailer),
+    '',
+    '<b>Водитель:</b>',
+    driver ? `  ${(driver as any).name} · ${(driver as any).phone || '—'}` : '  не назначен',
+    docLineFull('Паспорт', dp.pass), docLineFull('Загранпаспорт', dp.inter), docLineFull('Вод. права', dp.lic),
+    docLineFull('Мед.справка', dp.mnp), docLineFull('Тахокарта', dp.tacho), docLineFull('АДР', dp.adr),
+  ].filter((l) => l !== null);
   return lines.join('\n');
 }
 
@@ -549,6 +620,7 @@ Deno.serve(async (req) => {
     const chatId: number = cq.message.chat.id;
     const docvehM = /^docveh:([0-9a-f-]+):([0-9a-f-]+)$/.exec(cq.data || '');
     const taskM = /^task_toggle:([0-9a-f-]+)$/.exec(cq.data || '');
+    const cardM = /^fleetcard:(brief|full):([0-9a-f-]+)$/.exec(cq.data || '');
     if (docvehM) {
       const [, msgId, fleetId] = docvehM;
       const { data: fleet } = await supabase.from('fleet').select('label').eq('id', fleetId).single();
@@ -587,6 +659,11 @@ Deno.serve(async (req) => {
       await tg('deleteMessage', { chat_id: chatId, message_id: cq.message.message_id });
       const adminCompanyId = await getAdminCompanyId();
       if (adminCompanyId) await sendTaskLists(chatId, adminCompanyId);
+      await tg('answerCallbackQuery', { callback_query_id: cq.id });
+    } else if (cardM) {
+      const [, variant, fleetId] = cardM;
+      const text = variant === 'brief' ? await getFleetCardTextBrief(fleetId) : await getFleetCardTextFull(fleetId);
+      await sendMessage(chatId, text, adminKeyboard);
       await tg('answerCallbackQuery', { callback_query_id: cq.id });
     } else {
       await tg('answerCallbackQuery', { callback_query_id: cq.id });
@@ -673,7 +750,13 @@ Deno.serve(async (req) => {
       } else if (matches.length > 1) {
         await sendMessage(chatId, `Найдено несколько совпадений, уточните запрос:\n${matches.map((f) => `• ${f.label}`).join('\n')}`, adminKeyboard);
       } else {
-        await sendMessage(chatId, await getFleetCardText(matches[0].id), adminKeyboard);
+        await tg('sendMessage', {
+          chat_id: chatId, text: `🚛 <b>${matches[0].label}</b> — выберите вариант карточки:`, parse_mode: 'HTML',
+          reply_markup: { inline_keyboard: [
+            [{ text: '📤 Краткая — заказчику', callback_data: `fleetcard:brief:${matches[0].id}` }],
+            [{ text: '📋 Подробная — для себя', callback_data: `fleetcard:full:${matches[0].id}` }],
+          ] },
+        });
       }
       return new Response('ok');
     }
