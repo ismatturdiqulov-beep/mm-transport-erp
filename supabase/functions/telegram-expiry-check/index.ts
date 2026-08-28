@@ -288,21 +288,40 @@ Deno.serve(async (req) => {
   // --- Путёвки --- срок действия = дата выдачи + дней (то же вычисление, что и в
   // index.html/renderWaybills). Уведомляем ответственного по ПС путёвки и обоих
   // водителей (если у них есть своя привязка).
-  const { data: waybillRows } = await supabase
+  //
+  // 2026-08-28 (решение пользователя): у путёвок короткий срок (30-45 дней), общий
+  // порог 10/5/3/1/0 слишком ранний — своё расписание: за 5 дней (разово), потом
+  // КАЖДЫЙ день начиная с 3-х (включая просрочку), пока не появится новая путёвка
+  // по той же ПС и направлению. "Новая появилась" — считаем активной только самую
+  // свежую путёвку в каждой паре (fleet_id, dir), остальные (старые) в проверку не
+  // попадают вообще, даже если формально их срок ещё "недавно" истёк.
+  const isWaybillCheckpoint = (dl: number) => dl === 5 || dl <= 3;
+  const { data: allWaybills } = await supabase
     .from('waybills')
-    .select('num, full_num, issued_date, days, company_id, fleet:fleet_id(kontragent_id), driver1:driver1_id(kontragent_id), driver2:driver2_id(kontragent_id)')
+    .select('num, full_num, issued_date, days, company_id, fleet_id, dir, truck, trailer, created_at, fleet:fleet_id(kontragent_id, label), driver1:driver1_id(kontragent_id), driver2:driver2_id(kontragent_id)')
     .not('issued_date', 'is', null);
-  for (const w of waybillRows || []) {
+  const latestWaybillByKey = new Map<string, any>();
+  (allWaybills || []).forEach((w: any) => {
+    const key = `${w.fleet_id || 'truck:' + w.truck}|${w.dir}`;
+    const cur = latestWaybillByKey.get(key);
+    if (!cur || w.issued_date > cur.issued_date || (w.issued_date === cur.issued_date && w.created_at > cur.created_at)) {
+      latestWaybillByKey.set(key, w);
+    }
+  });
+  for (const w of latestWaybillByKey.values()) {
     const issued = new Date(w.issued_date);
     const until = new Date(issued);
     until.setDate(until.getDate() + (w.days || 45));
     const untilStr = until.toISOString().slice(0, 10);
     const dl = daysLeft(untilStr);
-    if (!CHECKPOINTS.includes(dl)) continue;
+    if (!isWaybillCheckpoint(dl)) continue;
     const label = w.full_num || w.num;
+    const vehicle = w.truck ? ` — ${w.truck}${w.trailer ? '/' + w.trailer : ''}` : (w.fleet?.label ? ` — ${w.fleet.label}` : '');
     const msg = dl > 0
-      ? `⏰ Путёвка № ${label} истекает через ${dl} дн. (${fmtDate(untilStr)}).`
-      : `🚫 Путёвка № ${label} истекает сегодня (${fmtDate(untilStr)})!`;
+      ? `⏰ Путёвка № ${label}${vehicle} истекает через ${dl} дн. (${fmtDate(untilStr)}).`
+      : dl === 0
+      ? `🚫 Путёвка № ${label}${vehicle} истекает сегодня (${fmtDate(untilStr)})!`
+      : `🚫 Путёвка № ${label}${vehicle} просрочена на ${-dl} дн. (${fmtDate(untilStr)}) — нужна новая.`;
     const kgIds = [(w as any).fleet?.kontragent_id, (w as any).driver1?.kontragent_id, (w as any).driver2?.kontragent_id];
     await notifyRecipients(kgIds, w.company_id, msg);
   }
