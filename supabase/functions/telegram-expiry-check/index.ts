@@ -16,6 +16,18 @@
 // 'admin') и только если включён переключатель "Приближающиеся сроки" в Настройках
 // (company_settings.owner_notify_settings.deadlines) — тот же принцип разделения
 // доступа, что и у admin-бота/уведомлений о ТИР-Дозвол/кассе.
+//
+// 2026-08-28: добавлены Путёвки и Доверенности (не проверялись в Telegram вовсе).
+//
+// 2026-08-28 (решение пользователя, "уведомление должно уходить ответственным лицам
+// и если подключён водитель, водителю тоже"): раньше по ТИР/Дозволу/транспорту
+// уведомлялось только "ответственное лицо" (fleet.kontragent_id / resp_kontragent_id —
+// обычно арендатор/собственник), а фактический водитель этой ПС (fleet.driver_id),
+// даже если у него есть своя привязка к боту (Наёмный водитель), ничего не получал.
+// Теперь для каждого события собираем МНОЖЕСТВО получателей (ответственный + водитель,
+// если у него есть свой контрагент-аккаунт и он отличается от ответственного) и шлём
+// каждому по разу — но владельцу платформы всё равно только один раз за событие, не
+// по разу на каждого получателя.
 
 import { createClient } from 'npm:@supabase/supabase-js@2';
 
@@ -84,6 +96,23 @@ Deno.serve(async (req) => {
   const linkMap = new Map<string, number>();
   (links || []).forEach((l: any) => linkMap.set(l.kontragent_id, l.telegram_user_id));
 
+  // Все ед. ПС разом — чтобы для транспорта/водителя находить и "ответственного"
+  // (fleet.kontragent_id), и фактического водителя (fleet.driver_id), без запроса
+  // на каждую отдельную запись. transportId -> fleet[] покрывает и тягач, и прицеп.
+  const { data: allFleet } = await supabase.from('fleet').select('id, kontragent_id, driver_id, truck_id, trailer_id');
+  const fleetByTransport = new Map<string, any[]>();
+  const fleetByDriver = new Map<string, any[]>();
+  (allFleet || []).forEach((f: any) => {
+    if (f.truck_id) fleetByTransport.set(f.truck_id, [...(fleetByTransport.get(f.truck_id) || []), f]);
+    if (f.trailer_id) fleetByTransport.set(f.trailer_id, [...(fleetByTransport.get(f.trailer_id) || []), f]);
+    if (f.driver_id) fleetByDriver.set(f.driver_id, [...(fleetByDriver.get(f.driver_id) || []), f]);
+  });
+  // person_id -> kontragent_id (только для тех водителей, у кого есть своя карточка
+  // контрагента — Наёмный водитель или сам арендатор/собственник за рулём своей ПС).
+  const { data: allPeople } = await supabase.from('people').select('id, kontragent_id').not('kontragent_id', 'is', null);
+  const personKgMap = new Map<string, string>();
+  (allPeople || []).forEach((p: any) => personKgMap.set(p.id, p.kontragent_id));
+
   // Владелец платформы — своя компания (account_type='admin'), свой переключатель
   // в Настройках. Если переключатель выключен или чат не привязан — просто не шлём,
   // уведомления контрагентам это никак не затрагивает.
@@ -100,11 +129,16 @@ Deno.serve(async (req) => {
   }
 
   let sent = 0;
-  // Отправляет одно и то же сообщение контрагенту (если привязан) и, отдельно,
-  // владельцу — но владельцу только если запись принадлежит ЕГО ЖЕ компании.
-  async function notifyBoth(kgId: string | null | undefined, companyId: string | null | undefined, msg: string) {
-    const chatId = kgId && linkMap.get(kgId);
-    if (chatId) { await sendMessage(chatId, msg); sent++; }
+  // Шлёт одно и то же сообщение КАЖДОМУ уникальному получателю из kgIds (ответственное
+  // лицо + водитель, если у него есть своя привязка и он отличается от ответственного),
+  // и ОТДЕЛЬНО один раз владельцу — если запись принадлежит его же компании. Владелец
+  // не дублируется, даже если получателей-контрагентов несколько.
+  async function notifyRecipients(kgIds: (string | null | undefined)[], companyId: string | null | undefined, msg: string) {
+    const uniqueKgIds = [...new Set(kgIds.filter(Boolean))] as string[];
+    for (const kgId of uniqueKgIds) {
+      const chatId = linkMap.get(kgId);
+      if (chatId) { await sendMessage(chatId, msg); sent++; }
+    }
     if (adminCompanyId && companyId === adminCompanyId && ownerChatIds.length) {
       await Promise.all(ownerChatIds.map((cid) => sendMessage(cid, msg)));
     }
@@ -113,25 +147,26 @@ Deno.serve(async (req) => {
   // --- ТИР на руках ---
   const { data: tirs } = await supabase
     .from('tirs')
-    .select('num, type, expires, fleet_id, company_id, fleet:fleet_id(kontragent_id, label)')
+    .select('num, type, expires, fleet_id, company_id, fleet:fleet_id(kontragent_id, driver_id, label)')
     .not('transferred', 'is', null)
     .is('returned_office', null)
     .not('expires', 'is', null);
   for (const t of tirs || []) {
     const dl = daysLeft(t.expires);
     if (!CHECKPOINTS.includes(dl)) continue;
-    const kgId = (t as any).fleet?.kontragent_id;
-    const label = (t as any).fleet?.label || '';
+    const fleet = (t as any).fleet;
+    const label = fleet?.label || '';
+    const kgIds = [fleet?.kontragent_id, fleet?.driver_id ? personKgMap.get(fleet.driver_id) : null];
     const msg = dl > 0
       ? `⏰ ТИР № ${t.num} (${t.type})${label ? ', ' + label : ''} истекает через ${dl} дн. (${fmtDate(t.expires)}). Не забудьте вернуть в офис вовремя.`
       : `🚫 ТИР № ${t.num} (${t.type})${label ? ', ' + label : ''} истекает сегодня (${fmtDate(t.expires)})!`;
-    await notifyBoth(kgId, (t as any).company_id, msg);
+    await notifyRecipients(kgIds, (t as any).company_id, msg);
   }
 
   // --- Бумажный Дозвол на руках ---
   const { data: dozv } = await supabase
     .from('dozv')
-    .select('num, country, expires, fleet_id, company_id, epermit, fleet:fleet_id(kontragent_id, label)')
+    .select('num, country, expires, fleet_id, company_id, epermit, fleet:fleet_id(kontragent_id, driver_id, label)')
     .not('issued', 'is', null)
     .is('returned_office', null)
     .eq('epermit', false)
@@ -139,30 +174,38 @@ Deno.serve(async (req) => {
   for (const d of dozv || []) {
     const dl = daysLeft(d.expires);
     if (!CHECKPOINTS.includes(dl)) continue;
-    const kgId = (d as any).fleet?.kontragent_id;
-    const label = (d as any).fleet?.label || '';
+    const fleet = (d as any).fleet;
+    const label = fleet?.label || '';
+    const kgIds = [fleet?.kontragent_id, fleet?.driver_id ? personKgMap.get(fleet.driver_id) : null];
     const msg = dl > 0
       ? `⏰ Дозвол № ${d.num} (${d.country})${label ? ', ' + label : ''} истекает через ${dl} дн. (${fmtDate(d.expires)}). Не забудьте вернуть в офис вовремя — санкция за просрочку!`
       : `🚫 Дозвол № ${d.num} (${d.country})${label ? ', ' + label : ''} истекает сегодня (${fmtDate(d.expires)})! Санкция при просрочке.`;
-    await notifyBoth(kgId, (d as any).company_id, msg);
+    await notifyRecipients(kgIds, (d as any).company_id, msg);
   }
 
   // --- Срок договора аренды транспорта + документы самого транспорта ---
   const { data: transportRows } = await supabase
     .from('transport')
-    .select('callsign, plate, contract_end, resp_kontragent_id, company_id, owner, docs, techpass, active')
+    .select('id, callsign, plate, contract_end, resp_kontragent_id, company_id, owner, docs, techpass, active')
     .neq('active', false);
   for (const t of transportRows || []) {
     const n = t.callsign + (t.plate ? ` (${t.plate})` : '');
-    const kgId = (t as any).resp_kontragent_id;
     const companyId = (t as any).company_id;
+    const relatedFleets = fleetByTransport.get((t as any).id) || [];
+    // Ответственный (resp_kontragent_id) + ответственные по fleet (обычно совпадает,
+    // но не всегда синхронизировано) + водители этих же ед. ПС.
+    const kgIds = [
+      (t as any).resp_kontragent_id,
+      ...relatedFleets.map((f: any) => f.kontragent_id),
+      ...relatedFleets.map((f: any) => (f.driver_id ? personKgMap.get(f.driver_id) : null)),
+    ];
     if (t.owner === 'Аренда' && t.contract_end) {
       const dl = daysLeft(t.contract_end);
       if (CHECKPOINTS.includes(dl)) {
         const msg = dl > 0
           ? `📄 Договор аренды на а/м ${t.callsign} истекает через ${dl} дн. (${fmtDate(t.contract_end)}).`
           : `📄 Договор аренды на а/м ${t.callsign} истекает сегодня (${fmtDate(t.contract_end)})!`;
-        await notifyBoth(kgId, companyId, msg);
+        await notifyRecipients(kgIds, companyId, msg);
       }
     }
     // Техпаспорт хранится отдельным текстовым полем, не в docs — и иногда там номер
@@ -175,7 +218,7 @@ Deno.serve(async (req) => {
         const msg = dl > 0
           ? `⏰ Техпаспорт: ${n} истекает через ${dl} дн. (${fmtDate(t.techpass)}).`
           : `🚫 Техпаспорт: ${n} истекает сегодня (${fmtDate(t.techpass)})!`;
-        await notifyBoth(kgId, companyId, msg);
+        await notifyRecipients(kgIds, companyId, msg);
       }
     }
     const docs = (t as any).docs || {};
@@ -187,7 +230,7 @@ Deno.serve(async (req) => {
       const msg = dl > 0
         ? `⏰ ${label}: ${n} истекает через ${dl} дн. (${fmtDate(to)}).`
         : `🚫 ${label}: ${n} истекает сегодня (${fmtDate(to)})!`;
-      await notifyBoth(kgId, companyId, msg);
+      await notifyRecipients(kgIds, companyId, msg);
     }
     // ОСАГО — массив (может быть несколько полисов на разные страны/периоды)
     for (const o of (docs.osago || [])) {
@@ -198,50 +241,56 @@ Deno.serve(async (req) => {
       const msg = dl > 0
         ? `⏰ ОСАГО${country}: ${n} истекает через ${dl} дн. (${fmtDate(o.to)}).`
         : `🚫 ОСАГО${country}: ${n} истекает сегодня (${fmtDate(o.to)})!`;
-      await notifyBoth(kgId, companyId, msg);
+      await notifyRecipients(kgIds, companyId, msg);
     }
   }
 
-  // --- Документы водителя ---
+  // --- Документы водителя --- (личные документы самого водителя — уведомляем и
+  // его самого, если он подключён отдельно, и ответственного за ту ПС, на которой
+  // он ездит, если это другой человек)
   const { data: docs } = await supabase
     .from('person_docs')
-    .select('doc_type, expires, person:person_id(name, kontragent_id, company_id)')
+    .select('doc_type, expires, person_id, person:person_id(name, kontragent_id, company_id)')
     .not('expires', 'is', null);
   for (const d of docs || []) {
     const dl = daysLeft(d.expires);
     if (!CHECKPOINTS.includes(dl)) continue;
-    const kgId = (d as any).person?.kontragent_id;
-    const companyId = (d as any).person?.company_id;
-    const personName = (d as any).person?.name || '';
+    const person = (d as any).person;
+    const companyId = person?.company_id;
+    const personName = person?.name || '';
+    const relatedFleets = fleetByDriver.get((d as any).person_id) || [];
+    const kgIds = [person?.kontragent_id, ...relatedFleets.map((f: any) => f.kontragent_id)];
     const label = DOC_TYPE_LABELS[d.doc_type] || d.doc_type;
     const msg = dl > 0
       ? `⏰ ${label} (${personName}) истекает через ${dl} дн. (${fmtDate(d.expires)}).`
       : `🚫 ${label} (${personName}) истекает сегодня (${fmtDate(d.expires)})!`;
-    await notifyBoth(kgId, companyId, msg);
+    await notifyRecipients(kgIds, companyId, msg);
   }
 
-  // --- Доверенности (POA) --- (2026-08-28, "а путевые листы, доверенности не
-  // проверяет?" — до этого была только на дашборде, в Telegram не проверялась вовсе)
+  // --- Доверенности (POA) --- документ на конкретного человека, не привязан к
+  // ед. ПС в базе — уведомляем самого человека (если подключён) и ответственного
+  // по любой ПС, на которой он числится водителем.
   const { data: poaRows } = await supabase
     .from('poa')
-    .select('num, name, expires, company_id, person:person_id(kontragent_id)')
+    .select('num, name, expires, company_id, person_id, person:person_id(kontragent_id)')
     .not('expires', 'is', null);
   for (const p of poaRows || []) {
     const dl = daysLeft(p.expires);
     if (!CHECKPOINTS.includes(dl)) continue;
-    const kgId = (p as any).person?.kontragent_id;
+    const relatedFleets = fleetByDriver.get((p as any).person_id) || [];
+    const kgIds = [(p as any).person?.kontragent_id, ...relatedFleets.map((f: any) => f.kontragent_id)];
     const msg = dl > 0
       ? `⏰ Доверенность № ${p.num} (${p.name}) истекает через ${dl} дн. (${fmtDate(p.expires)}).`
       : `🚫 Доверенность № ${p.num} (${p.name}) истекает сегодня (${fmtDate(p.expires)})!`;
-    await notifyBoth(kgId, (p as any).company_id, msg);
+    await notifyRecipients(kgIds, (p as any).company_id, msg);
   }
 
   // --- Путёвки --- срок действия = дата выдачи + дней (то же вычисление, что и в
-  // index.html/renderWaybills). Уведомляем контрагента(ов), к которым привязаны
-  // водитель 1 и водитель 2 (если это разные люди/контрагенты — обоих).
+  // index.html/renderWaybills). Уведомляем ответственного по ПС путёвки и обоих
+  // водителей (если у них есть своя привязка).
   const { data: waybillRows } = await supabase
     .from('waybills')
-    .select('num, full_num, issued_date, days, company_id, driver1:driver1_id(kontragent_id), driver2:driver2_id(kontragent_id)')
+    .select('num, full_num, issued_date, days, company_id, fleet:fleet_id(kontragent_id), driver1:driver1_id(kontragent_id), driver2:driver2_id(kontragent_id)')
     .not('issued_date', 'is', null);
   for (const w of waybillRows || []) {
     const issued = new Date(w.issued_date);
@@ -254,12 +303,8 @@ Deno.serve(async (req) => {
     const msg = dl > 0
       ? `⏰ Путёвка № ${label} истекает через ${dl} дн. (${fmtDate(untilStr)}).`
       : `🚫 Путёвка № ${label} истекает сегодня (${fmtDate(untilStr)})!`;
-    const kgIds = new Set([(w as any).driver1?.kontragent_id, (w as any).driver2?.kontragent_id].filter(Boolean));
-    if (kgIds.size) {
-      for (const kgId of kgIds) await notifyBoth(kgId, w.company_id, msg);
-    } else {
-      await notifyBoth(null, w.company_id, msg);
-    }
+    const kgIds = [(w as any).fleet?.kontragent_id, (w as any).driver1?.kontragent_id, (w as any).driver2?.kontragent_id];
+    await notifyRecipients(kgIds, w.company_id, msg);
   }
 
   return new Response(JSON.stringify({ ok: true, sent }), { status: 200, headers: { 'Content-Type': 'application/json' } });
