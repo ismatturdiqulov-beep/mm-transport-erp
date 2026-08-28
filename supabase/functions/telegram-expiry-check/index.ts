@@ -220,5 +220,47 @@ Deno.serve(async (req) => {
     await notifyBoth(kgId, companyId, msg);
   }
 
+  // --- Доверенности (POA) --- (2026-08-28, "а путевые листы, доверенности не
+  // проверяет?" — до этого была только на дашборде, в Telegram не проверялась вовсе)
+  const { data: poaRows } = await supabase
+    .from('poa')
+    .select('num, name, expires, company_id, person:person_id(kontragent_id)')
+    .not('expires', 'is', null);
+  for (const p of poaRows || []) {
+    const dl = daysLeft(p.expires);
+    if (!CHECKPOINTS.includes(dl)) continue;
+    const kgId = (p as any).person?.kontragent_id;
+    const msg = dl > 0
+      ? `⏰ Доверенность № ${p.num} (${p.name}) истекает через ${dl} дн. (${fmtDate(p.expires)}).`
+      : `🚫 Доверенность № ${p.num} (${p.name}) истекает сегодня (${fmtDate(p.expires)})!`;
+    await notifyBoth(kgId, (p as any).company_id, msg);
+  }
+
+  // --- Путёвки --- срок действия = дата выдачи + дней (то же вычисление, что и в
+  // index.html/renderWaybills). Уведомляем контрагента(ов), к которым привязаны
+  // водитель 1 и водитель 2 (если это разные люди/контрагенты — обоих).
+  const { data: waybillRows } = await supabase
+    .from('waybills')
+    .select('num, full_num, issued_date, days, company_id, driver1:driver1_id(kontragent_id), driver2:driver2_id(kontragent_id)')
+    .not('issued_date', 'is', null);
+  for (const w of waybillRows || []) {
+    const issued = new Date(w.issued_date);
+    const until = new Date(issued);
+    until.setDate(until.getDate() + (w.days || 45));
+    const untilStr = until.toISOString().slice(0, 10);
+    const dl = daysLeft(untilStr);
+    if (!CHECKPOINTS.includes(dl)) continue;
+    const label = w.full_num || w.num;
+    const msg = dl > 0
+      ? `⏰ Путёвка № ${label} истекает через ${dl} дн. (${fmtDate(untilStr)}).`
+      : `🚫 Путёвка № ${label} истекает сегодня (${fmtDate(untilStr)})!`;
+    const kgIds = new Set([(w as any).driver1?.kontragent_id, (w as any).driver2?.kontragent_id].filter(Boolean));
+    if (kgIds.size) {
+      for (const kgId of kgIds) await notifyBoth(kgId, w.company_id, msg);
+    } else {
+      await notifyBoth(null, w.company_id, msg);
+    }
+  }
+
   return new Response(JSON.stringify({ ok: true, sent }), { status: 200, headers: { 'Content-Type': 'application/json' } });
 });

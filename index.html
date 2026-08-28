@@ -6098,6 +6098,21 @@ function renderDashboard(){
   getDocAlerts().forEach(a=>{
     alerts+=`<div class="alert ${a.level}"><span class="ai">📋</span><span class="at">${a.msg}</span></div>`;
   });
+  // Путёвки — срок действия (дата + дней) раньше подсвечивался только на самой
+  // странице "Документы к рейсу", на дашборде не было видно вообще (найдено
+  // пользователем 2026-08-28). Те же пороги, что и у остальных документов (7/30 дн.).
+  WAYBILLS.forEach(w=>{
+    const until=new Date(w.date); until.setDate(until.getDate()+(w.days||45));
+    const untilStr=until.toISOString().split('T')[0];
+    const label=w.fullNum||w.num;
+    if(isExp(untilStr)){
+      alerts+=`<div class="alert red"><span class="ai">🗺</span><span class="at">Путёвка № ${label} истекла</span><span class="ad">${fmt(untilStr)}</span></div>`;
+    } else if(expSoon(untilStr,7)){
+      alerts+=`<div class="alert red"><span class="ai">🗺</span><span class="at">Путёвка № ${label} истекает через ${daysDiff(untilStr,todayStr)} дн.</span><span class="ad">${fmt(untilStr)}</span></div>`;
+    } else if(expSoon(untilStr,30)){
+      alerts+=`<div class="alert amber"><span class="ai">🗺</span><span class="at">Путёвка № ${label} истекает через ${daysDiff(untilStr,todayStr)} дн.</span><span class="ad">${fmt(untilStr)}</span></div>`;
+    }
+  });
   // ТО алерты
   getMaintAlerts().forEach(a=>{
     alerts+=`<div class="alert ${a.level}"><span class="ai">🔧</span><span class="at">${a.msg}</span></div>`;
