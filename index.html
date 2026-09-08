@@ -493,6 +493,12 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
       </div>
     </div>
     <div class="section" style="padding:20px;margin-top:14px;">
+      <div style="font-size:13px;font-weight:600;margin-bottom:4px;">🔄 Сверка с Минтрансом</div>
+      <div style="font-size:11.5px;color:var(--text3);margin-bottom:14px;">Личный кабинет Минтранса считает подтверждённые дозволы за всё время, включая период до перехода на эту систему. Впиши сюда те старые дозволы, которые уже не восстановить поштучно — они прибавятся к счётчику на странице «Дозволы» для сверки.</div>
+      <div class="form-row" style="max-width:280px;"><label>Исторические дозволы (до системы)</label><input type="text" inputmode="numeric" class="fmt-money" id="dozv-historical" placeholder="0"></div>
+      <button class="btn green-btn" onclick="saveDozvHistorical()">💾 Сохранить</button>
+    </div>
+    <div class="section" style="padding:20px;margin-top:14px;">
       <div style="font-size:13px;font-weight:600;margin-bottom:4px;">💰 Покупные цены (списываются из Р/С при получении)</div>
       <div style="font-size:11.5px;color:var(--text3);margin-bottom:14px;">При получении нового ТИР или ДОЗВОЛ сумма автоматически показывается как напоминание о расходе из Р/С</div>
       <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;">
@@ -3407,6 +3413,7 @@ async function loadAllData() {
     if (cs.asmaf_registries) ASMAF_REGISTRIES = cs.asmaf_registries;
     if (cs.doz_registries) DOZ_REGISTRIES = cs.doz_registries;
     if (cs.owner_notify_settings) OWNER_NOTIFY_SETTINGS = {...OWNER_NOTIFY_SETTINGS, ...cs.owner_notify_settings};
+    if (cs.dozv_historical != null) DOZV_HISTORICAL = cs.dozv_historical;
   }
   KONTRAGENTY = byTable.kontragenty.map(mapKontragentFromDb);
   PEOPLE = byTable.people.map(r => mapPersonFromDb(r, byTable.person_docs));
@@ -3986,6 +3993,12 @@ let DOZ_PRICES = ld('mm_doz_prices', {
   paperRent: 600000,   paperMM: 450000,
 });
 
+// Историческая корректировка счётчика Дозвол — дозволы, подтверждённые Минтрансом
+// до перехода на эту систему, поштучно не восстановить (данные утеряны), поэтому
+// одно число-поправка прибавляется к count(DOZV) для сверки с личным кабинетом
+// Минтранса (2026-08-29).
+let DOZV_HISTORICAL = 0;
+
 // DOZVOL COUNTRIES (настраиваемые)
 let DOZ_COUNTRIES = ld('mm_doz_countries', [
   {id:'dc1', name:'Казахстан', days:90, kinds:['Е-ПЕРМИТ','Двусторонний','Транзит']},
@@ -4241,7 +4254,7 @@ async function saveCompanySettings(){
     tir_types: TIR_TYPES, doz_prices: DOZ_PRICES, doz_countries: DOZ_COUNTRIES,
     fx_rates: FX_RATES, trip_counter: TRIP_COUNTER, waybill_settings: WAYBILL_SETTINGS,
     buy_prices: BUY_PRICES, asmaf_registries: ASMAF_REGISTRIES, doz_registries: DOZ_REGISTRIES,
-    owner_notify_settings: OWNER_NOTIFY_SETTINGS,
+    owner_notify_settings: OWNER_NOTIFY_SETTINGS, dozv_historical: DOZV_HISTORICAL,
     updated_at: new Date().toISOString(),
   };
   const { error } = await sbClient.from('company_settings').upsert(record);
@@ -5837,6 +5850,8 @@ function renderSettings(){
   const dpKeys=['epermitRent','epermitMM','paperRent','paperMM'];
   dp.forEach((id,i)=>{ setNumVal('dp-'+id, DOZ_PRICES[dpKeys[i]]||0); });
 
+  setNumVal('dozv-historical', DOZV_HISTORICAL||0);
+
   const dtbody=document.getElementById('dozv-countries-tbody');
   if(dtbody) dtbody.innerHTML=DOZ_COUNTRIES.map(c=>`<tr>
     <td><b>${c.name}</b></td>
@@ -6008,6 +6023,11 @@ function saveDozPrices(){
   saveAll(); saveCompanySettings(); toast('Цены на дозволы сохранены');
 }
 
+function saveDozvHistorical(){
+  DOZV_HISTORICAL=numVal('dozv-historical');
+  saveAll(); saveCompanySettings(); renderDozvPage();
+  toast('Историческая корректировка сохранена');
+}
 function deleteTirType(id){ if(!confirm('Удалить тип?')) return; TIR_TYPES=TIR_TYPES.filter(t=>t.id!==id); saveAll(); saveCompanySettings(); renderSettings(); }
 function deleteDozCountry(id){ if(!confirm('Удалить страну?')) return; DOZ_COUNTRIES=DOZ_COUNTRIES.filter(c=>c.id!==id); saveAll(); saveCompanySettings(); renderSettings(); }
 
@@ -6542,7 +6562,8 @@ function renderDozv(){
   else data=[...data].sort((a,b)=>new Date(b.createdAt||0)-new Date(a.createdAt||0));
 
   const sub=document.getElementById('dozv-sub');
-  if(sub) sub.textContent=`Всего: ${DOZV.length} | На руках: ${DOZV.filter(d=>dozGetState(d)==='issued').length} | Использовано: ${DOZV.filter(d=>dozGetState(d)==='office'&&d.used===true).length} | Закрыто: ${DOZV.filter(d=>dozGetState(d)==='mintrans'||dozGetState(d)==='closed').length} | Бумажных ⚠️: ${DOZV.filter(d=>!d.epermit&&isExp(d.expires)&&dozGetState(d)!=='mintrans').length}`;
+  if(sub) sub.textContent=`Всего: ${DOZV.length} | На руках: ${DOZV.filter(d=>dozGetState(d)==='issued').length} | Использовано: ${DOZV.filter(d=>dozGetState(d)==='office'&&d.used===true).length} | Закрыто: ${DOZV.filter(d=>dozGetState(d)==='mintrans'||dozGetState(d)==='closed').length} | Бумажных ⚠️: ${DOZV.filter(d=>!d.epermit&&isExp(d.expires)&&dozGetState(d)!=='mintrans').length}`
+    +(DOZV_HISTORICAL?` · Сверка с Минтрансом: ${DOZV.length} в системе + ${DOZV_HISTORICAL} истор. = ${DOZV.length+DOZV_HISTORICAL}`:'');
 
   document.getElementById('dozv-tbody').innerHTML=data.map((d,i)=>{
     const s=dozStatus(d);
