@@ -35,9 +35,6 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
 .sidebar-bottom{padding:14px 18px;border-top:1px solid rgba(255,255,255,.1);font-size:11px;opacity:.35;}
 /* MAIN */
 .main{margin-left:230px;flex:1;}
-.topbar{background:var(--surface);border-bottom:1px solid var(--border);padding:13px 26px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:50;}
-.topbar-title{font-size:15px;font-weight:600;}
-.topbar-date{font-size:11px;color:var(--text3);font-family:var(--mono);}
 .page{padding:22px 26px;display:none;}
 .page.active{display:block;}
 /* CARDS */
@@ -177,7 +174,6 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
 @media(max-width:600px){
   .stat-grid,.tenant-grid{grid-template-columns:1fr;}
   .page{padding:14px;}
-  .topbar{padding:10px 14px;}
   .two-col{grid-template-columns:1fr;}
 }
 .amount-pos{color:var(--green);font-weight:500;}
@@ -352,12 +348,6 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
 
 <!-- MAIN -->
 <div class="main">
-  <div class="topbar">
-    <div class="topbar-title" id="pageTitle">Дашборд</div>
-    <div style="display:flex;gap:10px;align-items:center;">
-      <div class="topbar-date" id="todayDate"></div>
-    </div>
-  </div>
 
   <!-- ===== DASHBOARD ===== -->
   <div class="page active" id="page-dashboard">
@@ -4343,8 +4333,6 @@ function showPage(id) {
   document.getElementById('page-'+id).classList.add('active');
   const nav=document.querySelector(`.nav-item[onclick="showPage('${id}')"]`);
   if(nav) nav.classList.add('active');
-  const titles={dashboard:'Дашборд',deadlines:'Сроки',settings:'Настройки цен',tir:'ТИР Карнет',dozvol:'Дозволы',documents:'Документы к рейсу',tenants:'Контрагенты',kassa:'Касса',fleet:'Подвижной состав',trips:'Рейсы',people:'Водители',transport:'Транспорт',maintenance:'ТО и Ремонты',finance:'История операций',reports:'Отчёты','driver-messages':'Диалоги','owner-tasks':'Задачи и заметки'};
-  document.getElementById('pageTitle').textContent=titles[id]||'';
   renderPage(id);
 }
 
@@ -13334,7 +13322,6 @@ function refreshWalletSelects(){
 }
 
 // ============ INIT ============
-document.getElementById('todayDate').textContent=TODAY.toLocaleDateString('ru-RU',{weekday:'short',day:'2-digit',month:'long',year:'numeric'});
 renderDashboard();
 </script>
 </body>
