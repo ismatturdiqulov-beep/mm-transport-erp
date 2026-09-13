@@ -70,6 +70,26 @@ async function encrypt(json: string): Promise<Uint8Array> {
   return out;
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Первый запрос дня (02:00 UTC — самое тихое время суток) иногда попадает на
+// остывший пул соединений и получает Gateway Timeout, хотя сама база в порядке —
+// повторяем с паузой перед тем как считать бэкап неудавшимся (найдено 2026-09-13:
+// два дня подряд одна и та же таблица/ошибка/время, а сразу следом всё читалось
+// мгновенно).
+async function fetchTable(t: string, attempts = 3): Promise<any[]> {
+  let lastErr: any;
+  for (let i = 0; i < attempts; i++) {
+    const { data, error } = await supabase.from(t).select('*');
+    if (!error) return data || [];
+    lastErr = error;
+    if (i < attempts - 1) await sleep(1500 * (i + 1));
+  }
+  throw new Error(`Не удалось прочитать таблицу ${t}: ${lastErr?.message || lastErr}`);
+}
+
 // Собирает все таблицы и раскладывает по компаниям — дочерние таблицы (нет своего
 // company_id) распределяются через компанию их родителя (trip_legs → trips,
 // person_docs → people), чтобы при восстановлении можно было взять данные ровно
@@ -77,9 +97,7 @@ async function encrypt(json: string): Promise<Uint8Array> {
 async function buildBackupPayload() {
   const byTable: Record<string, any[]> = {};
   for (const t of TABLES) {
-    const { data, error } = await supabase.from(t).select('*');
-    if (error) throw new Error(`Не удалось прочитать таблицу ${t}: ${error.message}`);
-    byTable[t] = data || [];
+    byTable[t] = await fetchTable(t);
   }
 
   const tripCompany = new Map<string, string>();
