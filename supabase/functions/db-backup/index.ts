@@ -240,6 +240,23 @@ async function runCheck(): Promise<Response> {
   return new Response(JSON.stringify({ ok: true, hoursSinceLastSuccess: hoursSince }), { status: 200 });
 }
 
+// ?mode=upload-tool — разовая ручная загрузка вспомогательного файла (сейчас:
+// офлайн-просмотрщик бэкапа, tools/offline-viewer.html) в ТУ ЖЕ папку на Яндекс
+// Диске, что и сами бэкапы — решение пользователя 2026-09-13: если сайт/Supabase
+// когда-нибудь пропадёт, инструмент для чтения бэкапа должен лежать рядом с самими
+// файлами бэкапа, а не только в git-репозитории, к которому тоже может не быть
+// доступа. Тело запроса — сырое содержимое файла (не бэкап, не шифруется).
+async function runUploadTool(req: Request, fileName: string): Promise<Response> {
+  const bytes = new Uint8Array(await req.arrayBuffer());
+  if (!bytes.length) return new Response(JSON.stringify({ ok: false, error: 'empty body' }), { status: 400 });
+  try {
+    await yandexUpload(`app:/${fileName}`, bytes);
+    return new Response(JSON.stringify({ ok: true, fileName, size: bytes.length }), { status: 200 });
+  } catch (e: any) {
+    return new Response(JSON.stringify({ ok: false, error: e?.message || String(e) }), { status: 500 });
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method !== 'POST') return new Response('Method not allowed', { status: 405 });
   if (CRON_SECRET) {
@@ -248,5 +265,7 @@ Deno.serve(async (req) => {
   }
   const url = new URL(req.url);
   const mode = url.searchParams.get('mode') || 'run';
-  return mode === 'check' ? await runCheck() : await runBackup();
+  if (mode === 'check') return await runCheck();
+  if (mode === 'upload-tool') return await runUploadTool(req, url.searchParams.get('name') || 'offline-viewer.html');
+  return await runBackup();
 });
