@@ -4992,8 +4992,13 @@ async function _returnTirToOfficeImpl() {
   const flForNotify=FLEET.find(f=>{const kg=getFleetKontragent(f);return kg.name===t.person||kg.short===t.person;});
   if(!used && comp>0){
     const desc=document.getElementById('rt-comp-note').value||'Возврат неиспользованного ТИР '+t.num;
+    // fleet_id/kontragent_id — без них запись невидима для "Акт сверки" контрагента
+    // (renderAktSverki фильтрует finance строго по kontragent_id), хотя fleet.balance
+    // ниже обновляется корректно — баг найден пользователем 2026-09-29: компенсация
+    // видна в балансе ПС, но не в акте контрагента.
     const { data:finData, error:finErr } = await sbClient.from('finance').insert({
       company_id:CURRENT_PROFILE.company_id, date:t.returnedOffice, person_name:t.person,
+      fleet_id: flForNotify?flForNotify.id:null, kontragent_id: flForNotify?getFleetKontragent(flForNotify).id:null,
       type:'payment', category:'comp-tir', description:desc, amount:0, paid:comp,
     }).select().single();
     if (!finErr) FINANCE.push(mapFinanceFromDb(finData));
@@ -5163,8 +5168,11 @@ async function _returnDozToOfficeImpl() {
   const flcForNotify=FLEET.find(f=>{const kg=getFleetKontragent(f);return kg.name===d.person||kg.short===d.person;});
   if(!used && comp>0){
     const desc=document.getElementById('rd-comp-note').value||'Возврат неиспользованного дозвола '+d.num;
+    // Тот же баг, что и в возврате ТИР (см. комментарий там) — fleet_id/kontragent_id
+    // нужны, чтобы запись была видна в "Акт сверки" контрагента.
     const { data:finData, error:finErr } = await sbClient.from('finance').insert({
       company_id:CURRENT_PROFILE.company_id, date:d.returnedOffice, person_name:d.person,
+      fleet_id: flcForNotify?flcForNotify.id:null, kontragent_id: flcForNotify?getFleetKontragent(flcForNotify).id:null,
       type:'payment', category:'comp-dozv', description:desc, amount:0, paid:comp,
     }).select().single();
     if (!finErr) FINANCE.push(mapFinanceFromDb(finData));
