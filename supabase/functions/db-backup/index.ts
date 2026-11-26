@@ -79,15 +79,33 @@ function sleep(ms: number): Promise<void> {
 // повторяем с паузой перед тем как считать бэкап неудавшимся (найдено 2026-09-13:
 // два дня подряд одна и та же таблица/ошибка/время, а сразу следом всё читалось
 // мгновенно).
-async function fetchTable(t: string, attempts = 3): Promise<any[]> {
+// PostgREST отдаёт не больше 1000 строк за запрос — без постраничного чтения таблица
+// больше 1000 строк молча попадала бы в бэкап обрезанной (найдено 2026-11-26, когда
+// самая большая таблица, finance, была на 499 строках). Читаем страницами по 1000 со
+// стабильной сортировкой по первичному ключу.
+const PAGE = 1000;
+const ORDER_KEYS: Record<string, string[]> = { company_settings: ['company_id'], kassa_wallets: ['company_id', 'id'] };
+
+async function fetchPage(t: string, from: number, attempts = 3): Promise<any[]> {
   let lastErr: any;
   for (let i = 0; i < attempts; i++) {
-    const { data, error } = await supabase.from(t).select('*');
+    let q = supabase.from(t).select('*');
+    for (const k of ORDER_KEYS[t] || ['id']) q = q.order(k);
+    const { data, error } = await q.range(from, from + PAGE - 1);
     if (!error) return data || [];
     lastErr = error;
     if (i < attempts - 1) await sleep(1500 * (i + 1));
   }
   throw new Error(`Не удалось прочитать таблицу ${t}: ${lastErr?.message || lastErr}`);
+}
+
+async function fetchTable(t: string): Promise<any[]> {
+  const rows: any[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const page = await fetchPage(t, from);
+    rows.push(...page);
+    if (page.length < PAGE) return rows;
+  }
 }
 
 // Собирает все таблицы и раскладывает по компаниям — дочерние таблицы (нет своего
