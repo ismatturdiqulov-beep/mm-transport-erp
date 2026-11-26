@@ -1330,6 +1330,14 @@ Deno.serve(async (req) => {
         }
         return json({ ok: true, ...res });
       }
+      if (mode === 'announce') {
+        // разовое сообщение от имени бота в группу «Расчёты» (по просьбе Исмата), простым текстом
+        const b = await req.json().catch(() => ({}));
+        const finance = await chatByRole('finance');
+        if (!finance || !b.text) return json({ ok: false, error: 'нет группы или текста' });
+        const r = await tg('sendMessage', { chat_id: finance.chat_id, text: String(b.text), reply_markup: MENU });
+        return json({ ok: !!r.ok, error: r.description || null });
+      }
       if (mode === 'hello') {
         const finance = await chatByRole('finance');
         if (!finance) return json({ ok: false, error: 'группа «Расчёты» не назначена' });
