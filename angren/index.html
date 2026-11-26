@@ -1121,6 +1121,7 @@ function editTrip(id, requestId) {
     <div class="fr"><label>Тягач (госномер)</label><div style="display:flex;gap:6px;"><input id="f_tractor" list="dl-tractors" placeholder="начните вводить номер" value="${esc(t ? (vehById(t.tractor_id) || {}).plate_norm || '' : '')}" onchange="tripPlateChanged()" onblur="tripPlateChanged()"${ed ? '' : ' disabled'}>${ed ? '<button class="btn small" type="button" title="Новая машина" onclick="newVehicleInTrip(\'tractor\')">+</button>' : ''}</div></div>
     <div class="fr"><label>Прицеп (госномер)</label><div style="display:flex;gap:6px;"><input id="f_trailer" list="dl-trailers" value="${esc(t ? (vehById(t.trailer_id) || {}).plate_norm || '' : '')}"${ed ? '' : ' disabled'}>${ed ? '<button class="btn small" type="button" title="Новый прицеп" onclick="newVehicleInTrip(\'trailer\')">+</button>' : ''}</div></div>
     <div class="full hint" id="plate-hint"></div>
+    <div class="full" id="owner-warn" style="display:none;"></div>
     ${field({ k: 'carrier_id', label: 'Перевозчик', type: 'select', opts: carrierOpts(), val: v.carrier_id, full: true })}
     ${local ? '' : field({ k: 'price_cur', label: 'Валюта цены перевозчику', type: 'select', opts: { USD: 'доллары ($)', UZS: 'сумы' }, val: v.price_cur })}
     ${field({ k: 'price', label: 'Цена перевозчику', type: 'money', val: minorToInput(v.price_minor) })}
@@ -1148,7 +1149,7 @@ function editTrip(id, requestId) {
     document.getElementById('f_carrier_id').addEventListener('change', () => tripCarrierChanged(emptyLot));
     if (!t) tripCarrierChanged(true);
   }
-  onModalInput(tripPreview);
+  onModalInput(() => { tripPreview(); ownerCheck(); });
 }
 // Подставить умолчания перевозчика (цена с/без НДС, валюта, условия оплаты).
 function tripCarrierChanged(fillAll) {
@@ -1198,6 +1199,28 @@ function tripPlateChanged() {
     if (!val('carrier_id')) { setVal('carrier_id', c.id); tripCarrierChanged(true); }
   } else hint.innerHTML = 'Машина в справочнике, но не привязана к фирме — выберите перевозчика.' + trailerNote;
 }
+// Перевозчик в рейсе ≠ владелец машины в справочнике на дату погрузки.
+// Владелец в справочнике меняется ТОЛЬКО если явно поставить галочку.
+function ownerMismatch() {
+  const r = reqById(currentTripRequestId());
+  const veh = S.vehicles.find((x) => x.plate_norm === normPlate(val('tractor')));
+  const cid = val('carrier_id');
+  if (!r || !veh || !cid) return null;
+  const o = currentOwner(veh.id, r.loading_date);
+  if (!o || o.carrier_id === cid) return null;
+  return { veh, owner: carrierById(o.carrier_id), chosen: carrierById(cid), date: r.loading_date };
+}
+function ownerCheck() {
+  const box = document.getElementById('owner-warn'); if (!box) return;
+  const m = ownerMismatch();
+  if (!m) { box.style.display = 'none'; box.innerHTML = ''; return; }
+  const keep = document.getElementById('f_owner_moved')?.checked;
+  box.style.display = '';
+  box.innerHTML = `<div class="note amber" style="margin:0;">⚠ Машина <b>${esc(m.veh.plate_norm)}</b> в справочнике записана за <b>${esc(m.owner.name)}</b>, а в рейсе выбран <b>${esc(m.chosen.name)}</b>.<br>
+    Если перевозчику платите наличными — выберите настоящего перевозчика и «Как платим: наличные»; заявка перевозчику всё равно оформляется на реального исполнителя.
+    ${canEdit() ? `<div style="margin-top:6px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;"><button class="btn small" type="button" onclick="setVal('carrier_id','${m.owner.id}');tripCarrierChanged(false);ownerCheck();tripPreview();">Выбрать «${esc(m.owner.name)}»</button>
+      <label style="display:flex;gap:6px;align-items:center;font-size:12.5px;"><input type="checkbox" id="f_owner_moved"${keep ? ' checked' : ''}> Машина действительно перешла к «${esc(m.chosen.name)}» с ${fmtDate(m.date)} (изменить владельца в справочнике)</label></div>` : ''}</div>`;
+}
 function tripPreview() {
   const box = document.getElementById('trip-preview'); if (!box) return;
   const r = reqById(currentTripRequestId()); if (!r) return;
@@ -1245,17 +1268,17 @@ function saveTrip(id, requestId) {
   const carrierId = valOrNull('carrier_id');
   const status = val('status');
   if (status === 'failed' && !val('failed_reason')) return toast('Укажите причину, почему рейс не состоялся', true);
+  const mm = ownerMismatch();
+  const moved = !!document.getElementById('f_owner_moved')?.checked;
+  if (mm && !moved && !confirm(`Сохранить рейс с перевозчиком «${mm.chosen.name}»?\nМашина ${mm.veh.plate_norm} в справочнике остаётся за «${mm.owner.name}».`)) return;
   saving(async () => {
     const tractor = await ensureVehicle(val('tractor'), 'tractor', carrierId, r.loading_date);
     const trailer = await ensureVehicle(val('trailer'), 'trailer', carrierId, r.loading_date);
-    // машина у другой фирмы на дату погрузки — уточнить, сменился ли владелец
+    // машина записана за другой фирмой: владелец меняется ТОЛЬКО по галочке
     if (tractor && carrierId) {
       const o = currentOwner(tractor.id, r.loading_date);
-      if (o && o.carrier_id !== carrierId) {
-        const c = carrierById(carrierId), was = carrierById(o.carrier_id);
-        if (confirm(`Машина ${tractor.plate_norm} в справочнике записана за «${was.name}».\nОна перешла к «${c.name}» с ${fmtDate(r.loading_date)}?\n\nОК — записать смену владельца. Отмена — оставить как есть (рейс всё равно сохранится на «${c.name}»).`)) {
-          await dbRun(sb.from('ak_vehicle_owners').insert({ vehicle_id: tractor.id, carrier_id: carrierId, valid_from: r.loading_date }), 'смена владельца при оформлении рейса');
-        }
+      if (o && o.carrier_id !== carrierId && moved) {
+        await dbRun(sb.from('ak_vehicle_owners').insert({ vehicle_id: tractor.id, carrier_id: carrierId, valid_from: r.loading_date }), 'машина перешла к другой фирме (отмечено при оформлении рейса)');
       }
     }
     const upd = {
