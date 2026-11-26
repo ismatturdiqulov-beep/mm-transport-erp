@@ -550,6 +550,9 @@ function editVehicle(id) {
     ${field({ k: 'kind', label: 'Тип', type: 'select', opts: LBL.kind_vehicle, val: v ? v.kind : 'tractor' })}
     ${v ? '' : field({ k: 'carrier', label: 'Фирма-владелец', type: 'select', opts: carrierOpts(), req: true })}
     ${v ? '' : field({ k: 'from', label: 'С какой даты', type: 'date', val: todayIso() })}
+    ${field({ k: 'default_trailer_id', label: 'Свой прицеп (для тягача)', type: 'select', full: true, val: v ? v.default_trailer_id : '',
+      opts: Object.fromEntries([['', '— нет —'], ...S.vehicles.filter((x) => x.kind === 'trailer' && (x.active || (v && x.id === v.default_trailer_id))).map((x) => [x.id, x.plate_norm])]),
+      hint: 'Подставляется в рейс автоматически; если в рейсе поставить другой прицеп — он станет парой.' })}
     ${field({ k: 'notes', label: 'Заметки', type: 'textarea', val: v ? v.notes : '', full: true })}
     ${v ? field({ k: 'active', label: 'Активна (снимите галочку, чтобы убрать в архив)', type: 'check', val: v.active, full: true }) : ''}
     ${reasonField(!!v)}
@@ -569,7 +572,7 @@ function saveVehicle(id) {
   if (plate.length < 3) return toast('Укажите госномер', true);
   const dup = S.vehicles.find((x) => x.plate_norm === plate && x.id !== id);
   if (dup) return toast(`Машина ${plate} уже есть в справочнике`, true);
-  const upd = { plate, kind: val('kind'), notes: valOrNull('notes') };
+  const upd = { plate, kind: val('kind'), notes: valOrNull('notes'), default_trailer_id: val('kind') === 'tractor' ? valOrNull('default_trailer_id') : null };
   if (v) upd.active = val('active');
   if (!v && !val('carrier')) return toast('Выберите фирму-владельца', true);
   saving(async () => {
@@ -1051,7 +1054,7 @@ function editTrip(id, requestId) {
   <div class="hint" style="margin:-8px 0 12px;">Заявка завода ${esc(reqTitle(r))}${local ? ' · местная' : ''}</div>
   <datalist id="dl-tractors">${tractors}</datalist><datalist id="dl-trailers">${trailers}</datalist>
   <div class="grid2">
-    <div class="fr"><label>Тягач (госномер)</label><input id="f_tractor" list="dl-tractors" value="${esc(t ? (vehById(t.tractor_id) || {}).plate_norm || '' : '')}" onblur="tripPlateChanged()"${ed ? '' : ' disabled'}></div>
+    <div class="fr"><label>Тягач (госномер)</label><input id="f_tractor" list="dl-tractors" value="${esc(t ? (vehById(t.tractor_id) || {}).plate_norm || '' : '')}" onchange="tripPlateChanged()" onblur="tripPlateChanged()"${ed ? '' : ' disabled'}></div>
     <div class="fr"><label>Прицеп (госномер)</label><input id="f_trailer" list="dl-trailers" value="${esc(t ? (vehById(t.trailer_id) || {}).plate_norm || '' : '')}"${ed ? '' : ' disabled'}></div>
     <div class="full hint" id="plate-hint"></div>
     ${field({ k: 'carrier_id', label: 'Перевозчик', type: 'select', opts: carrierOpts(), val: v.carrier_id, full: true })}
@@ -1105,15 +1108,17 @@ function tripPlateChanged() {
   if (!veh) { hint.innerHTML = `<span style="color:var(--amber);">Новая машина ${esc(p)} — при сохранении добавится в справочник за выбранной фирмой.</span>`; return; }
   const o = currentOwner(veh.id, r.loading_date);
   const c = o && carrierById(o.carrier_id);
+  // свой прицеп тягача (или из последнего рейса); подставляем, если поле пустое
+  // или в нём прицеп, подставленный автоматически для прежнего тягача
+  const own = vehById(veh.default_trailer_id) ||
+    vehById((S.trips.filter((x) => x.tractor_id === veh.id && x.trailer_id).sort((a, b) => a.created_at < b.created_at ? 1 : -1)[0] || {}).trailer_id);
+  const trEl = document.getElementById('f_trailer');
+  if (!trEl.value || trEl.dataset.auto === trEl.value) { trEl.value = own ? own.plate_norm : ''; trEl.dataset.auto = trEl.value; }
+  const trailerNote = own ? ` Свой прицеп: <b>${esc(own.plate_norm)}</b> — подставлен, можно заменить.` : '';
   if (c) {
-    hint.innerHTML = `На ${fmtDate(r.loading_date)} машина у фирмы <b>${esc(c.name)}</b>.`;
+    hint.innerHTML = `На ${fmtDate(r.loading_date)} машина у фирмы <b>${esc(c.name)}</b>.${trailerNote}`;
     if (!val('carrier_id')) { setVal('carrier_id', c.id); tripCarrierChanged(true); }
-    // прицеп из последнего рейса этой машины
-    if (!val('trailer')) {
-      const last = S.trips.filter((x) => x.tractor_id === veh.id && x.trailer_id).sort((a, b) => a.created_at < b.created_at ? 1 : -1)[0];
-      if (last) setVal('trailer', (vehById(last.trailer_id) || {}).plate_norm);
-    }
-  } else hint.innerHTML = 'Машина в справочнике, но не привязана к фирме — выберите перевозчика.';
+  } else hint.innerHTML = 'Машина в справочнике, но не привязана к фирме — выберите перевозчика.' + trailerNote;
 }
 function tripPreview() {
   const box = document.getElementById('trip-preview'); if (!box) return;
@@ -1183,7 +1188,13 @@ function saveTrip(id, requestId) {
       status, loaded_on: valOrNull('loaded_on'), delivered_on: valOrNull('delivered_on'),
       failed_reason: valOrNull('failed_reason'), notes: valOrNull('notes'),
     };
-    return saveRow('ak_trips', t, upd);
+    const saved = await saveRow('ak_trips', t, upd);
+    // поставили другой прицеп — он становится парой тягача
+    if (tractor && trailer && tractor.default_trailer_id !== trailer.id) {
+      await dbRun(sb.from('ak_vehicles').update({ default_trailer_id: trailer.id }).eq('id', tractor.id),
+        `новый прицеп ${trailer.plate_norm} у тягача ${tractor.plate_norm} (рейс ${reqLabel(r)})`);
+    }
+    return saved;
   }, () => editRequest(r.id));
 }
 
