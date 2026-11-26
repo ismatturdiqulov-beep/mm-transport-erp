@@ -257,6 +257,12 @@ function buttons(item: any) {
     rows.push(opts.map((c) => ({ text: WALLETS[WCODE[c]], callback_data: `wl:${item.id}:${c}` })));
     if (item.proposal.type === 'expense') rows.push([{ text: `Лично ${item.author_partner ? PARTNER[item.author_partner] : 'автор'} (фин. помощь)`, callback_data: `wl:${item.id}:me` }]);
     rows.push([{ text: '❌ Не записывать', callback_data: `rj:${item.id}` }]);
+  } else if (item.proposal?._pick && item.status !== 'applied') {
+    // маршрута в списке машин нет — выбор заявки на дату или маршрута (без денег)
+    const pk = item.proposal._pick;
+    pk.opts.forEach((o: any, i: number) => rows.push([{ text: o.label, callback_data: `pk:${item.id}:${i}` }]));
+    if (pk.mode === 'req') rows.push([{ text: '➕ Другой маршрут (новая заявка)', callback_data: `ro:${item.id}` }]);
+    rows.push([{ text: '❌ Ошибка', callback_data: `rj:${item.id}` }]);
   } else {
     rows.push(item.proposal?._transport
       ? [{ text: '✅ Верно', callback_data: `ap:${item.id}` }, { text: '❌ Ошибка', callback_data: `rj:${item.id}` }]
@@ -491,11 +497,68 @@ async function applyAction(a: any, wallet: string | null, author: string | null,
   throw new Error('неизвестный тип');
 }
 
+// Список машин без маршрута (решение Исмата 2026-11-26): маршрут берём из заявок завода на дату.
+// Одна заявка (или одна со свободными лотами) — привязываем сами; несколько — кнопки заявок;
+// нет ни одной — кнопки маршрутов (создаст заявку, ждёт одобрения на сайте).
+// Несколько маршрутов в одном списке — весь список на один, лишнее Исмат переносит на сайте.
+async function routeOptions() {
+  const { data } = await db.from('ak_routes').select('id, name').eq('active', true).order('name');
+  return { mode: 'route', opts: (data || []).slice(0, 20).map((r: any) => ({ label: r.name, route: r.name })) };
+}
+async function resolveLoadingRoute(item: any): Promise<'ok' | 'ask'> {
+  const a = item.proposal;
+  if (a.request_number || await findRoute(a.route)) return 'ok';
+  const date = a.loading_date || today();
+  a.loading_date = date;
+  const { data: reqs } = await db.from('ak_requests').select('id, number, route_id').eq('loading_date', date).neq('status', 'cancelled').order('created_at');
+  const list = reqs || [];
+  const { data: routes } = await db.from('ak_routes').select('id, name');
+  const rn = Object.fromEntries((routes || []).map((r: any) => [r.id, r.name]));
+  const free: Record<string, number> = {};
+  if (list.length) {
+    const { data: lots } = await db.from('ak_trips').select('request_id').in('request_id', list.map((r: any) => r.id)).eq('status', 'assigned').is('tractor_id', null);
+    for (const t of lots || []) free[t.request_id] = (free[t.request_id] || 0) + 1;
+  }
+  const withFree = list.filter((r: any) => free[r.id] > 0);
+  const one = withFree.length === 1 ? withFree[0] : list.length === 1 ? list[0] : null;
+  if (one) { a.request_number = one.number; a.route = rn[one.route_id] || a.route; delete a._pick; await db.from('ak_inbox').update({ proposal: a }).eq('id', item.id); return 'ok'; }
+  a._pick = list.length
+    ? { mode: 'req', opts: list.map((r: any) => ({ label: `${rn[r.route_id] || '?'} ${dmy(date)} — своб. ${free[r.id] || 0} (№${r.number})`, request_number: r.number, route: rn[r.route_id] || null })) }
+    : await routeOptions();
+  await db.from('ak_inbox').update({ proposal: a, status: 'pending', error: null }).eq('id', item.id);
+  await updateMsg({ ...item, proposal: a, status: 'pending' }, list.length
+    ? 'Маршрута в сообщении нет — к какой заявке завода привязать машины?'
+    : `Маршрута в сообщении нет, и заявок завода на ${dmy(date)} нет — выберите маршрут (заявка создастся и будет ждать одобрения Исмата на сайте).`, true);
+  return 'ask';
+}
+async function pickOption(id: string, idx: string, by: { tg?: number; name: string }) {
+  const { data: item } = await db.from('ak_inbox').select('*').eq('id', id).single();
+  if (!item || !['pending', 'error'].includes(item.status)) return { ok: false, error: 'уже решено' };
+  const a = item.proposal, o = a._pick?.opts?.[Number(idx)];
+  if (!o) return { ok: false, error: 'устаревшая кнопка' };
+  if (o.request_number) a.request_number = o.request_number;
+  if (o.route) a.route = o.route;
+  delete a._pick;
+  await db.from('ak_inbox').update({ proposal: a }).eq('id', id);
+  return applyItem(id, by);
+}
+async function otherRoute(id: string) {
+  const { data: item } = await db.from('ak_inbox').select('*').eq('id', id).single();
+  if (!item || !['pending', 'error'].includes(item.status)) return { ok: false, error: 'уже решено' };
+  const a = item.proposal;
+  a._pick = await routeOptions();
+  await db.from('ak_inbox').update({ proposal: a }).eq('id', id);
+  await updateMsg({ ...item, proposal: a }, 'Выберите маршрут — создастся новая заявка завода (ждёт одобрения Исмата на сайте).', true);
+  return { ok: true };
+}
+
 // Подтвердить запись (Исмат: кнопка в Telegram или сайт).
 async function applyItem(id: string, by: { tg?: number; user?: string; name: string }) {
   const { data: item } = await db.from('ak_inbox').select('*').eq('id', id).single();
   if (!item) return { ok: false, error: 'не найдено' };
   if (!['pending', 'error'].includes(item.status)) return { ok: false, error: item.status === 'applied' ? 'уже записано' : item.status === 'needs_wallet' ? 'сначала выберите кошелёк' : 'уже решено' };
+  if (item.kind === 'loading' && await resolveLoadingRoute(item) === 'ask')
+    return { ok: false, ask: true, error: by.user ? 'Маршрута нет — выберите заявку кнопкой в Telegram' : 'Выберите заявку или маршрут' };
   const d = dbAs(`Бот: ${item.summary.split('\n')[0]} · подтвердил ${by.name}`);
   try {
     const res = await applyAction(item.proposal, item.wallet, item.author_partner, d);
@@ -1044,8 +1107,13 @@ async function handleCallback(q: any) {
     // погрузку (номера машин) подтверждают оба партнёра — как статус машин; остальное — Исмат
     const { data: it } = await db.from('ak_inbox').select('kind').eq('id', id).maybeSingle();
     if (partner !== 'ismat' && it?.kind !== 'loading') return answer('Записи подтверждает Исмат.', true);
-    const r = op === 'ap' ? await applyItem(id, { tg: q.from.id, name }) : await rejectItem(id, { tg: q.from.id, name });
-    return answer(r.ok ? (op === 'ap' ? 'Записано' : 'Не записываем') : (r.error || 'ошибка'), !r.ok);
+    const r: any = op === 'ap' ? await applyItem(id, { tg: q.from.id, name }) : await rejectItem(id, { tg: q.from.id, name });
+    return answer(r.ok ? (op === 'ap' ? 'Записано' : 'Не записываем') : (r.error || 'ошибка'), !r.ok && !r.ask);
+  }
+  if (op === 'pk' || op === 'ro') {
+    // выбор заявки / маршрута для списка машин — любой из партнёров
+    const r: any = op === 'pk' ? await pickOption(id, code, { tg: q.from.id, name }) : await otherRoute(id);
+    return answer(r.ok ? (op === 'pk' ? 'Записано' : '') : (r.error || 'ошибка'), !r.ok && !r.ask);
   }
   if (op === 'wl') {
     const r = await chooseWallet(id, code, { tg: q.from.id, name, partner });
