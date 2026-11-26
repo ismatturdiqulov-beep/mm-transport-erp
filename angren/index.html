@@ -1341,6 +1341,7 @@ function openOp(op, preset = {}) {
         field({ k: 'counterparty', label: 'От кого' }), field({ k: 'amount_in', label: 'Сумма', type: 'money', req: true }));
       break;
   }
+  if (PAY_OUT_OPS.includes(op)) F.push(payWayFields());
   F.push(field({ k: 'note', label: 'Примечание', type: 'textarea', full: true }));
   openModal(`<h3>${esc(o.title)}</h3><div class="hint" style="margin:-8px 0 12px;">${esc(o.hint)}</div>
     <div class="grid2">${F.join('')}</div><div class="note" id="op-preview" style="margin-top:12px;"></div>
@@ -1359,8 +1360,41 @@ function openOp(op, preset = {}) {
     document.getElementById('f_from_wallet').addEventListener('change', refill);
     document.getElementById('f_trip_id').addEventListener('change', refill);
   }
-  onModalInput(() => opPreview(op));
+  onModalInput(() => { payWaySync(val('from_wallet')); opPreview(op); });
 }
+const PAY_WAY = { order: 'Платёжное поручение (комиссия 0,1% + 1 120 — посчитается сама)', bank_debit: 'Списано банком (без комиссии)' };
+function payWayFields(preset = {}) {
+  return field({ k: 'pay_way', label: 'Как списано с расчётного счёта', type: 'select', opts: PAY_WAY, val: preset.pay_way || 'order', full: true }) +
+    field({ k: 'via_card', label: 'Оплачено с моей личной карты (сразу забрал себе из кассы)', type: 'check', full: true }) +
+    field({ k: 'card_fee', label: 'Комиссия карты', type: 'money', hint: 'Сколько банк карты удержал сверх суммы. Пусто — комиссии не было.' });
+}
+// Показать нужные поля под выбранный кошелёк / плательщика.
+// payer: id кошелька или 'p:ismat' / 'p:sarvar' (лично — фин. помощь).
+function payWaySync(payer) {
+  const w = walletById(payer);
+  const personal = String(payer || '').startsWith('p:');
+  const show = (k, on) => { const el = document.getElementById('f_' + k); if (el) el.closest('.fr').style.display = on ? '' : 'none'; return el; };
+  show('pay_way', w && w.kind === 'bank');
+  const card = show('via_card', w && w.kind === 'cash');
+  const feeOn = personal || (w && w.kind === 'cash' && card && card.checked);
+  const fee = show('card_fee', feeOn);
+  if (fee) {
+    fee.closest('.fr').querySelector('label').textContent = personal ? 'Комиссия карты (если платили картой)' : 'Комиссия карты';
+    if (!feeOn) fee.value = '';
+  }
+  if (card && !(w && w.kind === 'cash')) card.checked = false;
+}
+function cardFee() { const s = val('card_fee'); if (!s) return 0; const n = parseMoney(s); return Number.isNaN(n) ? NaN : n; }
+// Параметры движения: способ списания с Р/С и комиссия личной карты.
+function applyPayWay(p, walletId) {
+  const w = walletById(walletId);
+  if (w && w.kind === 'bank' && val('pay_way') === 'bank_debit') p.bank_debit = true;
+  const fee = cardFee();
+  if (fee) p.losses.push({ kind: 'bank_fee', amount: fee, note: 'комиссия личной карты' });
+  if (w && w.kind === 'cash' && val('via_card')) p.note = [p.note, 'оплачено с личной карты, возмещено из кассы'].filter(Boolean).join(' · ');
+  return p;
+}
+const PAY_OUT_OPS = ['carrier_payment', 'oformlenie_payment', 'partner_withdrawal', 'help_return'];
 function opParams(op) {
   const p = { op_date: val('op_date'), note: valOrNull('note') };
   const money = (k) => { const s = val(k); if (!s) return null; const n = parseMoney(s); return Number.isNaN(n) ? NaN : n; };
@@ -1374,6 +1408,7 @@ function opParams(op) {
   p.losses = [['third_party_fee', 'loss_third'], ['cash_delivery', 'loss_delivery'], ['other', 'loss_other']]
     .map(([kind, k]) => ({ kind, amount: money(k) })).filter((l) => l.amount);
   if (op === 'handover') p.in_transit = !val('received');
+  if (PAY_OUT_OPS.includes(op)) applyPayWay(p, p.from_wallet);
   return p;
 }
 function opPreview(op) {
@@ -1388,7 +1423,7 @@ function opPreview(op) {
   let base = p.amount_out ?? (wf ? p.amount_in + manual : null);
   let fee = 0;
   if (wf && op === 'cash_withdrawal') { fee = Math.round(p.amount_in * 0.005); lines.push(`Комиссия за снятие 0,5%: ${fmtMoney(fee, 'UZS')}`); }
-  else if (wf && wf.kind === 'bank' && base) { fee = Math.round(base * 0.001) + 112000; lines.push(`Комиссия банка за поручение (0,1% + 1 120): ${fmtMoney(fee, 'UZS')}`); }
+  else if (wf && wf.kind === 'bank' && base && !p.bank_debit) { fee = Math.round(base * 0.001) + 112000; lines.push(`Комиссия банка за поручение (0,1% + 1 120): ${fmtMoney(fee, 'UZS')}`); }
   if (wf && curIn !== curOut && p.amount_out) {
     const cbu = rateOn(p.op_date);
     if (cbu) {
@@ -1413,7 +1448,7 @@ function submitOp(op) {
   const p = opParams(op);
   if (!(p.amount_in > 0)) return toast('Укажите сумму', true);
   if (Number.isNaN(p.amount_out)) return toast('Сумма списания — число', true);
-  if (p.losses.some((l) => Number.isNaN(l.amount))) return toast('Потери — числа', true);
+  if (p.losses.some((l) => Number.isNaN(l.amount))) return toast('Потери и комиссия — числа', true);
   if (p.from_wallet && p.to_wallet && p.from_wallet === p.to_wallet) return toast('Кошельки «откуда» и «куда» совпадают', true);
   if (op === 'via_counterparty' && !p.counterparty) return toast('Укажите контрагента', true);
   saving(async () => {
@@ -1466,7 +1501,7 @@ function editExpense(preset = {}) {
     ${field({ k: 'exp_date', label: 'Дата', type: 'date', val: todayIso(), req: true })}
     ${field({ k: 'category', label: 'Статья', type: 'select', opts: EXP_CAT, val: preset.category })}
     ${field({ k: 'payer', label: 'Кто заплатил', type: 'select', opts: payers, full: true, val: preset.payer })}
-    ${field({ k: 'bank_debit', label: 'Списано банком без платёжного поручения (без комиссии 0,1% + 1 120)', type: 'check', full: true, val: preset.bank_debit, hint: 'Например, абонентская плата.' })}
+    ${payWayFields({ pay_way: preset.bank_debit ? 'bank_debit' : 'order' })}
     ${field({ k: 'currency', label: 'Валюта', type: 'select', opts: { UZS: 'сумы', USD: 'доллары ($)' }, val: preset.currency })}
     ${field({ k: 'amount', label: 'Сумма', type: 'money', req: true, val: preset.amount ? minorToInput(preset.amount) : '' })}
     ${field({ k: 'counterparty', label: 'Кому (реальное название / имя)', full: true })}
@@ -1482,13 +1517,14 @@ function editExpense(preset = {}) {
     const payer = val('payer');
     const cur = document.getElementById('f_currency');
     if (payer.startsWith('w:')) { cur.value = walletById(payer.slice(2)).currency; cur.disabled = true; } else cur.disabled = false;
-    const bd = document.getElementById('f_bank_debit').closest('.fr'); bd.style.display = payer.startsWith('w:') && walletById(payer.slice(2)).kind === 'bank' ? '' : 'none';
+    payWaySync(payer.startsWith('w:') ? payer.slice(2) : payer);
     const amt = parseMoney(val('amount'));
     const box = document.getElementById('exp-preview');
     if (Number.isNaN(amt)) { box.innerHTML = 'Укажите сумму.'; return; }
+    const fee = cardFee() || 0;
     box.innerHTML = payer.startsWith('w:')
-      ? `Спишется из «${esc(walletById(payer.slice(2)).name)}»${walletById(payer.slice(2)).kind === 'bank' && !val('bank_debit') ? ' (плюс комиссия банка за поручение — отдельной строкой)' : ''}.`
-      : `Кошельки не меняются. Проект будет должен ${esc(LBL.partner[payer.slice(2)])}у ${fmtMoney(amt, val('currency'))} — возврат потом операцией «Возврат финансовой помощи».`;
+      ? `Спишется из «${esc(walletById(payer.slice(2)).name)}»: ${fmtMoney(amt + fee, val('currency'))}${fee ? ` (расход ${fmtMoney(amt, val('currency'))} + комиссия карты ${fmtMoney(fee, val('currency'))} — отдельной строкой потерь)` : ''}${walletById(payer.slice(2)).kind === 'bank' && val('pay_way') === 'order' ? ' плюс комиссия банка за поручение 0,1% + 1 120 — отдельной строкой' : ''}.`
+      : `Кошельки не меняются. Проект будет должен ${esc(LBL.partner[payer.slice(2)])}у ${fmtMoney(amt + fee, val('currency'))}${fee ? ` (в т. ч. комиссия карты ${fmtMoney(fee, val('currency'))})` : ''} — возврат потом операцией «Возврат финансовой помощи».`;
   });
 }
 function saveExpense() {
@@ -1499,9 +1535,13 @@ function saveExpense() {
     exp_date: val('exp_date'), category: val('category'), amount, currency: document.getElementById('f_currency').value,
     paid_by: payer.startsWith('w:') ? 'wallet' : payer.slice(2), wallet: payer.startsWith('w:') ? payer.slice(2) : null,
     counterparty: valOrNull('counterparty'), docs_confirmed: val('docs_confirmed'), note: valOrNull('note'),
-    bank_debit: payer.startsWith('w:') && walletById(payer.slice(2)).kind === 'bank' && !!val('bank_debit'),
     request_ids: [...document.querySelectorAll('.exp-req:checked')].map((x) => x.value),
+    losses: [],
   };
+  const fee = cardFee();
+  if (Number.isNaN(fee)) return toast('Комиссия карты — число', true);
+  if (payer.startsWith('w:')) applyPayWay(p, payer.slice(2));
+  else if (fee) { p.amount += fee; p.note = [p.note, `в т. ч. комиссия карты ${fmtMoney(fee, p.currency)}`].filter(Boolean).join(' · '); }
   saving(async () => { const { data, error } = await sb.rpc('ak_add_expense', { p }); if (error) throw error; return data; }, null, 'Расход записан');
 }
 async function toggleExpDocs(id, on) {
