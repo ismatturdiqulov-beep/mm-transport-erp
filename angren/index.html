@@ -362,7 +362,10 @@ function render() {
   }
   document.getElementById('nav').innerHTML = nav;
   const main = document.getElementById('main');
-  main.innerHTML = `<div class="page active">${(RENDER[S.page] || RENDER.overview)()}</div>`;}
+  // тестовый режим (решение владельца): пока не разрешено работать по-настоящему — полоса «ТЕСТ»
+  const testBar = (S.settings.bot || {}).test_mode !== false
+    ? '<div style="background:#fff3cd;border-bottom:1px solid #e0c060;color:#7a4a00;padding:8px 26px;font-size:13px;font-weight:600;">🧪 ТЕСТ — реальные остатки ещё не введены. Все записи сейчас тестовые.</div>' : '';
+  main.innerHTML = `${testBar}<div class="page active">${(RENDER[S.page] || RENDER.overview)()}</div>`;}
 const roBadge = () => canEdit() ? '' : '<span class="ro-badge">только просмотр</span>';
 
 // ================= справочные помощники =================
@@ -2391,7 +2394,15 @@ function botSettingsCard() {
       : esc(LBL.partner[u.partner_key] || '—')}</td></tr>`).join('') || '<tr><td colspan="2" class="muted">пока никого — напишите что-нибудь в группу</td></tr>'}
     </tbody></table>
     ${ed ? '<div style="margin-top:10px;"><button class="btn small" onclick="botTest()">Проверить связь (сообщение в «Расчёты»)</button></div>' : ''}
+    <div class="note ${(S.settings.bot || {}).test_mode !== false ? 'amber' : ''}" style="margin-top:12px;">${(S.settings.bot || {}).test_mode !== false
+      ? '🧪 <b>Тестовый режим включён</b>: каждое сообщение бота и сайт помечены «ТЕСТ — реальные остатки ещё не введены».' + (ed ? ' <button class="btn small" onclick="setTestMode(false)">Работаем по-настоящему</button>' : '')
+      : '✅ Рабочий режим: пометки «ТЕСТ» нет.' + (ed ? ' <button class="btn small" onclick="setTestMode(true)">Вернуть тестовый режим</button>' : '')}</div>
   </div>`;
+}
+async function setTestMode(on) {
+  if (!on && !confirm('Выключить тестовый режим?\nПометка «ТЕСТ» пропадёт из сообщений бота и с сайта. Делайте это, когда реальные остатки введены и тестовые данные стёрты.')) return;
+  try { await saveSetting('bot', { ...(S.settings.bot || {}), test_mode: on }, on ? 'вернули тестовый режим' : 'начали работать по-настоящему'); await reload(); toast(on ? 'Тестовый режим включён' : 'Рабочий режим'); }
+  catch (e) { toast(humanError(e), true); }
 }
 async function setChatRole(chatId, role) {
   try { const { error } = await sb.rpc('ak_tg_set_chat_role', { p_chat_id: chatId, p_role: role || null }); if (error) throw error; await reload(); toast('Сохранено'); }

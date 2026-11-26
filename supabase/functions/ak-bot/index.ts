@@ -36,7 +36,23 @@ const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...CORS, 'Content-Type': 'application/json' } });
 
 // ---------- Telegram ----------
+// Тестовый режим (решение владельца 2026-11-26): пока Исмат не разрешит работать по-
+// настоящему, каждое сообщение бота начинается с пометки «ТЕСТ». Переключатель —
+// ak_settings 'bot'.test_mode, меняет владелец на сайте.
+const TEST_BANNER = '🧪 <b>ТЕСТ — реальные остатки ещё не введены</b>\n\n';
+let testModeCache: { v: boolean; at: number } | null = null;
+async function testMode(): Promise<boolean> {
+  if (testModeCache && Date.now() - testModeCache.at < 30000) return testModeCache.v;
+  const { data } = await db.from('ak_settings').select('value').eq('key', 'bot').maybeSingle();
+  const v = data?.value?.test_mode !== false;   // по умолчанию — тест
+  testModeCache = { v, at: Date.now() };
+  return v;
+}
 async function tg(method: string, payload: Record<string, unknown>) {
+  if ((method === 'sendMessage' || method === 'editMessageText') && typeof payload.text === 'string' && await testMode()) {
+    const html = payload.parse_mode === 'HTML';
+    payload = { ...payload, parse_mode: 'HTML', text: TEST_BANNER + (html ? payload.text : esc(payload.text)) };
+  }
   const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
   });
