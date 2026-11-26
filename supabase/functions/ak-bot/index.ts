@@ -110,7 +110,7 @@ const SYSTEM = `Ты — помощник учёта перевозок комп
 Международные маршруты: цены обычно в долларах. Местные (керамика): только сумы, с НДС.
 
 Типы действий:
-- loading — машины загружаются/загрузились: route, loading_date, plates (номер тягача; прицеп, если указан через «/»; цена перевозчику и «накд», если указаны у номера). Номера бывают столбиком.
+- loading — машины загружаются/загрузились: route, loading_date, plates (номер тягача; прицеп, если указан через «/»; carrier_price + price_cur, если цена указана у номера). Номера бывают столбиком. Если в сообщении о погрузке есть «накд» / «наличными» (у номера или отдельной строкой) — у этих машин pay_method = "cash".
 - prices — цены по рейсу (маршрут + дата): factory_price (+factory_price_cur), carrier_price (+carrier_price_cur), oformlenie_usd. Если маршрут/дата не указаны — возьми из ближайшего по смыслу сообщения в контексте (ответ на сообщение, предыдущее сообщение о погрузке). Комиссию логиста давай ОТДЕЛЬНЫМ действием expense с category=logist_fee и теми же route/loading_date.
 - factory_income — поступление от завода на расчётный счёт: amount в сумах.
 - carrier_payment — оплата перевозчику: plate (номер машины) или counterparty (название фирмы), amount, currency, wallet.
@@ -159,22 +159,48 @@ async function parseMessage(msg: any): Promise<any[]> {
       else content.push({ type: 'image', source: { type: 'base64', media_type: msg.mime && msg.mime.startsWith('image/') ? msg.mime : 'image/jpeg', data: b64(bytes) } });
     }
   }
-  content.push({ type: 'text', text: await contextFor(msg) });
-  // Структурированный ответ (json_schema) + резервная модель при отказе (server-side fallback).
+  content.push({ type: 'text', text: (await contextFor(msg)) + '\n\nВызови инструмент record_actions ровно один раз (пустой список, если записывать нечего).' });
+  // Результат — через инструмент record_actions. Строгую схему (json_schema / strict) не
+  // используем: на такой схеме подготовка ответа занимала больше 2 минут (замерено
+  // 2026-11-26), обычный запрос — меньше секунды. Поля проверяем сами (validAction).
+  // Резервная модель при отказе — server-side fallback.
   const resp: any = await (anthropic.beta.messages.create as any)({
     model: MODEL,
     max_tokens: 8000,
     betas: ['server-side-fallback-2026-07-01'],
     fallbacks: 'default',
-    output_config: { effort: 'low', format: { type: 'json_schema', schema: SCHEMA } },
+    output_config: { effort: 'low' },
+    tool_choice: { type: 'auto' },
+    tools: [{ name: 'record_actions', description: 'Записать действия, извлечённые из сообщения (может быть пустой список).', input_schema: SCHEMA }],
     system: [{ type: 'text', text: SYSTEM, cache_control: { type: 'ephemeral' } }],
     messages: [{ role: 'user', content }],
-  });
+  }, { timeout: 90000, maxRetries: 1 });
   if (resp.stop_reason === 'refusal') throw new Error('модель отказалась разбирать сообщение');
   if (resp.stop_reason === 'max_tokens') throw new Error('ответ модели обрезан');
-  const text = (resp.content || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('');
-  const parsed = JSON.parse(text);
-  return Array.isArray(parsed.actions) ? parsed.actions : [];
+  const call = (resp.content || []).find((b: any) => b.type === 'tool_use' && b.name === 'record_actions');
+  if (!call) return [];
+  const list = Array.isArray(call.input?.actions) ? call.input.actions : [];
+  return list.filter(validAction);
+}
+
+// Проверка полей ответа модели (схема не строгая — проверяем сами).
+const TYPES = ['loading', 'prices', 'factory_income', 'carrier_payment', 'expense', 'cash_withdrawal', 'exchange', 'handover'];
+const WALLET_IDS = ['rs', 'cash_uzs_ismat', 'cash_uzs_sarvar', 'cash_usd_ismat', 'cash_usd_sarvar'];
+function validAction(a: any): boolean {
+  if (!a || !TYPES.includes(a.type)) return false;
+  const num = (k: string) => a[k] == null || (typeof a[k] === 'number' && isFinite(a[k]) && a[k] >= 0);
+  if (!['factory_price', 'carrier_price', 'oformlenie_usd', 'amount', 'amount_to'].every(num)) return false;
+  for (const k of ['currency', 'factory_price_cur', 'carrier_price_cur']) if (a[k] != null && !['USD', 'UZS'].includes(a[k])) a[k] = null;
+  for (const k of ['wallet', 'wallet_to']) if (a[k] != null && !WALLET_IDS.includes(a[k])) a[k] = null;
+  if (a.paid_by_partner != null && !['ismat', 'sarvar'].includes(a.paid_by_partner)) a.paid_by_partner = null;
+  for (const k of ['loading_date', 'op_date']) if (a[k] != null && !/^\d{4}-\d{2}-\d{2}$/.test(a[k])) a[k] = null;
+  if (a.plates != null && !Array.isArray(a.plates)) a.plates = [];
+  a.plates = (a.plates || []).filter((p: any) => p && typeof p.tractor === 'string' && normPlate(p.tractor).length >= 3);
+  if (a.type === 'loading' && !a.plates.length) return false;
+  if (['factory_income', 'carrier_payment', 'expense', 'cash_withdrawal', 'exchange', 'handover'].includes(a.type) && !(a.amount > 0)) return false;
+  if (!['high', 'medium', 'low'].includes(a.confidence)) a.confidence = 'medium';
+  if (typeof a.quote !== 'string') a.quote = '';
+  return true;
 }
 
 // ---------- описание предложения ----------
