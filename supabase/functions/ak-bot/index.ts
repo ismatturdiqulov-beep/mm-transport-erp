@@ -547,8 +547,11 @@ const COMMANDS = [
   { command: 'zayavki', description: 'Заявки: заводу или перевозчику (PDF)' },
   { command: 'voprosy', description: 'Открытые вопросы' },
 ];
+// Постоянное меню под полем ввода в «Расчётах» (решение владельца): нажатие кнопки
+// отправляет её текст — он распознаётся как команда.
+const MENU = { keyboard: [[{ text: '📊 Отчёт' }, { text: '📄 Заявки' }, { text: '❓ Вопросы' }]], resize_keyboard: true, is_persistent: true };
 function commandOf(text: string): string | null {
-  const t = text.trim().toLowerCase().replace(/@\w+$/, '').replace(/ё/g, 'е');
+  const t = text.trim().toLowerCase().replace(/@\w+$/, '').replace(/ё/g, 'е').replace(/^[^\p{L}\/]+/u, '').trim();
   if (/^\/otchet\b|^отчет$/.test(t)) return 'otchet';
   if (/^\/zayavki\b|^заявки$/.test(t)) return 'zayavki';
   if (/^\/voprosy\b|^(открытые )?вопросы$/.test(t)) return 'voprosy';
@@ -757,7 +760,8 @@ async function sendHelp(chatId: number) {
     '• /zayavki — <b>заявки</b>: заводу или перевозчику, PDF с печатью\n' +
     '• /voprosy — <b>открытые вопросы</b>\n\n' +
     'Пишите как обычно: цены по рейсу, поступления, расходы, фото чеков. Я предложу запись с кнопками; записывает Исмат. ' +
-    'Список машин в группе «Перевозки» подтверждают Исмат или Сарвар; всё, что записано через меня, Исмат ещё одобряет на сайте.' });
+    'Список машин в группе «Перевозки» подтверждают Исмат или Сарвар; всё, что записано через меня, Исмат ещё одобряет на сайте.\n\n' +
+    'Кнопки меню — под полем ввода 👇', reply_markup: MENU });
 }
 
 // Ошибку команды — сообщением в группу, а не молча.
