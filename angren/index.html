@@ -181,7 +181,7 @@ const S = {
   user: null, me: null,
   members: [], carriers: [], vehicles: [], owners: [], routes: [], directors: [],
   wallets: [], opening: [], settings: {}, audit: [],
-  rates: [], requests: [], trips: [], reqCalc: [], tripCalc: [], carrierCalc: [], deductions: [], adjustments: [], periods: [], sumAll: {}, partners: {}, calcPeriod: 'quarter',
+  rates: [], requests: [], trips: [], reqCalc: [], tripCalc: [], carrierCalc: [], deductions: [], adjustments: [], periods: [], tgChats: [], tgUsers: [], inbox: [], sumAll: {}, partners: {}, calcPeriod: 'quarter',
   reqCalcBy: new Map(), tripCalcBy: new Map(), carrierCalcBy: new Map(), movements: [], losses: [], expenses: [], expenseLinks: [], balances: [],
   reversedIds: new Set(),
   page: 'overview', showArchived: false, search: { carriers: '', vehicles: '', requests: '' }, auditTable: '',
@@ -317,7 +317,7 @@ async function loadAll() {
     ['movements', 'ak_movements', 'created_at'], ['losses', 'ak_movement_losses', 'id'], ['expenses', 'ak_expenses', 'exp_date'],
     ['expenseLinks', 'ak_expense_requests', 'expense_id'], ['balances', 'ak_wallet_balances', 'wallet_id'],
     ['reqCalc', 'ak_request_calc', 'request_id'], ['tripCalc', 'ak_trip_calc_uzs', 'trip_id'], ['carrierCalc', 'ak_carrier_calc', 'carrier_id'],
-    ['deductions', 'ak_trip_deductions', 'created_at'], ['adjustments', 'ak_factory_adjustments', 'created_at'], ['periods', 'ak_periods', 'id'],
+    ['deductions', 'ak_trip_deductions', 'created_at'], ['adjustments', 'ak_factory_adjustments', 'created_at'], ['periods', 'ak_periods', 'id'], ['tgChats', 'ak_tg_chats', 'chat_id'], ['tgUsers', 'ak_tg_users', 'tg_user_id'], ['inbox', 'ak_inbox', 'created_at'],
   ];
   const res = await Promise.all(T.map(([, t, o]) => fetchAll(t, o)));
   T.forEach(([k], i) => { S[k] = res[i]; });
@@ -337,6 +337,7 @@ async function reload() { await loadAll(); render(); }
 // ================= навигация =================
 const PAGES = [
   { id: 'overview', ico: '◼', name: 'Обзор', grp: 'Главное' },
+  { id: 'inbox', ico: '📥', name: 'Ждут подтверждения', grp: 'Главное' },
   { id: 'calc', ico: '📊', name: 'Расчёты и долги', grp: 'Главное' },
   { id: 'topay', ico: '⏰', name: 'К оплате и поступления', grp: 'Главное' },
   { id: 'reports', ico: '🗓', name: 'Отчёты и закрытие', grp: 'Главное' },
@@ -451,6 +452,8 @@ RENDER.overview = () => {
   if (intlNoOf.length) issues.push(['amber', `Международные заявки без оформления: ${intlNoOf.map((r) => r.number || 'черновик ' + fmtDate(r.loading_date)).join(', ')}`, 'requests']);
   if (!opening.locked) issues.push(['amber', 'Стартовые остатки ещё не зафиксированы', 'opening']);
   periodReminders().forEach((x) => issues.push(x));
+  const waiting = (S.inbox || []).filter((x) => ['pending', 'needs_wallet', 'error'].includes(x.status)).length;
+  if (waiting) issues.unshift(['red', `Бот предлагает записи — ждут подтверждения: ${waiting}`, 'inbox']);
   fixedDue().forEach((fc) => issues.push(['amber', `Постоянный расход за ${monthLabel()}: ${fc.name} — ${fmtMoney(fc.amount, fc.currency)} не записан`, 'calc']));
   return `<h1>Ангрен Каолин${roBadge()}</h1>
   <div class="lead">Учёт перевозок по договору с заводом ANGREN KAOLIN: заявки, рейсы, перевозчики, деньги. Расчёт прибыли и долгов, PDF-заявки и Telegram-бот подключаются следующими этапами.</div>
@@ -2356,6 +2359,89 @@ async function pdfQuarter(id, mode) {
   } catch (e) { toast(humanError(e), true); }
 }
 
+// ================= TELEGRAM-БОТ: настройка и «Ждут подтверждения» =================
+async function botCall(body) {
+  const { data, error } = await sb.functions.invoke('ak-bot', { body });
+  if (error) {
+    let msg = error.message;
+    try { msg = (await error.context.json()).error || msg; } catch (e) { /* как есть */ }
+    throw new Error(msg);
+  }
+  if (data && data.ok === false) throw new Error(data.error || 'не получилось');
+  return data;
+}
+const INBOX_KIND = { loading: 'Погрузка', prices: 'Цены по рейсу', factory_income: 'Поступление от завода', carrier_payment: 'Оплата перевозчику',
+  expense: 'Расход', cash_withdrawal: 'Снятие наличных', exchange: 'Обмен валюты', handover: 'Передача наличных' };
+const INBOX_STATUS = { pending: ['amber', 'ждёт подтверждения'], needs_wallet: ['amber', 'нужен кошелёк'], applied: ['green', 'записано'], rejected: ['', 'не записываем'], error: ['red', 'ошибка'] };
+const BOT_WALLETS = { rs: 'Р/С', ui: 'Касса сум (Исмат)', us: 'Касса сум (Сарвар)', di: 'Касса $ (Исмат)', ds: 'Касса $ (Сарвар)', me: 'Лично автор (фин. помощь)' };
+
+function botSettingsCard() {
+  const chats = S.tgChats || [], users = S.tgUsers || [];
+  const ed = canEdit();
+  return `<div class="card"><h2>Telegram-бот @angren_kaolin_uchet_bot</h2>
+    <div class="hint" style="margin:-6px 0 8px;">Группа «Перевозки» — бот только читает и молчит (там есть Зафар). Группа «Расчёты» — туда бот пишет предложения записей, вопросы и отчёты. Группы и люди появляются здесь, как только бот увидит в них сообщение.</div>
+    <table><thead><tr><th>Группа</th><th>Роль</th></tr></thead><tbody>
+    ${chats.filter((c) => c.type !== 'private').map((c) => `<tr><td>${esc(c.title || c.chat_id)}</td><td>${ed ? `<select style="max-width:220px;" onchange="setChatRole(${c.chat_id}, this.value)">
+      <option value="">— не используется —</option><option value="transport"${c.role === 'transport' ? ' selected' : ''}>Перевозки (только читать)</option><option value="finance"${c.role === 'finance' ? ' selected' : ''}>Расчёты (сюда пишет бот)</option></select>`
+      : esc({ transport: 'Перевозки', finance: 'Расчёты' }[c.role] || '—')}</td></tr>`).join('') || '<tr><td colspan="2" class="muted">бот пока не видел ни одной группы</td></tr>'}
+    </tbody></table>
+    <table style="margin-top:10px;"><thead><tr><th>Человек в Telegram</th><th>Кто это</th></tr></thead><tbody>
+    ${users.map((u) => `<tr><td>${esc([u.first_name, u.last_name].filter(Boolean).join(' '))}${u.username ? ' <span class="muted">@' + esc(u.username) + '</span>' : ''}</td><td>${ed ? `<select style="max-width:180px;" onchange="setTgPartner(${u.tg_user_id}, this.value)">
+      <option value="">— другой (не партнёр) —</option><option value="ismat"${u.partner_key === 'ismat' ? ' selected' : ''}>Исмат</option><option value="sarvar"${u.partner_key === 'sarvar' ? ' selected' : ''}>Сарвар</option></select>`
+      : esc(LBL.partner[u.partner_key] || '—')}</td></tr>`).join('') || '<tr><td colspan="2" class="muted">пока никого — напишите что-нибудь в группу</td></tr>'}
+    </tbody></table>
+    ${ed ? '<div style="margin-top:10px;"><button class="btn small" onclick="botTest()">Проверить связь (сообщение в «Расчёты»)</button></div>' : ''}
+  </div>`;
+}
+async function setChatRole(chatId, role) {
+  try { const { error } = await sb.rpc('ak_tg_set_chat_role', { p_chat_id: chatId, p_role: role || null }); if (error) throw error; await reload(); toast('Сохранено'); }
+  catch (e) { toast(humanError(e), true); }
+}
+async function setTgPartner(tgId, partner) {
+  try { const { error } = await sb.rpc('ak_tg_set_user_partner', { p_tg_user_id: tgId, p_partner: partner || null }); if (error) throw error; await reload(); toast('Сохранено'); }
+  catch (e) { toast(humanError(e), true); }
+}
+async function botTest() {
+  try { await botCall({ action: 'test' }); toast('Сообщение отправлено в «Расчёты»'); }
+  catch (e) { toast(humanError(e), true); }
+}
+
+RENDER.inbox = () => {
+  const items = [...(S.inbox || [])].sort((a, b) => a.created_at < b.created_at ? 1 : -1);
+  const open = items.filter((x) => ['pending', 'needs_wallet', 'error'].includes(x.status));
+  const done = items.filter((x) => !['pending', 'needs_wallet', 'error'].includes(x.status)).slice(0, 60);
+  const user = (id) => { const u = (S.tgUsers || []).find((x) => x.tg_user_id === id); return u ? (LBL.partner[u.partner_key] || u.first_name) : ''; };
+  const card = (x) => {
+    const p = x.proposal || {};
+    const acts = canEdit() && ['pending', 'error'].includes(x.status)
+      ? `<button class="btn small primary" onclick="inboxAct('apply','${x.id}')">✅ Записать</button> <button class="btn small" onclick="inboxAct('reject','${x.id}')">❌ Не записывать</button>`
+      : canEdit() && x.status === 'needs_wallet'
+        ? Object.entries(BOT_WALLETS).filter(([k]) => p.type === 'expense' || k !== 'me').map(([k, v]) => `<button class="btn small" onclick="inboxAct('wallet','${x.id}','${k}')">${esc(v)}</button>`).join(' ') + ` <button class="btn small" onclick="inboxAct('reject','${x.id}')">❌</button>`
+        : '';
+    return `<div class="card" style="margin-bottom:8px;">
+      <div class="toolbar" style="margin:0;"><b>${esc(INBOX_KIND[x.kind] || x.kind)}</b> ${tag(INBOX_STATUS[x.status] || ['', x.status])}
+        ${p.confidence === 'low' ? '<span class="tag red">бот не уверен</span>' : ''}<span class="grow"></span>
+        <span class="muted" style="font-size:12px;">${fmtDateTime(x.created_at)}${x.author_partner ? ' · пишет ' + esc(LBL.partner[x.author_partner]) : ''}</span></div>
+      <div style="white-space:pre-line;font-size:13px;margin:6px 0;">${esc(x.summary)}</div>
+      ${p.quote ? `<div class="muted" style="font-size:12px;font-style:italic;">«${esc(p.quote)}»</div>` : ''}
+      ${x.error ? `<div style="color:var(--red);font-size:12.5px;margin-top:4px;">⚠️ ${esc(x.error)}</div>` : ''}
+      ${x.result && x.result.text ? `<div style="color:var(--green);font-size:12.5px;margin-top:4px;white-space:pre-line;">✅ ${esc(x.result.text)}${x.decided_by_tg ? ' · подтвердил ' + esc(user(x.decided_by_tg)) : ''}</div>` : ''}
+      ${acts ? `<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">${acts}</div>` : ''}
+    </div>`;
+  };
+  return `<h1>Ждут подтверждения${roBadge()}</h1>
+  <div class="lead">Бот читает группы «Перевозки» и «Расчёты» и предлагает записи. В учёт запись попадает только после подтверждения Исмата — здесь или кнопкой в Telegram. Если бот ошибся — «Не записывать» и внесите вручную.</div>
+  ${open.length ? open.map(card).join('') : '<div class="card empty">Нового ничего нет</div>'}
+  ${done.length ? `<h2 style="font-size:14px;margin:18px 0 8px;">Решённые</h2>${done.map(card).join('')}` : ''}`;
+};
+async function inboxAct(action, id, wallet) {
+  try {
+    const r = await botCall({ action, id, wallet });
+    await reload();
+    toast(action === 'reject' ? 'Не записываем' : action === 'wallet' ? 'Кошелёк выбран, записано' : 'Записано' + (r && r.result ? ': ' + r.result : ''));
+  } catch (e) { await reload(); toast(humanError(e), true); }
+}
+
 // ================= РЕКВИЗИТЫ И ТЕКСТЫ =================
 const SETTING_SECTIONS = [
   { key: 'factory', title: 'Завод (Заказчик в заявке завода)', fields: [
@@ -2388,7 +2474,7 @@ RENDER.settings = () => {
     </tbody></table><div class="hint" style="margin-top:8px;">Добавить или отключить участника — через администратора системы.</div></div>`;
   return `<h1>Реквизиты и тексты${roBadge()}</h1>
   <div class="lead">Постоянные части заявок: реквизиты сторон, директора для подписей, особые условия, грузоотправитель. Изменения действуют для новых заявок; уже выпущенные не меняются.</div>
-  ${secs}${directorsCard()}${members}`;
+  ${secs}${directorsCard()}${botSettingsCard()}${members}`;
 };
 async function saveSettingSection(key) {
   const sec = SETTING_SECTIONS.find((s) => s.key === key);
@@ -2408,7 +2494,7 @@ const TABLE_LBL = {
   ak_carriers: 'Перевозчик', ak_vehicles: 'Машина', ak_vehicle_owners: 'Владелец машины', ak_routes: 'Маршрут',
   ak_directors: 'Директор', ak_wallets: 'Кошелёк', ak_opening_balances: 'Стартовый остаток', ak_settings: 'Настройки', ak_members: 'Доступ',
   ak_requests: 'Заявка завода', ak_request_versions: 'Версия заявки', ak_trips: 'Рейс', ak_movements: 'Движение денег',
-  ak_movement_losses: 'Потери по движению', ak_expenses: 'Расход', ak_expense_requests: 'Расход ↔ заявка', ak_fx_rates: 'Курс ЦБ', ak_counters: 'Нумерация', ak_factory_adjustments: 'Корректировка по сверке', ak_periods: 'Отчётный период', ak_trip_deductions: 'Удержание',
+  ak_movement_losses: 'Потери по движению', ak_expenses: 'Расход', ak_expense_requests: 'Расход ↔ заявка', ak_fx_rates: 'Курс ЦБ', ak_counters: 'Нумерация', ak_factory_adjustments: 'Корректировка по сверке', ak_periods: 'Отчётный период', ak_inbox: 'Предложение бота', ak_tg_chats: 'Группа Telegram', ak_tg_users: 'Человек в Telegram', ak_trip_deductions: 'Удержание',
 };
 const FIELD_HIDE = new Set(['id', 'created_at', 'created_by', 'updated_at', 'updated_by', 'plate_norm']);
 async function loadAudit() {

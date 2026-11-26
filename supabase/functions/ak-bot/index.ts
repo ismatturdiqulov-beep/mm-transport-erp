@@ -1,0 +1,565 @@
+// Блок «Ангрен Каолин» — Telegram-бот (этап 5, 2026-11-26).
+//
+// Решения владельца:
+//   * отдельный бот; группа «Перевозки» (там есть Зафар) — бот ТОЛЬКО читает и молчит;
+//     группа «Расчёты» (Исмат и Сарвар) — весь вывод бота;
+//   * сообщения в свободной форме: бот только ПРЕДЛАГАЕТ запись (ak_inbox); в учёт она
+//     попадает после подтверждения Исмата — кнопкой здесь или на сайте;
+//   * кошелёк не указан — спросить кнопками (утренние напоминания и закрытие через 3 дня —
+//     режим cron, часть 3).
+//
+// Входы:
+//   * Telegram webhook (заголовок X-Telegram-Bot-Api-Secret-Token = AK_BOT_WEBHOOK_SECRET);
+//   * сайт (Authorization: Bearer <сессия владельца>), { action: 'apply'|'reject'|'wallet'|'setup', ... };
+//   * расписание (x-cron-secret), { mode } — часть 3.
+
+import { createClient, SupabaseClient } from 'npm:@supabase/supabase-js@2';
+import Anthropic from 'npm:@anthropic-ai/sdk';
+
+declare const EdgeRuntime: { waitUntil(p: Promise<unknown>): void };
+
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
+const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+const BOT_TOKEN = Deno.env.get('AK_TELEGRAM_BOT_TOKEN')!;
+const WH_SECRET = Deno.env.get('AK_BOT_WEBHOOK_SECRET')!;
+const CRON_SECRET = Deno.env.get('CRON_SECRET');
+const anthropic = new Anthropic({ apiKey: Deno.env.get('AK_ANTHROPIC_API_KEY') });
+const MODEL = 'claude-opus-5-5';
+
+const db = createClient(SUPABASE_URL, SERVICE_KEY);
+// клиент с причиной для журнала изменений (триггер ak_audit читает x-ak-reason)
+const dbAs = (reason: string): SupabaseClient => createClient(SUPABASE_URL, SERVICE_KEY, {
+  global: { headers: { 'x-ak-reason': encodeURIComponent(reason.slice(0, 400)) } },
+});
+
+const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, content-type, apikey, x-client-info', 'Access-Control-Allow-Methods': 'POST, OPTIONS' };
+const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...CORS, 'Content-Type': 'application/json' } });
+
+// ---------- Telegram ----------
+async function tg(method: string, payload: Record<string, unknown>) {
+  const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!j.ok) console.error('tg', method, j.description);
+  return j;
+}
+async function tgFile(fileId: string): Promise<Uint8Array | null> {
+  const f = await tg('getFile', { file_id: fileId });
+  if (!f.ok) return null;
+  const r = await fetch(`https://api.telegram.org/file/bot${BOT_TOKEN}/${f.result.file_path}`);
+  return r.ok ? new Uint8Array(await r.arrayBuffer()) : null;
+}
+const b64 = (u: Uint8Array) => { let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode(...u.subarray(i, i + 0x8000)); return btoa(s); };
+const esc = (s: unknown) => String(s ?? '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]!));
+
+// ---------- общие ----------
+const today = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tashkent' });
+const CYR = 'АВЕКМНОРСТУХ', LAT = 'ABEKMHOPCTYX';
+const normPlate = (p: string) => String(p || '').toUpperCase().replace(/[\s\-.]/g, '').replace(/[АВЕКМНОРСТУХ]/g, (c) => LAT[CYR.indexOf(c)]);
+const money = (minor: number, cur: string) => {
+  const neg = minor < 0, a = Math.abs(Math.round(minor));
+  const w = String(Math.floor(a / 100)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+  const f = a % 100 ? ',' + String(a % 100).padStart(2, '0') : '';
+  return `${neg ? '−' : ''}${w}${f} ${cur === 'USD' ? '$' : 'сум'}`;
+};
+const dmy = (iso: string | null) => iso ? iso.slice(8, 10) + '.' + iso.slice(5, 7) + '.' + iso.slice(0, 4) : '';
+const toMinor = (x: number | null | undefined) => (x == null || !isFinite(Number(x))) ? null : Math.round(Number(x) * 100);
+const PARTNER = { ismat: 'Исмат', sarvar: 'Сарвар' } as Record<string, string>;
+const WALLETS: Record<string, string> = { rs: 'Р/С', cash_uzs_ismat: 'Касса сум (Исмат)', cash_uzs_sarvar: 'Касса сум (Сарвар)', cash_usd_ismat: 'Касса $ (Исмат)', cash_usd_sarvar: 'Касса $ (Сарвар)' };
+const WCODE: Record<string, string> = { rs: 'rs', ui: 'cash_uzs_ismat', us: 'cash_uzs_sarvar', di: 'cash_usd_ismat', ds: 'cash_usd_sarvar', me: 'personal' };
+const WCODE_BACK = Object.fromEntries(Object.entries(WCODE).map(([k, v]) => [v, k]));
+const CAT: Record<string, string> = { loaders: 'Грузчики', broker: 'Брокер', notary: 'Нотариус', logist_fee: 'Комиссия логиста', accountant_salary: 'Зарплата бухгалтера', profit_tax: 'Налог на прибыль', other_fixed: 'Прочие постоянные', other: 'Прочее' };
+
+async function chatByRole(role: 'transport' | 'finance') {
+  const { data } = await db.from('ak_tg_chats').select('*').eq('role', role).maybeSingle();
+  return data;
+}
+async function partnerOf(tgUserId: number | null | undefined): Promise<string | null> {
+  if (!tgUserId) return null;
+  const { data } = await db.from('ak_tg_users').select('partner_key').eq('tg_user_id', tgUserId).maybeSingle();
+  return data?.partner_key ?? null;
+}
+
+// ================= РАЗБОР СООБЩЕНИЙ (Claude) =================
+// Необязательные поля просто не входят в required (модель их опускает). Union-типы
+// ([t, 'null']) не используем: у API лимит — 16 параметров с union на схему.
+const nul = (t: string) => ({ type: t });
+const PLATE = { type: 'object', additionalProperties: false, required: ['tractor'],
+  properties: { tractor: { type: 'string' }, trailer: nul('string'), carrier_price: nul('number'), price_cur: nul('string'), pay_method: nul('string') } };
+const ACTION_FIELDS: Record<string, unknown> = {
+  type: { type: 'string', enum: ['loading', 'prices', 'factory_income', 'carrier_payment', 'expense', 'cash_withdrawal', 'exchange', 'handover'] },
+  route: nul('string'), loading_date: nul('string'), request_number: nul('string'),
+  plates: { type: 'array', items: PLATE },
+  factory_price: nul('number'), factory_price_cur: nul('string'), oformlenie_usd: nul('number'),
+  carrier_price: nul('number'), carrier_price_cur: nul('string'),
+  amount: nul('number'), currency: nul('string'), amount_to: nul('number'),
+  wallet: nul('string'), wallet_to: nul('string'), counterparty: nul('string'), category: nul('string'),
+  paid_by_partner: nul('string'), plate: nul('string'), op_date: nul('string'),   // не больше 24 необязательных полей на схему (лимит API)
+  quote: { type: 'string' }, confidence: { type: 'string', enum: ['high', 'medium', 'low'] },
+};
+const SCHEMA = { type: 'object', additionalProperties: false, required: ['actions'], properties: {
+  actions: { type: 'array', items: { type: 'object', additionalProperties: false, required: ['type', 'quote', 'confidence'], properties: ACTION_FIELDS } } } };
+
+const SYSTEM = `Ты — помощник учёта перевозок компании MM по контракту с заводом ANGREN KAOLIN (каолин из Ангрена).
+Читаешь сообщения из двух Telegram-групп и извлекаешь из них ДЕЙСТВИЯ для учёта. Ничего не выдумывай: если поля нет в сообщении и его нельзя однозначно взять из контекста — просто не указывай это поле. Обычная переписка, вопросы, приветствия — пустой список actions.
+
+Группы: «Перевозки» (дата, маршрут, номера машин; для местных — сумма с НДС) и «Расчёты» (цены по рейсу, поступления, расходы, платежи, фото чеков и платёжек).
+
+Словарь: «тушди» (узб.) — поступило; «накд» — наличными; «&» часто означает «$» («1500& пер» = 1500 $ перевозчику); «пер», «перевозчик» — цена перевозчику; «Завод» — цена завода за 1 машину; «Налог» в сообщении о цене рейса (рядом с «Перевозчик / Завод») — это ОФОРМЛЕНИЕ ($ за машину), НЕ налог; «Логист» — комиссия логиста (отдельный расход). «млн» — миллион сум. Числа вида «170 млн» = 170000000.
+Международные маршруты: цены обычно в долларах. Местные (керамика): только сумы, с НДС.
+
+Типы действий:
+- loading — машины загружаются/загрузились: route, loading_date, plates (номер тягача; прицеп, если указан через «/»; цена перевозчику и «накд», если указаны у номера). Номера бывают столбиком.
+- prices — цены по рейсу (маршрут + дата): factory_price (+factory_price_cur), carrier_price (+carrier_price_cur), oformlenie_usd. Если маршрут/дата не указаны — возьми из ближайшего по смыслу сообщения в контексте (ответ на сообщение, предыдущее сообщение о погрузке). Комиссию логиста давай ОТДЕЛЬНЫМ действием expense с category=logist_fee и теми же route/loading_date.
+- factory_income — поступление от завода на расчётный счёт: amount в сумах.
+- carrier_payment — оплата перевозчику: plate (номер машины) или counterparty (название фирмы), amount, currency, wallet.
+- expense — расход: category (loaders, broker, notary, logist_fee, accountant_salary, profit_tax, other_fixed, other), amount, currency, wallet или paid_by_partner (если сказано, что заплатил лично), counterparty; route/loading_date — если расход относится к рейсу. Слова «Исмат налоги» и налог на прибыль — category=profit_tax.
+- cash_withdrawal — снятие наличных с Р/С по чеку: amount (получено наличными), wallet_to.
+- exchange — обмен валюты между кассами: wallet (откуда), amount (отдали), wallet_to (куда), amount_to (получили).
+- handover — передача наличных между Исматом и Сарваром: wallet, wallet_to, amount.
+
+Кошельки (wallet / wallet_to): rs (расчётный счёт), cash_uzs_ismat, cash_uzs_sarvar, cash_usd_ismat, cash_usd_sarvar. Указывай кошелёк ТОЛЬКО если он ясен из сообщения («с р/с», «перечислением» → rs; «накд»/«наличными» → касса автора сообщения в валюте суммы). Иначе не указывай кошелёк — бот спросит кнопками.
+Даты — YYYY-MM-DD; год, если не указан, — ближайший к сегодняшней дате. route — ТОЧНО одно из названий списка маршрутов (или не указывай). currency, *_cur — 'USD' или 'UZS'. Суммы — числа в долларах/сумах (не в центах). quote — фрагмент исходного сообщения, из которого взято действие. confidence — уверенность.`;
+
+async function contextFor(msg: any) {
+  const since = new Date(Date.now() - 4 * 86400000).toISOString();
+  const [routes, chats, recent, reqs] = await Promise.all([
+    db.from('ak_routes').select('name, kind').eq('active', true),
+    db.from('ak_tg_chats').select('chat_id, role'),
+    db.from('ak_tg_messages').select('chat_id, message_id, tg_user_id, sent_at, text, reply_to_message_id').gte('sent_at', since).order('sent_at', { ascending: false }).limit(40),
+    db.from('ak_requests').select('id, number, route_id, loading_date, trucks_ordered, price_minor, price_cur, oformlenie_minor, status').gte('loading_date', new Date(Date.now() - 20 * 86400000).toISOString().slice(0, 10)).neq('status', 'cancelled'),
+  ]);
+  const roleOf = Object.fromEntries((chats.data || []).map((c: any) => [c.chat_id, c.role === 'transport' ? 'Перевозки' : c.role === 'finance' ? 'Расчёты' : 'другая']));
+  const { data: users } = await db.from('ak_tg_users').select('tg_user_id, first_name, partner_key');
+  const who = (id: number) => { const u = (users || []).find((x: any) => x.tg_user_id === id); return u ? (u.partner_key ? PARTNER[u.partner_key] : u.first_name) : '?'; };
+  const routeName = Object.fromEntries(((await db.from('ak_routes').select('id, name')).data || []).map((r: any) => [r.id, r.name]));
+  const replied = msg.reply_to_message_id ? (recent.data || []).find((m: any) => m.chat_id === msg.chat_id && m.message_id === msg.reply_to_message_id) : null;
+  const lines = [
+    `Сегодня: ${today()}.`,
+    `Маршруты: ${(routes.data || []).map((r: any) => `${r.name} (${r.kind === 'local' ? 'местный' : 'международный'})`).join('; ')}.`,
+    `Недавние заявки завода: ${(reqs.data || []).map((r: any) => `№${r.number} ${routeName[r.route_id]} ${r.loading_date} машин ${r.trucks_ordered}${r.price_minor != null ? ' цена ' + r.price_minor / 100 + ' ' + r.price_cur : ''}`).join('; ') || 'нет'}.`,
+    '', 'Недавние сообщения (старые сверху):',
+    ...(recent.data || []).slice().reverse().filter((m: any) => m.message_id !== msg.message_id || m.chat_id !== msg.chat_id)
+      .map((m: any) => `[${roleOf[m.chat_id]} · ${m.sent_at.slice(0, 16).replace('T', ' ')} · ${who(m.tg_user_id)}] ${(m.text || '(файл)').slice(0, 400)}`),
+    '',
+    replied ? `НОВОЕ СООБЩЕНИЕ — ответ на: «${(replied.text || '').slice(0, 300)}»` : 'НОВОЕ СООБЩЕНИЕ:',
+    `[${roleOf[msg.chat_id]} · ${msg.sent_at.slice(0, 16).replace('T', ' ')} · автор: ${who(msg.tg_user_id)}] ${msg.text || '(без текста)'}`,
+    msg.file_id ? 'К сообщению приложен файл (чек / платёжка) — извлеки из него сумму, дату, плательщика.' : '',
+  ];
+  return lines.join('\n');
+}
+
+async function parseMessage(msg: any): Promise<any[]> {
+  const content: any[] = [];
+  if (msg.file_id) {
+    const bytes = await tgFile(msg.file_id);
+    if (bytes && bytes.length < 15_000_000) {
+      if (msg.mime === 'application/pdf') content.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64(bytes) } });
+      else content.push({ type: 'image', source: { type: 'base64', media_type: msg.mime && msg.mime.startsWith('image/') ? msg.mime : 'image/jpeg', data: b64(bytes) } });
+    }
+  }
+  content.push({ type: 'text', text: await contextFor(msg) });
+  // Структурированный ответ (json_schema) + резервная модель при отказе (server-side fallback).
+  const resp: any = await (anthropic.beta.messages.create as any)({
+    model: MODEL,
+    max_tokens: 8000,
+    betas: ['server-side-fallback-2026-07-01'],
+    fallbacks: 'default',
+    output_config: { effort: 'low', format: { type: 'json_schema', schema: SCHEMA } },
+    system: [{ type: 'text', text: SYSTEM, cache_control: { type: 'ephemeral' } }],
+    messages: [{ role: 'user', content }],
+  });
+  if (resp.stop_reason === 'refusal') throw new Error('модель отказалась разбирать сообщение');
+  if (resp.stop_reason === 'max_tokens') throw new Error('ответ модели обрезан');
+  const text = (resp.content || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('');
+  const parsed = JSON.parse(text);
+  return Array.isArray(parsed.actions) ? parsed.actions : [];
+}
+
+// ---------- описание предложения ----------
+const amt = (a: any, k = 'amount', c = 'currency') => a[k] == null ? '?' : money(toMinor(a[k])!, a[c] || 'UZS');
+function describe(a: any): string {
+  const rd = [a.route, a.loading_date ? dmy(a.loading_date) : null, a.request_number ? '№' + a.request_number : null].filter(Boolean).join(' ');
+  switch (a.type) {
+    case 'loading': return `🚚 Погрузка ${rd}: ${(a.plates || []).length} маш.\n` + (a.plates || []).map((p: any) => `   • ${normPlate(p.tractor)}${p.trailer ? ' / ' + normPlate(p.trailer) : ''}${p.carrier_price != null ? ' — ' + money(toMinor(p.carrier_price)!, p.price_cur || 'USD') : ''}${p.pay_method === 'cash' ? ' (накд)' : ''}`).join('\n');
+    case 'prices': return `💲 Цены ${rd}:` + [a.factory_price != null ? `\n   • завод: ${amt(a, 'factory_price', 'factory_price_cur')} за машину` : '', a.carrier_price != null ? `\n   • перевозчик: ${amt(a, 'carrier_price', 'carrier_price_cur')}` : '', a.oformlenie_usd != null ? `\n   • оформление: ${money(toMinor(a.oformlenie_usd)!, 'USD')} за машину` : ''].join('');
+    case 'factory_income': return `🏦 Поступление от завода на Р/С: ${amt(a)}`;
+    case 'carrier_payment': return `💸 Оплата перевозчику ${a.plate ? normPlate(a.plate) : esc(a.counterparty || '?')}: ${amt(a)}${a.wallet ? ' из «' + WALLETS[a.wallet] + '»' : ''}`;
+    case 'expense': return `🧾 Расход «${CAT[a.category] || 'прочее'}»: ${amt(a)}${a.counterparty ? ' — ' + esc(a.counterparty) : ''}${rd ? ' (рейс ' + rd + ')' : ''}${a.paid_by_partner ? ' — лично ' + PARTNER[a.paid_by_partner] : a.wallet ? ' из «' + WALLETS[a.wallet] + '»' : ''}`;
+    case 'cash_withdrawal': return `🏧 Снятие наличных с Р/С: ${amt(a)}${a.wallet_to ? ' → «' + WALLETS[a.wallet_to] + '»' : ''}`;
+    case 'exchange': return `💱 Обмен: ${a.wallet ? WALLETS[a.wallet] : '?'} ${amt(a)} → ${a.wallet_to ? WALLETS[a.wallet_to] : '?'} ${a.amount_to != null ? money(toMinor(a.amount_to)!, (a.wallet_to || '').includes('usd') ? 'USD' : 'UZS') : '?'}`;
+    case 'handover': return `🤝 Передача наличных: ${a.wallet ? WALLETS[a.wallet] : '?'} → ${a.wallet_to ? WALLETS[a.wallet_to] : '?'}: ${amt(a)}`;
+  }
+  return JSON.stringify(a);
+}
+// Какой кошелёк нужен и не указан (для кнопок): 'from' | 'to' | null.
+function walletNeed(a: any): 'from' | 'to' | null {
+  if (a.type === 'carrier_payment' && !a.wallet) return 'from';
+  if (a.type === 'expense' && !a.wallet && !a.paid_by_partner) return 'from';
+  if (a.type === 'cash_withdrawal' && !a.wallet_to) return 'to';
+  return null;
+}
+function buttons(item: any) {
+  const need = item.status === 'needs_wallet';
+  const rows: any[] = [];
+  if (need) {
+    const cur = item.proposal.currency === 'USD' ? 'usd' : 'uzs';
+    const opts = item.proposal.type === 'cash_withdrawal' ? ['ui', 'us'] : cur === 'usd' ? ['di', 'ds'] : ['rs', 'ui', 'us'];
+    rows.push(opts.map((c) => ({ text: WALLETS[WCODE[c]], callback_data: `wl:${item.id}:${c}` })));
+    if (item.proposal.type === 'expense') rows.push([{ text: `Лично ${item.author_partner ? PARTNER[item.author_partner] : 'автор'} (фин. помощь)`, callback_data: `wl:${item.id}:me` }]);
+    rows.push([{ text: '❌ Не записывать', callback_data: `rj:${item.id}` }]);
+  } else {
+    rows.push([{ text: '✅ Записать', callback_data: `ap:${item.id}` }, { text: '❌ Не записывать', callback_data: `rj:${item.id}` }]);
+  }
+  return { inline_keyboard: rows };
+}
+function itemText(item: any, footer = '') {
+  const a = item.proposal;
+  const conf = a.confidence === 'low' ? '\n⚠️ Не уверен — проверьте.' : '';
+  const ask = item.status === 'needs_wallet' ? '\n❓ Из какого кошелька?' : '';
+  return `📝 <b>Предлагаю записать</b>${item.author_partner ? ' (пишет ' + PARTNER[item.author_partner] + ')' : ''}\n${esc(item.summary)}${conf}${ask}\n<i>«${esc((a.quote || '').slice(0, 200))}»</i>${footer ? '\n\n' + footer : ''}`;
+}
+
+async function proposeFromMessage(msg: any) {
+  let actions: any[] = [];
+  try {
+    actions = await parseMessage(msg);
+    await db.from('ak_tg_messages').update({ parsed_at: new Date().toISOString(), parse_error: null }).eq('id', msg.id);
+  } catch (e: any) {
+    await db.from('ak_tg_messages').update({ parse_error: String(e?.message || e).slice(0, 500) }).eq('id', msg.id);
+    console.error('parse', e);
+    return;
+  }
+  if (!actions.length) return;
+  const finance = await chatByRole('finance');
+  const author = await partnerOf(msg.tg_user_id);
+  for (const a of actions) {
+    if (a.type === 'expense' && !a.paid_by_partner && !a.wallet) { /* спросим кнопками */ }
+    const status = walletNeed(a) ? 'needs_wallet' : 'pending';
+    const { data: item, error } = await db.from('ak_inbox').insert({
+      source_chat_id: msg.chat_id, source_message_id: msg.message_id, author_tg_user_id: msg.tg_user_id, author_partner: author,
+      kind: a.type, summary: describe(a), proposal: a, status, last_asked_at: status === 'needs_wallet' ? new Date().toISOString() : null,
+      wallet_asks: status === 'needs_wallet' ? 1 : 0,
+    }).select().single();
+    if (error) { console.error('inbox', error); continue; }
+    if (finance) {
+      const sent = await tg('sendMessage', { chat_id: finance.chat_id, text: itemText(item), parse_mode: 'HTML', reply_markup: buttons(item), disable_web_page_preview: true });
+      if (sent.ok) await db.from('ak_inbox').update({ tg_message_id: sent.result.message_id }).eq('id', item.id);
+    }
+  }
+}
+
+// ================= ЗАПИСЬ В УЧЁТ =================
+async function findRoute(name: string | null) {
+  if (!name) return null;
+  const { data } = await db.from('ak_routes').select('*');
+  const n = name.toLowerCase().replace(/ё/g, 'е');
+  return (data || []).find((r: any) => r.name.toLowerCase() === n) || (data || []).find((r: any) => r.name.toLowerCase().startsWith(n.slice(0, 5))) || null;
+}
+async function findRequest(a: any, d: SupabaseClient, create: boolean) {
+  if (a.request_number) {
+    const { data } = await d.from('ak_requests').select('*').eq('number', a.request_number).neq('status', 'cancelled').maybeSingle();
+    if (data) return data;
+  }
+  const route = await findRoute(a.route);
+  if (!route) throw new Error(`не понял маршрут «${a.route ?? '—'}»`);
+  if (!a.loading_date) throw new Error('не указана дата погрузки');
+  const { data: ex } = await d.from('ak_requests').select('*').eq('route_id', route.id).eq('loading_date', a.loading_date).neq('status', 'cancelled').order('created_at').limit(1);
+  if (ex && ex.length) return ex[0];
+  if (!create) throw new Error(`нет заявки ${route.name} на ${dmy(a.loading_date)}`);
+  const n = Math.max(a.plates?.length || 0, a.trucks || 0, 1);
+  const { data, error } = await d.from('ak_requests').insert({ route_id: route.id, loading_date: a.loading_date, trucks_ordered: n, price_cur: route.kind === 'local' ? 'UZS' : 'USD' }).select().single();
+  if (error) throw error;
+  return data;
+}
+async function vehicleId(plate: string, kind: 'tractor' | 'trailer', d: SupabaseClient) {
+  const p = normPlate(plate);
+  const { data } = await d.from('ak_vehicles').select('*').eq('plate_norm', p).maybeSingle();
+  if (data) return data;
+  const { data: v, error } = await d.from('ak_vehicles').insert({ plate: p, kind }).select().single();
+  if (error) throw error;
+  return v;
+}
+async function ownerOn(vehicleId: string, date: string) {
+  const { data } = await db.from('ak_vehicle_owners').select('carrier_id').eq('vehicle_id', vehicleId).lte('valid_from', date).order('valid_from', { ascending: false }).limit(1);
+  return data && data.length ? data[0].carrier_id : null;
+}
+
+async function applyAction(a: any, wallet: string | null, author: string | null, d: SupabaseClient): Promise<string> {
+  const opDate = a.op_date || today();
+  switch (a.type) {
+    case 'loading': {
+      const r = await findRequest(a, d, true);
+      const notes: string[] = [];
+      for (const p of a.plates || []) {
+        const tractor = await vehicleId(p.tractor, 'tractor', d);
+        let { data: lots } = await d.from('ak_trips').select('*').eq('request_id', r.id).neq('status', 'cancelled');
+        let lot = (lots || []).find((t: any) => t.tractor_id === tractor.id) || (lots || []).find((t: any) => !t.tractor_id && t.status === 'assigned');
+        if (!lot) {
+          const active = (lots || []).filter((t: any) => !['cancelled', 'failed'].includes(t.status)).length;
+          await d.from('ak_requests').update({ trucks_ordered: active + 1 }).eq('id', r.id);
+          ({ data: lots } = await d.from('ak_trips').select('*').eq('request_id', r.id).neq('status', 'cancelled'));
+          lot = (lots || []).find((t: any) => !t.tractor_id && t.status === 'assigned');
+          if (!lot) throw new Error('не удалось открыть лот');
+        }
+        const carrierId = await ownerOn(tractor.id, r.loading_date);
+        const { data: carrier } = carrierId ? await d.from('ak_carriers').select('*').eq('id', carrierId).single() : { data: null };
+        const trailerId = p.trailer ? (await vehicleId(p.trailer, 'trailer', d)).id : tractor.default_trailer_id;
+        const upd: any = { tractor_id: tractor.id, trailer_id: trailerId ?? null, carrier_id: carrierId };
+        if (carrier) Object.assign(upd, { pay_timing: carrier.pay_timing, pay_method: carrier.pay_method, pay_days: carrier.pay_days });
+        if (p.pay_method === 'cash') upd.pay_method = 'cash';
+        if (p.carrier_price != null) { upd.price_minor = toMinor(p.carrier_price); upd.price_cur = r.kind === 'local' ? 'UZS' : (p.price_cur || 'USD'); }
+        const { error } = await d.from('ak_trips').update(upd).eq('id', lot.id);
+        if (error) throw error;
+        if (!carrierId) notes.push(`${normPlate(p.tractor)} — новая машина, перевозчик не известен (укажите на сайте)`);
+      }
+      return `заявка №${r.number}` + (notes.length ? '\n' + notes.join('\n') : '');
+    }
+    case 'prices': {
+      const r = await findRequest(a, d, false);
+      const upd: any = {};
+      if (a.factory_price != null) { upd.price_minor = toMinor(a.factory_price); upd.price_cur = r.kind === 'local' ? 'UZS' : (a.factory_price_cur || 'USD'); }
+      if (a.oformlenie_usd != null && r.kind === 'international') upd.oformlenie_minor = toMinor(a.oformlenie_usd);
+      if (Object.keys(upd).length) { const { error } = await d.from('ak_requests').update(upd).eq('id', r.id); if (error) throw error; }
+      let n = 0;
+      if (a.carrier_price != null) {
+        const { data: lots } = await d.from('ak_trips').select('id, tractor_id').eq('request_id', r.id).not('tractor_id', 'is', null).not('status', 'in', '(cancelled,failed)');
+        const only = (a.plates || []).map((p: any) => normPlate(p.tractor));
+        for (const t of lots || []) {
+          if (only.length) { const { data: v } = await d.from('ak_vehicles').select('plate_norm').eq('id', t.tractor_id).single(); if (!only.includes(v.plate_norm)) continue; }
+          const { error } = await d.from('ak_trips').update({ price_minor: toMinor(a.carrier_price), price_cur: r.kind === 'local' ? 'UZS' : (a.carrier_price_cur || 'USD') }).eq('id', t.id);
+          if (error) throw error; n++;
+        }
+      }
+      return `заявка №${r.number}${n ? `, цена перевозчика в ${n} лот(ах)` : ''}`;
+    }
+    case 'factory_income': {
+      const { error } = await d.rpc('ak_post_movement', { p: { kind: 'factory_income', op_date: opDate, to_wallet: 'rs', amount_in: toMinor(a.amount), counterparty: 'ANGREN KAOLIN', note: a.note } });
+      if (error) throw error; return 'поступление записано';
+    }
+    case 'carrier_payment': {
+      let tripId: string | null = null, carrierId: string | null = null;
+      if (a.plate) {
+        const { data: v } = await d.from('ak_vehicles').select('id').eq('plate_norm', normPlate(a.plate)).maybeSingle();
+        if (v) {
+          const { data: t } = await d.from('ak_trips').select('id, carrier_id').eq('tractor_id', v.id).not('status', 'in', '(cancelled,failed)').order('created_at', { ascending: false }).limit(1);
+          if (t && t.length) { tripId = t[0].id; carrierId = t[0].carrier_id; }
+        }
+      }
+      if (!carrierId && a.counterparty) {
+        const { data: c } = await d.from('ak_carriers').select('id').ilike('name', `%${a.counterparty}%`).limit(1);
+        if (c && c.length) carrierId = c[0].id;
+      }
+      if (!carrierId) throw new Error('не нашёл перевозчика / рейс по номеру машины');
+      const w = wallet || a.wallet;
+      const { error } = await d.rpc('ak_post_movement', { p: { kind: 'carrier_payment', op_date: opDate, from_wallet: w, amount_in: toMinor(a.amount), carrier_id: carrierId, trip_id: tripId, note: a.note } });
+      if (error) throw error; return 'оплата записана';
+    }
+    case 'expense': {
+      let reqIds: string[] = [];
+      if (a.route || a.request_number) { try { reqIds = [(await findRequest(a, d, false)).id]; } catch (_) { /* без привязки */ } }
+      const w = wallet || a.wallet;
+      const personal = w === 'personal' ? (author || a.paid_by_partner) : a.paid_by_partner;
+      const { error } = await d.rpc('ak_add_expense', { p: {
+        exp_date: opDate, category: CAT[a.category] ? a.category : 'other', amount: toMinor(a.amount), currency: a.currency || 'UZS',
+        paid_by: personal ? personal : 'wallet', wallet: personal ? null : w, counterparty: a.counterparty, note: a.note, request_ids: reqIds } });
+      if (error) throw error; return personal ? `расход записан как фин. помощь (${PARTNER[personal]})` : 'расход записан';
+    }
+    case 'cash_withdrawal': {
+      const { error } = await d.rpc('ak_post_movement', { p: { kind: 'cash_withdrawal', op_date: opDate, from_wallet: 'rs', to_wallet: wallet || a.wallet_to, amount_in: toMinor(a.amount), note: a.note } });
+      if (error) throw error; return 'снятие записано';
+    }
+    case 'exchange': {
+      if (!a.wallet || !a.wallet_to) throw new Error('не указаны кассы обмена — внесите на сайте');
+      const { error } = await d.rpc('ak_post_movement', { p: { kind: 'transfer', op_date: opDate, from_wallet: a.wallet, to_wallet: a.wallet_to, amount_out: toMinor(a.amount), amount_in: toMinor(a.amount_to), counterparty: a.counterparty, note: a.note } });
+      if (error) throw error; return 'обмен записан';
+    }
+    case 'handover': {
+      if (!a.wallet || !a.wallet_to) throw new Error('не указаны кассы — внесите на сайте');
+      const { error } = await d.rpc('ak_post_movement', { p: { kind: 'handover', op_date: opDate, from_wallet: a.wallet, to_wallet: a.wallet_to, amount_in: toMinor(a.amount), note: a.note } });
+      if (error) throw error; return 'передача записана';
+    }
+  }
+  throw new Error('неизвестный тип');
+}
+
+// Подтвердить запись (Исмат: кнопка в Telegram или сайт).
+async function applyItem(id: string, by: { tg?: number; user?: string; name: string }) {
+  const { data: item } = await db.from('ak_inbox').select('*').eq('id', id).single();
+  if (!item) return { ok: false, error: 'не найдено' };
+  if (!['pending', 'error'].includes(item.status)) return { ok: false, error: item.status === 'applied' ? 'уже записано' : item.status === 'needs_wallet' ? 'сначала выберите кошелёк' : 'уже решено' };
+  const d = dbAs(`Бот: ${item.summary.split('\n')[0]} · подтвердил ${by.name}`);
+  try {
+    const res = await applyAction(item.proposal, item.wallet, item.author_partner, d);
+    await db.from('ak_inbox').update({ status: 'applied', result: { text: res }, error: null, decided_by_tg: by.tg ?? null, decided_by_user: by.user ?? null, decided_at: new Date().toISOString() }).eq('id', id);
+    await updateMsg(item, `✅ Записано (${by.name}): ${res}`);
+    return { ok: true, result: res };
+  } catch (e: any) {
+    const msg = e?.message || String(e);
+    await db.from('ak_inbox').update({ status: 'error', error: msg }).eq('id', id);
+    await updateMsg({ ...item, status: 'error' }, `⚠️ Не записалось: ${msg}\nИсправьте на сайте («Ждут подтверждения»).`, true);
+    return { ok: false, error: msg };
+  }
+}
+async function rejectItem(id: string, by: { tg?: number; user?: string; name: string }) {
+  const { data: item } = await db.from('ak_inbox').select('*').eq('id', id).single();
+  if (!item || item.status === 'applied') return { ok: false, error: 'уже записано' };
+  await db.from('ak_inbox').update({ status: 'rejected', decided_by_tg: by.tg ?? null, decided_by_user: by.user ?? null, decided_at: new Date().toISOString() }).eq('id', id);
+  await updateMsg(item, `❌ Не записываем (${by.name})`);
+  return { ok: true };
+}
+async function chooseWallet(id: string, code: string, by: { tg?: number; user?: string; name: string; partner?: string | null }) {
+  const wallet = WCODE[code] || code;
+  const { data: item } = await db.from('ak_inbox').select('*').eq('id', id).single();
+  if (!item || item.status !== 'needs_wallet') return { ok: false, error: 'уже решено' };
+  await db.from('ak_inbox').update({ status: 'pending', wallet }).eq('id', id);
+  // Исмат выбрал — сразу записываем; Сарвар выбрал — ждём подтверждения Исмата
+  if (by.partner === 'ismat' || by.user) return applyItem(id, by);
+  const { data: fresh } = await db.from('ak_inbox').select('*').eq('id', id).single();
+  await updateMsg(fresh, `Кошелёк: ${wallet === 'personal' ? 'лично (фин. помощь)' : WALLETS[wallet]} (выбрал ${by.name}). Ждёт подтверждения Исмата.`, true);
+  return { ok: true };
+}
+async function updateMsg(item: any, footer: string, keepButtons = false) {
+  if (!item.tg_message_id) return;
+  const finance = await chatByRole('finance');
+  if (!finance) return;
+  await tg('editMessageText', { chat_id: finance.chat_id, message_id: item.tg_message_id, text: itemText(item, esc(footer)), parse_mode: 'HTML',
+    reply_markup: keepButtons ? buttons(item) : { inline_keyboard: [] } });
+}
+
+// ================= ВХОДЯЩИЕ ОТ TELEGRAM =================
+async function handleUpdate(u: any) {
+  const m = u.message || u.edited_message || u.channel_post;
+  if (u.my_chat_member) {
+    const c = u.my_chat_member.chat;
+    await db.from('ak_tg_chats').upsert({ chat_id: c.id, title: c.title || c.username || c.first_name, type: c.type, last_seen: new Date().toISOString() });
+    return;
+  }
+  if (u.callback_query) return handleCallback(u.callback_query);
+  if (!m) return;
+  const chat = m.chat, from = m.from || {};
+  await db.from('ak_tg_chats').upsert({ chat_id: chat.id, title: chat.title || [chat.first_name, chat.last_name].filter(Boolean).join(' ') || chat.username, type: chat.type, last_seen: new Date().toISOString() }, { onConflict: 'chat_id', ignoreDuplicates: false });
+  if (from.id && !from.is_bot) await db.from('ak_tg_users').upsert({ tg_user_id: from.id, username: from.username, first_name: from.first_name, last_name: from.last_name, last_seen: new Date().toISOString() }, { onConflict: 'tg_user_id' });
+  const photo = m.photo ? m.photo[m.photo.length - 1] : null;
+  const doc = m.document || null;
+  const row = {
+    chat_id: chat.id, message_id: m.message_id, tg_user_id: from.id ?? null, sent_at: new Date((m.date || Date.now() / 1000) * 1000).toISOString(),
+    text: m.text || m.caption || null, file_id: photo?.file_id || doc?.file_id || null, file_kind: photo ? 'photo' : doc ? 'document' : null,
+    file_name: doc?.file_name || null, mime: photo ? 'image/jpeg' : doc?.mime_type || null, reply_to_message_id: m.reply_to_message?.message_id ?? null, raw: m,
+  };
+  const { data: saved } = await db.from('ak_tg_messages').upsert(row, { onConflict: 'chat_id,message_id' }).select().single();
+
+  const text = (m.text || '').trim();
+  // личка с ботом: только справка (сообщения в личке не разбираются)
+  if (chat.type === 'private') {
+    if (text.startsWith('/start') || text.startsWith('/help')) {
+      await tg('sendMessage', { chat_id: chat.id, parse_mode: 'HTML', text: `Здравствуйте! Я бот учёта «Ангрен Каолин».\nЯ читаю группы «Перевозки» и «Расчёты» и предлагаю записи в учёт; подтверждает Исмат.\n\nВаш Telegram ID: <code>${from.id}</code>` });
+    }
+    return;
+  }
+  const { data: c } = await db.from('ak_tg_chats').select('role').eq('chat_id', chat.id).single();
+  if (!c?.role || !saved || from.is_bot) return;          // группа ещё не назначена на сайте
+  // разбираем только то, где есть цифры или файл (болтовню не отправляем в Claude)
+  const relevant = /\d/.test(row.text || '') || !!row.file_id;
+  if (relevant && !u.edited_message) EdgeRuntime.waitUntil(proposeFromMessage(saved));
+}
+
+async function handleCallback(q: any) {
+  const [op, id, code] = String(q.data || '').split(':');
+  const partner = await partnerOf(q.from?.id);
+  const name = partner ? PARTNER[partner] : (q.from?.first_name || 'кто-то');
+  const answer = (text: string, alert = false) => tg('answerCallbackQuery', { callback_query_id: q.id, text, show_alert: alert });
+  if (!partner) return answer('Вы не отмечены как партнёр — попросите Исмата отметить вас на сайте.', true);
+  if (op === 'ap' || op === 'rj') {
+    if (partner !== 'ismat') return answer('Записи подтверждает Исмат.', true);
+    const r = op === 'ap' ? await applyItem(id, { tg: q.from.id, name }) : await rejectItem(id, { tg: q.from.id, name });
+    return answer(r.ok ? (op === 'ap' ? 'Записано' : 'Не записываем') : (r.error || 'ошибка'), !r.ok);
+  }
+  if (op === 'wl') {
+    const r = await chooseWallet(id, code, { tg: q.from.id, name, partner });
+    return answer(r.ok ? 'Кошелёк выбран' : (r.error || 'ошибка'), !r.ok);
+  }
+  return answer('');
+}
+
+// ================= ВХОД С САЙТА (владелец) =================
+async function handleSite(req: Request) {
+  const token = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
+  const { data: u } = await db.auth.getUser(token);
+  if (!u?.user) return json({ error: 'Нужен вход' }, 401);
+  const { data: m } = await db.from('ak_members').select('role, active, display_name').eq('user_id', u.user.id).maybeSingle();
+  if (!m?.active || m.role !== 'owner') return json({ error: 'Только владелец' }, 403);
+  const body = await req.json().catch(() => ({}));
+  const by = { user: u.user.id, name: m.display_name };
+  switch (body.action) {
+    case 'apply': return json(await applyItem(body.id, by));
+    case 'reject': return json(await rejectItem(body.id, by));
+    case 'wallet': return json(await chooseWallet(body.id, body.wallet, by));
+    case 'setup': {
+      // привязать вебхук к этой функции (секрет — в заголовке, Telegram пришлёт его обратно)
+      const url = `${SUPABASE_URL}/functions/v1/ak-bot`;
+      const r = await tg('setWebhook', { url, secret_token: WH_SECRET, allowed_updates: ['message', 'edited_message', 'callback_query', 'my_chat_member'], drop_pending_updates: false });
+      const me = await tg('getMe', {});
+      const info = await tg('getWebhookInfo', {});
+      return json({ ok: r.ok, bot: me.result?.username, webhook: info.result?.url, pending: info.result?.pending_update_count, last_error: info.result?.last_error_message || null });
+    }
+    case 'test': {
+      const finance = await chatByRole('finance');
+      if (!finance) return json({ ok: false, error: 'Группа «Расчёты» не назначена' });
+      const r = await tg('sendMessage', { chat_id: finance.chat_id, text: '✅ Бот «Ангрен Каолин» на связи. Здесь будут предложения записей, вопросы и отчёты.' });
+      return json({ ok: r.ok, error: r.description });
+    }
+  }
+  return json({ error: 'неизвестное действие' }, 400);
+}
+
+Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
+  if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
+  try {
+    if (req.headers.get('x-telegram-bot-api-secret-token') === WH_SECRET) {
+      const u = await req.json();
+      await handleUpdate(u);
+      return json({ ok: true });
+    }
+    if (CRON_SECRET && req.headers.get('x-cron-secret') === CRON_SECRET) {
+      const mode = new URL(req.url).searchParams.get('mode');
+      if (mode === 'setup') {
+        const r = await tg('setWebhook', { url: `${SUPABASE_URL}/functions/v1/ak-bot`, secret_token: WH_SECRET, allowed_updates: ['message', 'edited_message', 'callback_query', 'my_chat_member'] });
+        const me = await tg('getMe', {});
+        const info = await tg('getWebhookInfo', {});
+        return json({ ok: r.ok, bot: me.result?.username, can_read_all_group_messages: me.result?.can_read_all_group_messages, webhook: info.result?.url, pending: info.result?.pending_update_count, last_error: info.result?.last_error_message || null });
+      }
+      if (mode === 'ping_claude') {
+        // диагностика: простой запрос, затем со схемой, с замером времени
+        const out: Record<string, unknown> = {};
+        let t = Date.now();
+        try {
+          const r: any = await anthropic.messages.create({ model: MODEL, max_tokens: 200, output_config: { effort: 'low' } as any, messages: [{ role: 'user', content: 'Ответь одним словом: да' }] } as any, { timeout: 60000, maxRetries: 0 });
+          out.plain = { ms: Date.now() - t, stop: r.stop_reason, text: (r.content || []).find((b: any) => b.type === 'text')?.text };
+        } catch (e: any) { out.plain = { ms: Date.now() - t, error: e?.message || String(e) }; }
+        t = Date.now();
+        try {
+          const r: any = await (anthropic.beta.messages.create as any)({ model: MODEL, max_tokens: 2000, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default',
+            output_config: { effort: 'low', format: { type: 'json_schema', schema: SCHEMA } }, messages: [{ role: 'user', content: 'Сообщение: «170 млн тушди». Сегодня 2026-11-26.' }] }, { timeout: 120000, maxRetries: 0 });
+          out.schema = { ms: Date.now() - t, stop: r.stop_reason, text: (r.content || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('').slice(0, 400) };
+        } catch (e: any) { out.schema = { ms: Date.now() - t, error: e?.message || String(e) }; }
+        return json(out);
+      }
+      if (mode === 'test_parse') {
+        // проверка разбора без записи: { text, role: 'transport'|'finance' }
+        const b = await req.json().catch(() => ({}));
+        const chat = await chatByRole(b.role === 'transport' ? 'transport' : 'finance');
+        const fake = { id: 0, chat_id: chat?.chat_id ?? 0, message_id: -1, tg_user_id: null, sent_at: new Date().toISOString(), text: b.text, file_id: null, reply_to_message_id: null };
+        const actions = await parseMessage(fake);
+        return json({ ok: true, actions, summaries: actions.map(describe) });
+      }
+      return json({ ok: true, note: 'расписание — часть 3' });
+    }
+    return await handleSite(req);
+  } catch (e: any) {
+    console.error(e);
+    return json({ ok: false, error: e?.message || String(e) }, 200);   // Telegram не должен повторять бесконечно
+  }
+});
