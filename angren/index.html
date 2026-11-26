@@ -803,6 +803,41 @@ function tripPaid(tripId) {
     .forEach((m) => { out[m.cur_in] = (out[m.cur_in] || 0) + m.amount_in_minor; });
   return out;
 }
+// Остаток к оплате по рейсу в валюте цены (оплаты в другой валюте — по курсу рейса / ЦБ).
+function tripRemaining(t) {
+  if (t.price_minor == null) return null;
+  const paid = tripPaid(t.id);
+  const rate = Number(t.fx_rate || (rateOn(todayIso()) || {}).usd_uzs || 0);
+  let rest = t.price_minor - (paid[t.price_cur] || 0);
+  const other = t.price_cur === 'USD' ? 'UZS' : 'USD';
+  if (paid[other] && rate) rest -= t.price_cur === 'USD' ? Math.round(paid[other] / rate) : Math.round(paid[other] * rate);
+  return { cur: t.price_cur, amount: rest };
+}
+// Кошелёк и сумма по умолчанию для оплаты рейса.
+function tripPayDefaults(t, walletId) {
+  const rem = tripRemaining(t);
+  const wallet = walletId || (t.pay_method === 'cash' ? (t.price_cur === 'USD' ? 'cash_usd_ismat' : 'cash_uzs_ismat') : 'rs');
+  const w = walletById(wallet);
+  let amount = null;
+  if (rem && rem.amount > 0 && w) {
+    const rate = Number(t.fx_rate || (rateOn(todayIso()) || {}).usd_uzs || 0);
+    amount = w.currency === rem.cur ? rem.amount : (rate ? (w.currency === 'UZS' ? Math.round(rem.amount * rate) : Math.round(rem.amount / rate)) : null);
+  }
+  return { from_wallet: wallet, amount };
+}
+function payCell(t) {
+  const rem = tripRemaining(t);
+  const paid = fmtMulti(tripPaid(t.id));
+  let btn = '';
+  if (rem && rem.amount <= 0) btn = '<span class="tag green">оплачено</span>';
+  else if (canEdit() && t.carrier_id && t.status !== 'failed' && rem) btn = `<button class="btn small primary" onclick="event.stopPropagation();payTrip('${t.id}')">Оплатить</button>`;
+  return `<td class="num">${paid}${rem && rem.amount > 0 && paid ? `<div class="muted">остаток ${fmtMoney(rem.amount, rem.cur)}</div>` : ''}</td><td>${btn}</td>`;
+}
+function payTrip(id) {
+  const t = tripById(id);
+  const d = tripPayDefaults(t);
+  openOp('carrier_payment', { trip_id: t.id, carrier_id: t.carrier_id, from_wallet: d.from_wallet, amount: d.amount });
+}
 const fmtMulti = (o) => Object.entries(o).filter(([, v]) => v).map(([c, v]) => fmtMoney(v, c)).join(' + ') || '';
 const STATUS_REQ = { draft: ['amber', 'черновик'], issued: ['green', 'выпущена'], cancelled: ['', 'отменена'] };
 const STATUS_TRIP = { assigned: ['', 'назначен'], loaded: ['blue', 'погружен'], delivered: ['green', 'доставлен'], failed: ['red', 'не состоялся'] };
@@ -834,6 +869,7 @@ RENDER.requests = () => {
     const warn = [];
     if (ts.some((t) => !t.carrier_id)) warn.push('<span class="tag red">рейс без перевозчика</span>');
     if (r.kind === 'international' && !r.oformlenie_minor && r.status !== 'cancelled') warn.push('<span class="tag amber">нет оформления</span>');
+    if (r.status === 'issued' && r.trucks_confirmed == null) warn.push('<span class="tag amber">ждёт подтверждения завода</span>');
     if (r.trucks_confirmed != null && loaded !== r.trucks_confirmed && r.status !== 'cancelled') warn.push(`<span class="tag amber">погружено ${loaded} из ${r.trucks_confirmed}</span>`);
     const total = reqTotal(r);
     return `<tr class="click${r.status === 'cancelled' ? ' off' : ''}" onclick="editRequest('${r.id}')">
@@ -874,7 +910,7 @@ function editRequest(id) {
     ${field({ k: 'route_id', label: 'Маршрут', type: 'select', opts: routes, val: v.route_id, req: true })}
     ${field({ k: 'loading_date', label: 'Дата погрузки', type: 'date', val: v.loading_date, req: true })}
     ${field({ k: 'trucks_ordered', label: 'Машин заказано', type: 'number', val: v.trucks_ordered })}
-    ${field({ k: 'trucks_confirmed', label: 'Машин подтвердил менеджер завода', type: 'number', val: v.trucks_confirmed, hint: 'Долг завода считается по подтверждённым.' })}
+    ${field({ k: 'trucks_confirmed', label: 'Машин подтвердил менеджер завода', type: 'number', val: v.trucks_confirmed, hint: 'Менеджер подтверждает после погрузки — можно внести позже. Долг завода считается по подтверждённым.' })}
     ${field({ k: 'confirmed_on', label: 'Дата подтверждения', type: 'date', val: v.confirmed_on })}
     ${field({ k: 'confirmed_doc', label: 'Документ подтверждения', val: v.confirmed_doc })}
     <div class="intl-only" style="display:contents;">
@@ -891,9 +927,9 @@ function editRequest(id) {
   </div>
   <div class="note" id="req-preview" style="margin-top:12px;"></div>
   ${r ? `<div class="sub-list"><h4>Машины (${trips.length})</h4>
-    ${trips.length ? `<table><thead><tr><th>Тягач / прицеп</th><th>Перевозчик</th><th class="num">Цена</th><th class="num">Оплачено</th><th>Статус</th><th>№ заявки</th></tr></thead><tbody>
+    ${trips.length ? `<table><thead><tr><th>Тягач / прицеп</th><th>Перевозчик</th><th class="num">Цена</th><th class="num">Оплачено</th><th></th><th>Статус</th><th>№ заявки</th></tr></thead><tbody>
     ${trips.map((t) => `<tr class="click" onclick="editTrip('${t.id}')"><td class="mono">${esc(plates(t)) || '—'}</td><td>${t.carrier_id ? esc((carrierById(t.carrier_id) || {}).name) : '<span class="tag red">нет перевозчика</span>'}</td>
-      <td class="num">${t.price_minor != null ? fmtMoney(t.price_minor, t.price_cur) : ''}</td><td class="num">${fmtMulti(tripPaid(t.id))}</td><td>${tag(STATUS_TRIP[t.status])}</td><td class="mono">${esc(t.number || '')}</td></tr>`).join('')}
+      <td class="num">${t.price_minor != null ? fmtMoney(t.price_minor, t.price_cur) : ''}</td>${payCell(t)}<td>${tag(STATUS_TRIP[t.status])}</td><td class="mono">${esc(t.number || '')}</td></tr>`).join('')}
     </tbody></table>` : '<div class="muted" style="font-size:12.5px;">машин пока нет</div>'}
     ${ed ? `<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;"><button class="btn small" onclick="editTrip(null,'${r.id}')">+ Машина</button>
       <button class="btn small primary" onclick="issueRequest('${r.id}')">${r.number ? 'Выпустить заявки на новые машины' : 'Выпустить заявку (присвоить номер)'}</button></div>` : ''}
@@ -956,7 +992,7 @@ function saveRequest(id) {
 async function issueRequest(id) {
   const r = reqById(id);
   const loaded = tripsOf(id).filter((t) => ['loaded', 'delivered'].includes(t.status) && !t.number);
-  if (!r.trucks_confirmed) return toast('Сначала укажите, сколько машин подтвердил завод, и сохраните', true);
+  if (!r.number && !loaded.length) return toast('Нет погруженных машин: откройте машину и поставьте статус «погружен»', true);
   if (!confirm(`${r.number ? 'Выпустить заявки перевозчикам' : 'Присвоить заявке номер и выпустить'}?\nМашин, погруженных без номера: ${loaded.length}.\nНомера не переиспользуются.`)) return;
   try {
     const { data, error } = await sb.rpc('ak_issue_request', { p_id: id });
@@ -988,7 +1024,7 @@ RENDER.trips = () => {
       <td class="mono">${esc(plates(t)) || '—'}</td>
       <td>${c ? esc(c.name) + (c.partner_key ? ' <span class="tag blue">партнёр</span>' : '') : '<span class="tag red">нет перевозчика</span>'}</td>
       <td class="num">${t.price_minor != null ? fmtMoney(t.price_minor, t.price_cur) : ''}${t.price_cur === 'USD' && t.price_uzs_minor ? `<div class="muted">${fmtMoney(t.price_uzs_minor, 'UZS')}</div>` : ''}</td>
-      <td class="num">${fmtMulti(tripPaid(t.id))}</td>
+      ${payCell(t)}
       <td>${tag(STATUS_TRIP[t.status])}${t.pay_method === 'cash' ? ' <span class="tag">наличными</span>' : ''}</td>
       <td class="mono">${esc(t.number || '')}</td></tr>`;
   }).join('');
@@ -997,8 +1033,8 @@ RENDER.trips = () => {
   <div class="lead">Каждая машина в заявке — отдельный рейс: перевозчик, цена, способ оплаты, статусы. Заявка перевозчику всегда на реального исполнителя; способ оплаты (перечисление или наличные) на это не влияет.</div>
   <div class="toolbar"><select style="max-width:190px;" onchange="S.tripFilter=this.value;render()">${Object.entries(filt).map(([k, v]) => `<option value="${k}"${f === k ? ' selected' : ''}>${v}</option>`).join('')}</select>
     <span class="muted" style="font-size:12px;">Новый рейс добавляется из карточки заявки («+ Машина»).</span></div>
-  <div class="tbl-wrap"><table><thead><tr><th>Погрузка</th><th>Маршрут</th><th>Тягач / прицеп</th><th>Перевозчик</th><th class="num">Цена</th><th class="num">Оплачено</th><th>Статус</th><th>№ заявки</th></tr></thead>
-  <tbody>${body || '<tr><td colspan="8" class="empty">Рейсов нет</td></tr>'}</tbody></table></div>`;
+  <div class="tbl-wrap"><table><thead><tr><th>Погрузка</th><th>Маршрут</th><th>Тягач / прицеп</th><th>Перевозчик</th><th class="num">Цена</th><th class="num">Оплачено</th><th></th><th>Статус</th><th>№ заявки</th></tr></thead>
+  <tbody>${body || '<tr><td colspan="9" class="empty">Рейсов нет</td></tr>'}</tbody></table></div>`;
 };
 
 function editTrip(id, requestId) {
@@ -1236,10 +1272,10 @@ function openOp(op, preset = {}) {
       break;
     case 'carrier_payment': {
       const trips = S.trips.filter((t) => t.carrier_id && t.status !== 'failed');
-      F.push(field({ k: 'from_wallet', label: 'Откуда', type: 'select', opts: walletOpts(), val: 'rs' }),
+      F.push(field({ k: 'from_wallet', label: 'Откуда', type: 'select', opts: walletOpts(), val: preset.from_wallet || 'rs' }),
         field({ k: 'carrier_id', label: 'Перевозчик', type: 'select', opts: carrierOpts(), val: preset.carrier_id, req: true }),
         `<div class="fr full"><label>Рейс</label><select id="f_trip_id">${['<option value="">— без привязки к рейсу —</option>', ...trips.map((t) => `<option value="${t.id}" data-c="${t.carrier_id}"${preset.trip_id === t.id ? ' selected' : ''}>${esc(reqTitle(reqById(t.request_id)))} · ${esc(plates(t))}</option>`)].join('')}</select></div>`,
-        field({ k: 'amount_in', label: 'Сумма перевозчику (в валюте кошелька)', type: 'money', req: true }));
+        field({ k: 'amount_in', label: 'Сумма перевозчику (в валюте кошелька)', type: 'money', req: true, val: preset.amount ? minorToInput(preset.amount) : '', hint: 'Подставлен остаток по рейсу — можно изменить (например, аванс).' }));
       break;
     }
     case 'cash_withdrawal':
@@ -1292,6 +1328,12 @@ function openOp(op, preset = {}) {
     cSel.addEventListener('change', () => { if (tSel.selectedOptions[0]?.hidden) tSel.value = ''; sync(); });
     tSel.addEventListener('change', () => { const c = tSel.selectedOptions[0]?.dataset.c; if (c) cSel.value = c; sync(); });
     sync();
+  }
+  // оплата рейса: при смене кошелька или рейса — пересчитать остаток в валюте кошелька
+  if (op === 'carrier_payment') {
+    const refill = () => { const t = tripById(val('trip_id')); if (!t) return; const d = tripPayDefaults(t, val('from_wallet')); setVal('amount_in', d.amount ? minorToInput(d.amount) : ''); };
+    document.getElementById('f_from_wallet').addEventListener('change', refill);
+    document.getElementById('f_trip_id').addEventListener('change', refill);
   }
   onModalInput(() => opPreview(op));
 }
