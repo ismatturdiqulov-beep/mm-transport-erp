@@ -24,7 +24,10 @@ const CRON_SECRET = Deno.env.get('CRON_SECRET');
 const FOLDER = 'app:/angren';
 const PAGE = 1000; // PostgREST отдаёт не больше 1000 строк за запрос — читаем страницами
 // Ключ сортировки для постраничного чтения (стабильный порядок).
-const ORDER_KEY: Record<string, string> = { ak_settings: 'key', ak_members: 'user_id' };
+const ORDER_KEY: Record<string, string> = {
+  ak_settings: 'key', ak_members: 'user_id', ak_fx_rates: 'rate_date', ak_counters: 'series', ak_expense_requests: 'expense_id',
+};
+// ВАЖНО: у новой таблицы без столбца id — добавьте её сюда, иначе бэкап упадёт (сторож предупредит).
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));

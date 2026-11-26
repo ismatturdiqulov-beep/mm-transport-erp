@@ -173,7 +173,10 @@ const S = {
   user: null, me: null,
   members: [], carriers: [], vehicles: [], owners: [], routes: [], directors: [],
   wallets: [], opening: [], settings: {}, audit: [],
-  page: 'overview', showArchived: false, search: { carriers: '', vehicles: '' }, auditTable: '',
+  rates: [], requests: [], trips: [], movements: [], losses: [], expenses: [], expenseLinks: [], balances: [],
+  reversedIds: new Set(),
+  page: 'overview', showArchived: false, search: { carriers: '', vehicles: '', requests: '' }, auditTable: '',
+  reqFilter: 'active', tripFilter: 'active', mvWallet: '',
 };
 const canEdit = () => S.me && S.me.role === 'owner';
 
@@ -218,6 +221,8 @@ function humanError(e) {
   if (/ak_vehicles_plate_uniq/.test(m)) return 'Машина с таким госномером уже есть.';
   if (/ak_routes_name_uniq/.test(m)) return 'Маршрут с таким названием уже есть.';
   if (/ak_vehicle_owners_vehicle_id_valid_from_key/.test(m)) return 'На эту дату у машины уже указан владелец.';
+  if (/ak_requests_route_day/.test(m)) return 'На это направление и дату погрузки уже есть заявка — добавьте машину в неё.';
+  if (/ak_movements_reversed_once/.test(m)) return 'Эта запись уже отменена.';
   if (/row-level security|permission denied/i.test(m)) return 'Нет прав на это действие.';
   if (/Failed to fetch|NetworkError/i.test(m)) return 'Нет связи с сервером. Проверьте интернет.';
   return m;
@@ -271,27 +276,47 @@ async function enter(session) {
   go(PAGES.some((p) => p.id === hash) ? hash : 'overview');
 }
 
+// Сервер отдаёт не больше 1000 строк за запрос — читаем страницами, чтобы с ростом
+// данных (движения, рейсы) ничего молча не пропадало.
+async function fetchAll(table, order, asc = true) {
+  const out = [];
+  for (let from = 0; ; from += 1000) {
+    let b = sb.from(table).select('*');
+    if (order) b = b.order(order, { ascending: asc });
+    const { data, error } = await b.range(from, from + 999);
+    if (error) throw error;
+    out.push(...data);
+    if (data.length < 1000) return out;
+  }
+}
 async function loadAll() {
-  const q = (t, order) => { let b = sb.from(t).select('*'); if (order) b = b.order(order); return b; };
-  const res = await Promise.all([
-    q('ak_members', 'display_name'), q('ak_carriers', 'name'), q('ak_vehicles', 'plate_norm'),
-    q('ak_vehicle_owners', 'valid_from'), q('ak_routes', 'name'), q('ak_directors', 'valid_from'),
-    q('ak_wallets', 'sort_order'), q('ak_opening_balances', 'created_at'), q('ak_settings'),
-  ]);
-  const err = res.find((r) => r.error);
-  if (err) throw err.error;
-  [S.members, S.carriers, S.vehicles, S.owners, S.routes, S.directors, S.wallets, S.opening] = res.slice(0, 8).map((r) => r.data);
-  S.settings = Object.fromEntries(res[8].data.map((r) => [r.key, r.value]));
+  const T = [
+    ['members', 'ak_members', 'display_name'], ['carriers', 'ak_carriers', 'name'], ['vehicles', 'ak_vehicles', 'plate_norm'],
+    ['owners', 'ak_vehicle_owners', 'valid_from'], ['routes', 'ak_routes', 'name'], ['directors', 'ak_directors', 'valid_from'],
+    ['wallets', 'ak_wallets', 'sort_order'], ['opening', 'ak_opening_balances', 'created_at'], ['settingsRows', 'ak_settings', 'key'],
+    ['rates', 'ak_fx_rates', 'rate_date'], ['requests', 'ak_requests', 'loading_date'], ['trips', 'ak_trips', 'created_at'],
+    ['movements', 'ak_movements', 'created_at'], ['losses', 'ak_movement_losses', 'id'], ['expenses', 'ak_expenses', 'exp_date'],
+    ['expenseLinks', 'ak_expense_requests', 'expense_id'], ['balances', 'ak_wallet_balances', 'wallet_id'],
+  ];
+  const res = await Promise.all(T.map(([, t, o]) => fetchAll(t, o)));
+  T.forEach(([k], i) => { S[k] = res[i]; });
+  S.settings = Object.fromEntries(S.settingsRows.map((r) => [r.key, r.value]));
+  S.reversedIds = new Set(S.movements.filter((m) => m.reverses_id).map((m) => m.reverses_id));
 }
 async function reload() { await loadAll(); render(); }
 
 // ================= навигация =================
 const PAGES = [
   { id: 'overview', ico: '◼', name: 'Обзор', grp: 'Главное' },
+  { id: 'requests', ico: '📑', name: 'Заявки завода', grp: 'Работа' },
+  { id: 'trips', ico: '🚚', name: 'Рейсы', grp: 'Работа' },
+  { id: 'money', ico: '💰', name: 'Кошельки и движения', grp: 'Деньги' },
+  { id: 'expenses', ico: '🧾', name: 'Расходы', grp: 'Деньги' },
+  { id: 'opening', ico: '💼', name: 'Стартовые остатки', grp: 'Деньги' },
+  { id: 'rates', ico: '💱', name: 'Курсы ЦБ', grp: 'Деньги' },
   { id: 'carriers', ico: '🏢', name: 'Перевозчики', grp: 'Справочники' },
   { id: 'vehicles', ico: '🚛', name: 'Машины', grp: 'Справочники' },
   { id: 'routes', ico: '🗺️', name: 'Маршруты', grp: 'Справочники' },
-  { id: 'opening', ico: '💼', name: 'Стартовые остатки', grp: 'Деньги' },
   { id: 'settings', ico: '⚙️', name: 'Реквизиты и тексты', grp: 'Настройки' },
   { id: 'audit', ico: '📜', name: 'Журнал изменений', grp: 'Настройки' },
 ];
@@ -351,10 +376,13 @@ const val = (k) => { const el = document.getElementById('f_' + k); if (!el) retu
 const valOrNull = (k) => { const v = val(k); return v === '' ? null : v; };
 const reasonField = (isEdit) => isEdit && canEdit() ? field({ k: 'reason', label: 'Причина изменения (для журнала)', full: true, hint: 'Необязательно, но помогает потом понять, зачем меняли.' }) : '';
 const modalActions = (saveFn, extra = '') => `<div class="actions">${extra}<button class="btn" onclick="closeModal()">${canEdit() ? 'Отмена' : 'Закрыть'}</button>${canEdit() ? `<button class="btn primary" id="save-btn" onclick="${saveFn}">Сохранить</button>` : ''}</div>`;
-async function saving(fn) {
+// after — что открыть после сохранения (например, вернуться в карточку заявки).
+async function saving(fn, after, okMsg) {
   const b = document.getElementById('save-btn'); if (b) b.disabled = true;
-  try { await fn(); closeModal(); await reload(); toast('Сохранено'); }
-  catch (e) { toast(humanError(e), true); if (b) b.disabled = false; }
+  try {
+    const res = await fn(); closeModal(); await reload(); toast(okMsg || 'Сохранено');
+    if (after) after(res);
+  } catch (e) { toast(humanError(e), true); if (b) b.disabled = false; }
 }
 // Обновить только реально изменившиеся поля (чтобы журнал был чистым).
 function changed(row, upd) { const out = {}; for (const [k, v] of Object.entries(upd)) if ((row[k] ?? null) !== (v ?? null)) out[k] = v; return out; }
@@ -372,25 +400,36 @@ async function saveRow(table, row, upd, keyCol = 'id') {
 // ================= ОБЗОР =================
 const RENDER = {};
 RENDER.overview = () => {
-  const act = (a) => a.filter((x) => x.active !== false);
-  const op = S.opening.filter((o) => !o.archived);
-  const walletCards = S.wallets.map((w) => {
-    const sum = op.filter((o) => o.kind === 'wallet' && o.wallet_id === w.id).reduce((s, o) => s + o.amount_minor, 0);
-    return `<div class="stat"><div class="sl">${esc(w.name)}</div><div class="sv">${fmtMoney(sum, w.currency)}</div><div class="ss">стартовый остаток</div></div>`;
-  }).join('');
   const opening = S.settings.opening || {};
+  const active = S.requests.filter((r) => r.status !== 'cancelled');
+  const liveTrips = S.trips.filter((t) => t.status !== 'failed' && reqById(t.request_id) && reqById(t.request_id).status !== 'cancelled');
+  const issues = [];
+  const noCarrier = liveTrips.filter((t) => !t.carrier_id);
+  if (noCarrier.length) issues.push(['red', `Рейсы без перевозчика: ${noCarrier.length}`, 'trips']);
+  const transit = S.movements.filter((m) => m.status === 'in_transit' && !S.reversedIds.has(m.id));
+  if (transit.length) issues.push(['amber', `Передачи наличных «в пути» (не подтверждено получение): ${transit.length}`, 'money']);
+  const intlNoOf = active.filter((r) => r.kind === 'international' && !r.oformlenie_minor);
+  if (intlNoOf.length) issues.push(['amber', `Международные заявки без оформления: ${intlNoOf.map((r) => r.number || 'черновик ' + fmtDate(r.loading_date)).join(', ')}`, 'requests']);
+  const drafts = active.filter((r) => r.status === 'draft');
+  if (drafts.length) issues.push(['blue', `Заявки-черновики (номер ещё не присвоен): ${drafts.length}`, 'requests']);
+  if (!opening.locked) issues.push(['amber', 'Стартовые остатки ещё не зафиксированы', 'opening']);
   return `<h1>Ангрен Каолин${roBadge()}</h1>
-  <div class="lead">Учёт перевозок по договору с заводом ANGREN KAOLIN: заявки, рейсы, перевозчики, деньги, оформление и расчёт с партнёром. Сейчас готов первый этап — справочники и стартовые остатки. Заявки, рейсы, движение денег, PDF и Telegram-бот подключаются следующими этапами.</div>
+  <div class="lead">Учёт перевозок по договору с заводом ANGREN KAOLIN: заявки, рейсы, перевозчики, деньги. Расчёт прибыли и долгов, PDF-заявки и Telegram-бот подключаются следующими этапами.</div>
+  ${issues.length ? `<div class="card"><h2>Требует внимания</h2>${issues.map(([c, t, p]) => `<div class="note ${c === 'blue' ? '' : 'amber'}" style="cursor:pointer;margin-bottom:6px;${c === 'red' ? 'background:var(--red-bg);border-color:#f0c0c0;color:var(--red);' : ''}" onclick="go('${p}')">${esc(t)} →</div>`).join('')}</div>` : ''}
+  <div class="card"><h2>Кошельки сейчас</h2>${walletCards()}</div>
   <div class="stat-grid">
-    <div class="stat"><div class="sl">Перевозчики</div><div class="sv">${act(S.carriers).length}</div><div class="ss">в справочнике</div></div>
-    <div class="stat"><div class="sl">Машины</div><div class="sv">${act(S.vehicles).length}</div><div class="ss">тягачи и прицепы</div></div>
-    <div class="stat"><div class="sl">Маршруты</div><div class="sv">${act(S.routes).length}</div><div class="ss">${act(S.routes).filter((r) => r.kind === 'local').length} местных</div></div>
-  </div>
-  <div class="card"><h2>Стартовые остатки ${opening.as_of ? 'на ' + fmtDate(opening.as_of) : '<span class="tag amber">дата не указана</span>'} ${opening.locked ? '<span class="tag green">зафиксированы</span>' : '<span class="tag amber">не зафиксированы</span>'}</h2>
-    <div class="stat-grid" style="margin-bottom:0;">${walletCards}</div>
-    <div style="margin-top:10px;"><button class="btn small" onclick="go('opening')">Открыть стартовые остатки →</button></div>
+    <div class="stat"><div class="sl">Заявок</div><div class="sv">${active.length}</div><div class="ss">${active.filter((r) => r.status === 'issued').length} выпущено</div></div>
+    <div class="stat"><div class="sl">Машин в рейсах</div><div class="sv">${liveTrips.length}</div><div class="ss">${liveTrips.filter((t) => t.status === 'delivered').length} доставлено</div></div>
+    <div class="stat"><div class="sl">Курс ЦБ</div><div class="sv">${S.rates.length ? fmtRate(S.rates[S.rates.length - 1].usd_uzs) : '—'}</div><div class="ss">${S.rates.length ? 'на ' + fmtDate(S.rates[S.rates.length - 1].rate_date) : ''}</div></div>
   </div>`;
 };
+function walletCards() {
+  return `<div class="stat-grid" style="margin-bottom:0;">${S.wallets.map((w) => {
+    const b = S.balances.find((x) => x.wallet_id === w.id) || {};
+    return `<div class="stat"><div class="sl">${esc(w.name)}</div><div class="sv">${fmtMoney(b.balance_minor || 0, w.currency)}</div>
+      <div class="ss">${b.in_transit_minor ? 'в пути: ' + fmtMoney(b.in_transit_minor, w.currency) : '&nbsp;'}</div></div>`;
+  }).join('')}</div>`;
+}
 
 // ================= ПЕРЕВОЗЧИКИ =================
 RENDER.carriers = () => {
@@ -400,7 +439,7 @@ RENDER.carriers = () => {
   const body = rows.map((c) => {
     const vs = vehiclesOfCarrier(c.id);
     return `<tr class="click${c.active ? '' : ' off'}" onclick="editCarrier('${c.id}')">
-      <td><b>${esc(c.name)}</b>${c.is_own ? ' <span class="tag blue">свои машины</span>' : ''}${c.price_fixed_uzs ? ' <span class="tag">цена в сумах</span>' : ''}${c.active ? '' : ' <span class="tag">архив</span>'}</td>
+      <td><b>${esc(c.name)}</b>${c.partner_key ? ` <span class="tag blue">машины ${esc(LBL.partner[c.partner_key])}а</span>` : c.is_own ? ' <span class="tag blue">свои машины</span>' : ''}${c.vat_payer ? ' <span class="tag green">НДС</span>' : ''}${c.price_fixed_uzs ? ' <span class="tag">цена в сумах</span>' : ''}${c.active ? '' : ' <span class="tag">архив</span>'}</td>
       <td class="mono">${esc(c.inn)}</td>
       <td>${esc(c.phone)}${c.contact_person ? `<div class="muted">${esc(c.contact_person)}</div>` : ''}</td>
       <td>${c.contract_no ? `№ ${esc(c.contract_no)}${c.contract_date ? ' от ' + fmtDate(c.contract_date) : ''}` : ''} <span class="tag ${c.contract_status === 'signed' ? 'green' : c.contract_status === 'expired' ? 'red' : 'amber'}">${LBL.contract_status[c.contract_status]}</span></td>
@@ -444,7 +483,9 @@ function editCarrier(id) {
     ${field({ k: 'pay_days', label: 'Срок оплаты, рабочих дней', type: 'number', val: v.pay_days })}
     <div></div>
     ${field({ k: 'price_fixed_uzs', label: 'Цена фиксируется в сумах', type: 'check', val: v.price_fixed_uzs, hint: 'Договариваемся о сумме в сумах, а не в долларах.' })}
-    ${field({ k: 'is_own', label: 'Собственные машины MM', type: 'check', val: v.is_own })}
+    ${field({ k: 'vat_payer', label: 'Плательщик НДС', type: 'check', val: v.vat_payer, hint: 'На местных рейсах платим ему цену с НДС 12%; неплательщику — без НДС.' })}
+    ${field({ k: 'is_own', label: 'Заявка оформляется на MM (своя машина)', type: 'check', val: v.is_own, hint: 'Отдельная заявка перевозчику не выпускается.' })}
+    ${field({ k: 'partner_key', label: 'Машины партнёра', type: 'select', opts: { '': '— нет —', ...LBL.partner }, val: v.partner_key || '', hint: 'Оплата за рейс уходит этому партнёру — это оплата перевозки, не его доля.' })}
     ${field({ k: 'notes', label: 'Заметки', type: 'textarea', val: v.notes, full: true })}
     ${c ? field({ k: 'active', label: 'Активен (снимите галочку, чтобы убрать в архив)', type: 'check', val: v.active, full: true }) : ''}
     ${reasonField(!!c)}
@@ -459,7 +500,7 @@ function saveCarrier(id) {
     accountant_phone: valOrNull('accountant_phone'), contract_no: valOrNull('contract_no'), contract_date: valOrNull('contract_date'),
     contract_status: val('contract_status'), director_name: valOrNull('director_name'), pay_timing: val('pay_timing'),
     pay_method: val('pay_method'), pay_days: parseInt(val('pay_days'), 10), price_fixed_uzs: val('price_fixed_uzs'),
-    is_own: val('is_own'), notes: valOrNull('notes'),
+    is_own: val('is_own'), vat_payer: val('vat_payer'), partner_key: valOrNull('partner_key'), notes: valOrNull('notes'),
   };
   if (c) upd.active = val('active');
   if (!upd.name) return toast('Укажите название фирмы', true);
@@ -733,6 +774,708 @@ async function archiveOpening(id) {
   catch (e) { toast(humanError(e), true); }
 }
 
+// ================= общие помощники этапа 2 =================
+const reqById = (id) => S.requests.find((r) => r.id === id);
+const routeById = (id) => S.routes.find((r) => r.id === id);
+const vehById = (id) => S.vehicles.find((v) => v.id === id);
+const walletById = (id) => S.wallets.find((w) => w.id === id);
+const tripById = (id) => S.trips.find((t) => t.id === id);
+const fmtRate = (r) => r == null ? '' : Number(r).toLocaleString('ru-RU', { maximumFractionDigits: 2 });
+function parseRate(s) {
+  const t = String(s ?? '').replace(/[\s ]/g, '').replace(',', '.');
+  return /^\d+(\.\d{1,2})?$/.test(t) && Number(t) > 0 ? t : null;
+}
+const rateOn = (d) => { let r = null; for (const x of S.rates) if (x.rate_date <= d) r = x; return r; };
+const VAT_BP = () => (S.settings.tax || {}).vat_rate_bp || 1200;
+const vatOf = (gross) => Math.round(gross * VAT_BP() / (10000 + VAT_BP()));   // НДС внутри суммы с НДС
+const netOfVat = (gross) => gross - vatOf(gross);
+const reqLabel = (r) => r ? (r.number ? '№ ' + r.number : 'черновик') : '—';
+const reqTitle = (r) => r ? `${reqLabel(r)} · ${(routeById(r.route_id) || {}).name || ''} · ${fmtDate(r.loading_date)}` : '—';
+const tripsOf = (reqId) => S.trips.filter((t) => t.request_id === reqId).sort((a, b) => a.created_at < b.created_at ? -1 : 1);
+const reqTrucks = (r) => r.trucks_confirmed ?? r.trucks_ordered ?? 0;
+const reqTotal = (r) => reqTrucks(r) * r.price_uzs_minor;
+const plates = (t) => [vehById(t.tractor_id), vehById(t.trailer_id)].filter(Boolean).map((v) => v.plate_norm).join(' / ');
+const liveMv = (m) => !S.reversedIds.has(m.id) && m.kind !== 'reversal';
+// Оплачено по рейсу (по валютам), без отменённых записей.
+function tripPaid(tripId) {
+  const out = {};
+  S.movements.filter((m) => m.trip_id === tripId && m.kind === 'carrier_payment' && liveMv(m))
+    .forEach((m) => { out[m.cur_in] = (out[m.cur_in] || 0) + m.amount_in_minor; });
+  return out;
+}
+const fmtMulti = (o) => Object.entries(o).filter(([, v]) => v).map(([c, v]) => fmtMoney(v, c)).join(' + ') || '';
+const STATUS_REQ = { draft: ['amber', 'черновик'], issued: ['green', 'выпущена'], cancelled: ['', 'отменена'] };
+const STATUS_TRIP = { assigned: ['', 'назначен'], loaded: ['blue', 'погружен'], delivered: ['green', 'доставлен'], failed: ['red', 'не состоялся'] };
+const tag = ([c, t]) => `<span class="tag ${c}">${esc(t)}</span>`;
+async function fetchCbuRate(date) {
+  const { data, error } = await sb.functions.invoke('ak-fx', { body: { date } });
+  if (error) {
+    let msg = error.message;
+    try { msg = (await error.context.json()).error || msg; } catch (e) { /* оставить как есть */ }
+    throw new Error(msg);
+  }
+  return data.rate;
+}
+// Навесить пересчёт на все поля открытой модалки.
+const onModalInput = (fn) => { document.querySelectorAll('#modal input, #modal select, #modal textarea').forEach((el) => { el.addEventListener('input', fn); el.addEventListener('change', fn); }); fn(); };
+const setVal = (k, v) => { const el = document.getElementById('f_' + k); if (el) el.value = v ?? ''; };
+
+// ================= ЗАЯВКИ ЗАВОДА =================
+RENDER.requests = () => {
+  const s = S.search.requests.toLowerCase();
+  const f = S.reqFilter;
+  const rows = S.requests.filter((r) => (f === 'all' || (f === 'active' ? r.status !== 'cancelled' : r.status === f)) &&
+    (!s || [r.number, (routeById(r.route_id) || {}).name, fmtDate(r.loading_date)].some((x) => String(x || '').toLowerCase().includes(s))))
+    .sort((a, b) => a.loading_date < b.loading_date ? 1 : a.loading_date > b.loading_date ? -1 : (a.created_at < b.created_at ? 1 : -1));
+  const body = rows.map((r) => {
+    const rt = routeById(r.route_id) || {};
+    const ts = tripsOf(r.id).filter((t) => t.status !== 'failed');
+    const loaded = ts.filter((t) => t.status === 'loaded' || t.status === 'delivered').length;
+    const warn = [];
+    if (ts.some((t) => !t.carrier_id)) warn.push('<span class="tag red">рейс без перевозчика</span>');
+    if (r.kind === 'international' && !r.oformlenie_minor && r.status !== 'cancelled') warn.push('<span class="tag amber">нет оформления</span>');
+    if (r.trucks_confirmed != null && loaded !== r.trucks_confirmed && r.status !== 'cancelled') warn.push(`<span class="tag amber">погружено ${loaded} из ${r.trucks_confirmed}</span>`);
+    const total = reqTotal(r);
+    return `<tr class="click${r.status === 'cancelled' ? ' off' : ''}" onclick="editRequest('${r.id}')">
+      <td class="mono"><b>${esc(r.number || '—')}</b></td>
+      <td>${fmtDate(r.loading_date)}</td>
+      <td>${esc(rt.name)} ${r.kind === 'local' ? '<span class="tag blue">местная</span>' : ''}</td>
+      <td class="num">${r.trucks_confirmed ?? '?'} <span class="muted">/ ${r.trucks_ordered}</span></td>
+      <td class="num">${r.price_cur === 'USD' ? fmtMoney(r.price_minor, 'USD') + '<div class="muted">' + fmtMoney(r.price_uzs_minor, 'UZS') + '</div>' : fmtMoney(r.price_uzs_minor, 'UZS')}</td>
+      <td class="num">${fmtMoney(total, 'UZS')}${r.kind === 'local' ? `<div class="muted">НДС ${fmtMoney(vatOf(total), 'UZS')}</div>` : ''}</td>
+      <td class="num">${r.kind === 'international' ? fmtMoney(reqTrucks(r) * r.oformlenie_minor, 'USD') : ''}</td>
+      <td>${tag(STATUS_REQ[r.status])} ${r.version > 1 ? `<span class="tag">версия ${r.version}</span>` : ''}${warn.join(' ')}</td></tr>`;
+  }).join('');
+  const sum = rows.filter((r) => r.status !== 'cancelled').reduce((a, r) => a + reqTotal(r), 0);
+  const filt = { active: 'действующие', draft: 'черновики', issued: 'выпущенные', cancelled: 'отменённые', all: 'все' };
+  return `<h1>Заявки завода${roBadge()}</h1>
+  <div class="lead">Одна заявка — одно направление в один день погрузки (местные — на каждый рейс). Номер присваивается при выпуске, после подтверждения загрузки; номера не переиспользуются. Изменение выпущенной заявки сохраняется новой версией с тем же номером.</div>
+  <div class="toolbar">
+    <input type="search" placeholder="Поиск: номер, маршрут, дата" value="${esc(S.search.requests)}" oninput="S.search.requests=this.value;rerenderTable('requests')">
+    <select style="max-width:170px;" onchange="S.reqFilter=this.value;render()">${Object.entries(filt).map(([k, v]) => `<option value="${k}"${f === k ? ' selected' : ''}>${v}</option>`).join('')}</select>
+    <span class="grow"></span>
+    ${canEdit() ? '<button class="btn primary" onclick="editRequest()">+ Заявка</button>' : ''}
+  </div>
+  <div class="tbl-wrap" id="tbl-requests"><table><thead><tr><th>№</th><th>Погрузка</th><th>Маршрут</th><th class="num">Машин подтв. / заказ.</th><th class="num">Цена за 1 ТС</th><th class="num">Сумма заявки</th><th class="num">Оформление</th><th>Статус</th></tr></thead>
+  <tbody>${body || '<tr><td colspan="8" class="empty">Заявок пока нет</td></tr>'}</tbody>
+  ${rows.length ? `<tfoot><tr><td colspan="5"><b>Итого (без отменённых)</b></td><td class="num"><b>${fmtMoney(sum, 'UZS')}</b></td><td colspan="2"></td></tr></tfoot>` : ''}</table></div>`;
+};
+
+function editRequest(id) {
+  const r = id ? reqById(id) : null;
+  const v = r || { loading_date: todayIso(), trucks_ordered: 1, price_cur: 'USD', payment_days: (S.settings.factory || {}).payment_days || 90 };
+  const routes = Object.fromEntries([['', '— выберите —'], ...S.routes.filter((x) => x.active || (r && x.id === r.route_id)).map((x) => [x.id, x.name + (x.kind === 'local' ? ' (местный)' : '')])]);
+  const trips = r ? tripsOf(r.id) : [];
+  const ed = canEdit() && (!r || r.status !== 'cancelled');
+  const versions = r && r.version > 1 ? `<div class="hint">Версия ${r.version}. Прежние версии сохранены (видно в «Журнале изменений»).</div>` : '';
+  openModal(`<h3>${r ? 'Заявка завода ' + esc(reqLabel(r)) : 'Новая заявка завода'} ${r ? tag(STATUS_REQ[r.status]) : ''}</h3>
+  ${versions}
+  <div class="grid2">
+    ${field({ k: 'route_id', label: 'Маршрут', type: 'select', opts: routes, val: v.route_id, req: true })}
+    ${field({ k: 'loading_date', label: 'Дата погрузки', type: 'date', val: v.loading_date, req: true })}
+    ${field({ k: 'trucks_ordered', label: 'Машин заказано', type: 'number', val: v.trucks_ordered })}
+    ${field({ k: 'trucks_confirmed', label: 'Машин подтвердил менеджер завода', type: 'number', val: v.trucks_confirmed, hint: 'Долг завода считается по подтверждённым.' })}
+    ${field({ k: 'confirmed_on', label: 'Дата подтверждения', type: 'date', val: v.confirmed_on })}
+    ${field({ k: 'confirmed_doc', label: 'Документ подтверждения', val: v.confirmed_doc })}
+    <div class="intl-only" style="display:contents;">
+      ${field({ k: 'price_cur', label: 'Валюта цены', type: 'select', opts: { USD: 'доллары ($)', UZS: 'сумы' }, val: v.price_cur })}
+    </div>
+    ${field({ k: 'price', label: 'Цена завода за 1 ТС', type: 'money', val: minorToInput(v.price_minor), req: true, hint: 'Местные — сумма с НДС 12%.' })}
+    <div class="intl-only" style="display:contents;">
+      <div class="fr"><label>Курс заявки (сум за $)</label><div style="display:flex;gap:6px;"><input id="f_fx_rate" value="${esc(v.fx_rate ?? '')}" inputmode="decimal"${canEdit() ? '' : ' disabled'}>${canEdit() ? '<button class="btn small" type="button" onclick="reqFetchRate()">ЦБ</button>' : ''}</div><div class="hint">Пусто — возьмётся курс ЦБ на дату погрузки.</div></div>
+      ${field({ k: 'oformlenie', label: 'Оформление, $ за машину', type: 'money', val: minorToInput(v.oformlenie_minor), hint: 'Обычно 100 или 200; 0 — если нет.' })}
+    </div>
+    ${field({ k: 'payment_days', label: 'Срок оплаты заводом, рабочих дней', type: 'number', val: v.payment_days })}
+    ${field({ k: 'notes', label: 'Заметки', type: 'textarea', val: v.notes, full: true })}
+    ${reasonField(!!r)}
+  </div>
+  <div class="note" id="req-preview" style="margin-top:12px;"></div>
+  ${r ? `<div class="sub-list"><h4>Машины (${trips.length})</h4>
+    ${trips.length ? `<table><thead><tr><th>Тягач / прицеп</th><th>Перевозчик</th><th class="num">Цена</th><th class="num">Оплачено</th><th>Статус</th><th>№ заявки</th></tr></thead><tbody>
+    ${trips.map((t) => `<tr class="click" onclick="editTrip('${t.id}')"><td class="mono">${esc(plates(t)) || '—'}</td><td>${t.carrier_id ? esc((carrierById(t.carrier_id) || {}).name) : '<span class="tag red">нет перевозчика</span>'}</td>
+      <td class="num">${t.price_minor != null ? fmtMoney(t.price_minor, t.price_cur) : ''}</td><td class="num">${fmtMulti(tripPaid(t.id))}</td><td>${tag(STATUS_TRIP[t.status])}</td><td class="mono">${esc(t.number || '')}</td></tr>`).join('')}
+    </tbody></table>` : '<div class="muted" style="font-size:12.5px;">машин пока нет</div>'}
+    ${ed ? `<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;"><button class="btn small" onclick="editTrip(null,'${r.id}')">+ Машина</button>
+      <button class="btn small primary" onclick="issueRequest('${r.id}')">${r.number ? 'Выпустить заявки на новые машины' : 'Выпустить заявку (присвоить номер)'}</button></div>` : ''}
+  </div>` : ''}
+  ${modalActions(ed ? `saveRequest(${r ? `'${r.id}'` : ''})` : 'closeModal()', r && ed ? `<button class="btn left" onclick="cancelRequest('${r.id}')">Отменить заявку</button>` : '')}`);
+  if (!ed) document.getElementById('save-btn')?.remove();
+  onModalInput(reqPreview);
+}
+function reqPreview() {
+  const rt = routeById(val('route_id'));
+  const local = rt && rt.kind === 'local';
+  document.querySelectorAll('#modal .intl-only').forEach((el) => { el.style.display = local ? 'none' : 'contents'; });
+  const box = document.getElementById('req-preview');
+  if (!box) return;
+  const price = parseMoney(val('price'));
+  const n = parseInt(val('trucks_confirmed') || val('trucks_ordered') || '0', 10) || 0;
+  if (!rt || Number.isNaN(price)) { box.innerHTML = 'Выберите маршрут и укажите цену — здесь появится расчёт.'; return; }
+  let perUzs, line;
+  if (local || val('price_cur') === 'UZS') {
+    perUzs = price; line = '';
+  } else {
+    const rate = parseRate(val('fx_rate')) || (rateOn(val('loading_date')) || {}).usd_uzs;
+    if (!rate) { box.innerHTML = 'Нет курса: нажмите «ЦБ» или введите курс заявки.'; return; }
+    perUzs = Math.round(price * Number(rate));
+    line = ` (${fmtMoney(price, 'USD')} × ${fmtRate(rate)}${parseRate(val('fx_rate')) ? '' : ' — курс ЦБ'})`;
+  }
+  const total = perUzs * n;
+  const of = local ? 0 : parseMoney(val('oformlenie') || '0');
+  box.innerHTML = `За 1 ТС: <b>${fmtMoney(perUzs, 'UZS')}</b>${esc(line)} · машин: <b>${n}</b> · сумма заявки: <b>${fmtMoney(total, 'UZS')}</b>` +
+    (local ? `<br>в т. ч. НДС 12%: <b>${fmtMoney(vatOf(total), 'UZS')}</b>, без НДС: ${fmtMoney(netOfVat(total), 'UZS')}` : '') +
+    (!local && of > 0 ? `<br>Оформление заводу: ${fmtMoney(of, 'USD')} × ${n} = <b>${fmtMoney(of * n, 'USD')}</b>` : '') +
+    (!local && !of ? '<br><span style="color:var(--amber);">Оформление не указано — так и задумано?</span>' : '');
+}
+async function reqFetchRate() {
+  const d = val('loading_date');
+  if (!d) return toast('Сначала укажите дату погрузки', true);
+  try { const r = await fetchCbuRate(d); setVal('fx_rate', r.usd_uzs); reqPreview(); toast(`Курс ЦБ на ${fmtDate(r.rate_date)}: ${fmtRate(r.usd_uzs)}`); }
+  catch (e) { toast(humanError(e), true); }
+}
+function saveRequest(id) {
+  const r = id ? reqById(id) : null;
+  const rt = routeById(val('route_id'));
+  if (!rt) return toast('Выберите маршрут', true);
+  const local = rt.kind === 'local';
+  const price = parseMoney(val('price'));
+  if (!(price > 0)) return toast('Укажите цену за 1 ТС', true);
+  const conf = val('trucks_confirmed');
+  const upd = {
+    route_id: rt.id, loading_date: val('loading_date'), trucks_ordered: parseInt(val('trucks_ordered') || '0', 10),
+    trucks_confirmed: conf === '' ? null : parseInt(conf, 10), confirmed_on: valOrNull('confirmed_on'),
+    confirmed_doc: valOrNull('confirmed_doc'), price_minor: price, price_cur: local ? 'UZS' : val('price_cur'),
+    fx_rate: local ? null : parseRate(val('fx_rate')), oformlenie_minor: local ? 0 : (parseMoney(val('oformlenie') || '0') || 0),
+    payment_days: parseInt(val('payment_days') || '90', 10), notes: valOrNull('notes'),
+  };
+  if (!upd.loading_date) return toast('Укажите дату погрузки', true);
+  if (!local && val('fx_rate') && !upd.fx_rate) return toast('Курс — число, например 11975 или 11987,89', true);
+  if (upd.oformlenie_minor < 0 || Number.isNaN(upd.oformlenie_minor)) return toast('Оформление — число', true);
+  saving(() => saveRow('ak_requests', r, upd), (res) => editRequest(r ? r.id : res.id));
+}
+async function issueRequest(id) {
+  const r = reqById(id);
+  const loaded = tripsOf(id).filter((t) => ['loaded', 'delivered'].includes(t.status) && !t.number);
+  if (!r.trucks_confirmed) return toast('Сначала укажите, сколько машин подтвердил завод, и сохраните', true);
+  if (!confirm(`${r.number ? 'Выпустить заявки перевозчикам' : 'Присвоить заявке номер и выпустить'}?\nМашин, погруженных без номера: ${loaded.length}.\nНомера не переиспользуются.`)) return;
+  try {
+    const { data, error } = await sb.rpc('ak_issue_request', { p_id: id });
+    if (error) throw error;
+    await reload(); editRequest(id); toast('Заявка № ' + data + ' выпущена');
+  } catch (e) { toast(humanError(e), true); }
+}
+async function cancelRequest(id) {
+  const reason = prompt('Почему отменяется заявка? (запишется в журнал; заявка останется в списке со статусом «отменена»)');
+  if (!reason) return;
+  try { await dbRun(sb.from('ak_requests').update({ status: 'cancelled' }).eq('id', id), reason); closeModal(); await reload(); toast('Заявка отменена'); }
+  catch (e) { toast(humanError(e), true); }
+}
+
+// ================= РЕЙСЫ =================
+RENDER.trips = () => {
+  const f = S.tripFilter;
+  const rows = S.trips.filter((t) => {
+    const r = reqById(t.request_id);
+    if (f === 'nocarrier') return !t.carrier_id && t.status !== 'failed';
+    if (f === 'active') return r && r.status !== 'cancelled' && t.status !== 'failed';
+    return f === 'all' || t.status === f;
+  }).sort((a, b) => { const ra = reqById(a.request_id) || {}, rb = reqById(b.request_id) || {}; return ra.loading_date < rb.loading_date ? 1 : -1; });
+  const body = rows.map((t) => {
+    const r = reqById(t.request_id) || {};
+    const c = carrierById(t.carrier_id);
+    return `<tr class="click" onclick="editTrip('${t.id}')">
+      <td>${fmtDate(r.loading_date)}</td><td>${esc((routeById(r.route_id) || {}).name)}<div class="muted">заявка ${esc(reqLabel(r))}</div></td>
+      <td class="mono">${esc(plates(t)) || '—'}</td>
+      <td>${c ? esc(c.name) + (c.partner_key ? ' <span class="tag blue">партнёр</span>' : '') : '<span class="tag red">нет перевозчика</span>'}</td>
+      <td class="num">${t.price_minor != null ? fmtMoney(t.price_minor, t.price_cur) : ''}${t.price_cur === 'USD' && t.price_uzs_minor ? `<div class="muted">${fmtMoney(t.price_uzs_minor, 'UZS')}</div>` : ''}</td>
+      <td class="num">${fmtMulti(tripPaid(t.id))}</td>
+      <td>${tag(STATUS_TRIP[t.status])}${t.pay_method === 'cash' ? ' <span class="tag">наличными</span>' : ''}</td>
+      <td class="mono">${esc(t.number || '')}</td></tr>`;
+  }).join('');
+  const filt = { active: 'действующие', nocarrier: 'без перевозчика', assigned: 'назначены', loaded: 'погружены', delivered: 'доставлены', failed: 'не состоялись', all: 'все' };
+  return `<h1>Рейсы${roBadge()}</h1>
+  <div class="lead">Каждая машина в заявке — отдельный рейс: перевозчик, цена, способ оплаты, статусы. Заявка перевозчику всегда на реального исполнителя; способ оплаты (перечисление или наличные) на это не влияет.</div>
+  <div class="toolbar"><select style="max-width:190px;" onchange="S.tripFilter=this.value;render()">${Object.entries(filt).map(([k, v]) => `<option value="${k}"${f === k ? ' selected' : ''}>${v}</option>`).join('')}</select>
+    <span class="muted" style="font-size:12px;">Новый рейс добавляется из карточки заявки («+ Машина»).</span></div>
+  <div class="tbl-wrap"><table><thead><tr><th>Погрузка</th><th>Маршрут</th><th>Тягач / прицеп</th><th>Перевозчик</th><th class="num">Цена</th><th class="num">Оплачено</th><th>Статус</th><th>№ заявки</th></tr></thead>
+  <tbody>${body || '<tr><td colspan="8" class="empty">Рейсов нет</td></tr>'}</tbody></table></div>`;
+};
+
+function editTrip(id, requestId) {
+  const t = id ? tripById(id) : null;
+  const r = reqById(t ? t.request_id : requestId);
+  S.tripReq = r.id;
+  const local = r.kind === 'local';
+  const ed = canEdit() && r.status !== 'cancelled';
+  const v = t || { status: 'assigned', price_cur: local ? 'UZS' : 'USD' };
+  const tractors = S.vehicles.filter((x) => x.kind === 'tractor' && x.active).map((x) => `<option value="${esc(x.plate_norm)}">`).join('');
+  const trailers = S.vehicles.filter((x) => x.kind === 'trailer' && x.active).map((x) => `<option value="${esc(x.plate_norm)}">`).join('');
+  const pays = t ? S.movements.filter((m) => m.trip_id === t.id && m.kind === 'carrier_payment') : [];
+  openModal(`<h3>${t ? 'Рейс' + (t.number ? ' · заявка перевозчику № ' + esc(t.number) : '') : 'Новая машина в заявку'}</h3>
+  <div class="hint" style="margin:-8px 0 12px;">Заявка завода ${esc(reqTitle(r))}${local ? ' · местная' : ''}</div>
+  <datalist id="dl-tractors">${tractors}</datalist><datalist id="dl-trailers">${trailers}</datalist>
+  <div class="grid2">
+    <div class="fr"><label>Тягач (госномер)</label><input id="f_tractor" list="dl-tractors" value="${esc(t ? (vehById(t.tractor_id) || {}).plate_norm || '' : '')}" onblur="tripPlateChanged()"${ed ? '' : ' disabled'}></div>
+    <div class="fr"><label>Прицеп (госномер)</label><input id="f_trailer" list="dl-trailers" value="${esc(t ? (vehById(t.trailer_id) || {}).plate_norm || '' : '')}"${ed ? '' : ' disabled'}></div>
+    <div class="full hint" id="plate-hint"></div>
+    ${field({ k: 'carrier_id', label: 'Перевозчик', type: 'select', opts: carrierOpts(), val: v.carrier_id, full: true })}
+    ${local ? '' : field({ k: 'price_cur', label: 'Валюта цены перевозчику', type: 'select', opts: { USD: 'доллары ($)', UZS: 'сумы' }, val: v.price_cur })}
+    ${field({ k: 'price', label: 'Цена перевозчику', type: 'money', val: minorToInput(v.price_minor) })}
+    ${local ? field({ k: 'vat_included', label: 'Цена с НДС (перевозчик — плательщик НДС)', type: 'check', val: v.vat_included }) : `<div class="fr"><label>Курс (сум за $)</label><input id="f_fx_rate" value="${esc(v.fx_rate ?? r.fx_rate ?? '')}" inputmode="decimal"${ed ? '' : ' disabled'}><div class="hint">По умолчанию — курс заявки завода.</div></div>`}
+    ${field({ k: 'pay_timing', label: 'Когда платим', type: 'select', opts: LBL.pay_timing, val: v.pay_timing })}
+    ${field({ k: 'pay_method', label: 'Как платим', type: 'select', opts: LBL.pay_method, val: v.pay_method })}
+    ${field({ k: 'pay_days', label: 'Срок, рабочих дней', type: 'number', val: v.pay_days })}
+    ${field({ k: 'status', label: 'Статус', type: 'select', opts: Object.fromEntries(Object.entries(STATUS_TRIP).map(([k, x]) => [k, x[1]])), val: v.status })}
+    ${field({ k: 'loaded_on', label: 'Дата погрузки', type: 'date', val: v.loaded_on })}
+    ${field({ k: 'delivered_on', label: 'Дата доставки', type: 'date', val: v.delivered_on })}
+    ${field({ k: 'failed_reason', label: 'Причина (если «не состоялся»)', val: v.failed_reason, full: true })}
+    ${field({ k: 'notes', label: 'Заметки', type: 'textarea', val: v.notes, full: true })}
+    ${reasonField(!!t)}
+  </div>
+  <div class="note" id="trip-preview" style="margin-top:12px;"></div>
+  ${t ? `<div class="sub-list"><h4>Оплаты перевозчику</h4>
+    ${pays.length ? pays.map((m) => `<div style="font-size:12.5px;">${fmtDate(m.op_date)} · ${fmtMoney(m.amount_in_minor, m.cur_in)} из «${esc((walletById(m.from_wallet) || {}).name)}» ${S.reversedIds.has(m.id) ? '<span class="tag red">отменена</span>' : ''}</div>`).join('') : '<div class="muted" style="font-size:12.5px;">оплат нет</div>'}
+    ${canEdit() && t.carrier_id ? `<button class="btn small" style="margin-top:8px;" onclick="openOp('carrier_payment',{trip_id:'${t.id}',carrier_id:'${t.carrier_id}'})">+ Оплатить перевозчику</button>` : ''}
+  </div>` : ''}
+  ${modalActions(ed ? `saveTrip(${t ? `'${t.id}'` : 'null'},'${r.id}')` : 'closeModal()', `<button class="btn left" onclick="closeModal();editRequest('${r.id}')">← К заявке</button>`)}`);
+  if (!ed) document.getElementById('save-btn')?.remove();
+  if (ed) {
+    document.getElementById('f_carrier_id').addEventListener('change', () => tripCarrierChanged(!t));
+    if (!t) tripCarrierChanged(true);
+  }
+  onModalInput(tripPreview);
+}
+// Подставить умолчания перевозчика (цена с/без НДС, валюта, условия оплаты).
+function tripCarrierChanged(fillAll) {
+  const r = reqById(currentTripRequestId());
+  const c = carrierById(val('carrier_id'));
+  if (!c) return;
+  if (r.kind === 'local') {
+    const vatEl = document.getElementById('f_vat_included'); if (vatEl) vatEl.checked = !!c.vat_payer;
+    if (fillAll || !val('price')) setVal('price', minorToInput(c.vat_payer ? r.price_uzs_minor : netOfVat(r.price_uzs_minor)));
+  } else if (fillAll) {
+    setVal('price_cur', c.price_fixed_uzs ? 'UZS' : 'USD');
+  }
+  if (fillAll) { setVal('pay_timing', c.pay_timing); setVal('pay_method', c.pay_method); setVal('pay_days', c.pay_days); }
+  tripPreview();
+}
+const currentTripRequestId = () => S.tripReq;
+function tripPlateChanged() {
+  const r = reqById(currentTripRequestId());
+  const p = normPlate(val('tractor'));
+  const hint = document.getElementById('plate-hint');
+  if (!p) { hint.textContent = ''; return; }
+  const veh = S.vehicles.find((x) => x.plate_norm === p);
+  if (!veh) { hint.innerHTML = `<span style="color:var(--amber);">Новая машина ${esc(p)} — при сохранении добавится в справочник за выбранной фирмой.</span>`; return; }
+  const o = currentOwner(veh.id, r.loading_date);
+  const c = o && carrierById(o.carrier_id);
+  if (c) {
+    hint.innerHTML = `На ${fmtDate(r.loading_date)} машина у фирмы <b>${esc(c.name)}</b>.`;
+    if (!val('carrier_id')) { setVal('carrier_id', c.id); tripCarrierChanged(true); }
+    // прицеп из последнего рейса этой машины
+    if (!val('trailer')) {
+      const last = S.trips.filter((x) => x.tractor_id === veh.id && x.trailer_id).sort((a, b) => a.created_at < b.created_at ? 1 : -1)[0];
+      if (last) setVal('trailer', (vehById(last.trailer_id) || {}).plate_norm);
+    }
+  } else hint.innerHTML = 'Машина в справочнике, но не привязана к фирме — выберите перевозчика.';
+}
+function tripPreview() {
+  const box = document.getElementById('trip-preview'); if (!box) return;
+  const r = reqById(currentTripRequestId()); if (!r) return;
+  const price = parseMoney(val('price'));
+  const lines = [];
+  if (!Number.isNaN(price) && val('price')) {
+    const cur = r.kind === 'local' ? 'UZS' : val('price_cur');
+    const rate = parseRate(val('fx_rate')) || r.fx_rate;
+    const uzs = cur === 'USD' ? Math.round(price * Number(rate)) : price;
+    lines.push(`Цена перевозчику: <b>${fmtMoney(uzs, 'UZS')}</b>${cur === 'USD' ? ` (${fmtMoney(price, 'USD')} × ${fmtRate(rate)})` : ''}`);
+    if (r.kind === 'local') {
+      const vatIn = document.getElementById('f_vat_included')?.checked;
+      lines.push(vatIn ? `в т. ч. НДС ${fmtMoney(vatOf(uzs), 'UZS')} (к зачёту)` : 'без НДС');
+      lines.push(`Заводу за эту машину (с НДС): ${fmtMoney(r.price_uzs_minor, 'UZS')}, без НДС: ${fmtMoney(netOfVat(r.price_uzs_minor), 'UZS')}`);
+    } else {
+      lines.push(`Завод платит за машину: ${fmtMoney(r.price_uzs_minor, 'UZS')} · оформление ${fmtMoney(r.oformlenie_minor, 'USD')}`);
+    }
+  }
+  const c = carrierById(val('carrier_id'));
+  if (c && c.partner_key) lines.push(`Машина партнёра (${esc(LBL.partner[c.partner_key])}): заявка оформляется на MM, оплата — ему лично.`);
+  box.innerHTML = lines.join('<br>') || 'Укажите перевозчика и цену.';
+}
+async function ensureVehicle(plate, kind, carrierId, fromDate) {
+  const p = normPlate(plate);
+  if (!p) return null;
+  let veh = S.vehicles.find((x) => x.plate_norm === p);
+  if (!veh) {
+    if (!carrierId) throw new Error(`Машина ${p} новая — выберите перевозчика, за которым её записать`);
+    veh = await dbRun(sb.from('ak_vehicles').insert({ plate: p, kind }).select().single());
+    await dbRun(sb.from('ak_vehicle_owners').insert({ vehicle_id: veh.id, carrier_id: carrierId, valid_from: fromDate }));
+    S.vehicles.push(veh);
+  }
+  return veh;
+}
+function saveTrip(id, requestId) {
+  const t = id ? tripById(id) : null;
+  const r = reqById(requestId);
+  const local = r.kind === 'local';
+  const priceStr = val('price');
+  const price = priceStr ? parseMoney(priceStr) : null;
+  if (priceStr && !(price >= 0)) return toast('Цена — число', true);
+  const cur = local ? 'UZS' : val('price_cur');
+  const rate = local ? null : parseRate(val('fx_rate'));
+  if (!local && cur === 'USD' && val('fx_rate') && !rate) return toast('Курс — число', true);
+  const carrierId = valOrNull('carrier_id');
+  const status = val('status');
+  if (status === 'failed' && !val('failed_reason')) return toast('Укажите причину, почему рейс не состоялся', true);
+  saving(async () => {
+    const tractor = await ensureVehicle(val('tractor'), 'tractor', carrierId, r.loading_date);
+    const trailer = await ensureVehicle(val('trailer'), 'trailer', carrierId, r.loading_date);
+    // машина у другой фирмы на дату погрузки — уточнить, сменился ли владелец
+    if (tractor && carrierId) {
+      const o = currentOwner(tractor.id, r.loading_date);
+      if (o && o.carrier_id !== carrierId) {
+        const c = carrierById(carrierId), was = carrierById(o.carrier_id);
+        if (confirm(`Машина ${tractor.plate_norm} в справочнике записана за «${was.name}».\nОна перешла к «${c.name}» с ${fmtDate(r.loading_date)}?\n\nОК — записать смену владельца. Отмена — оставить как есть (рейс всё равно сохранится на «${c.name}»).`)) {
+          await dbRun(sb.from('ak_vehicle_owners').insert({ vehicle_id: tractor.id, carrier_id: carrierId, valid_from: r.loading_date }), 'смена владельца при оформлении рейса');
+        }
+      }
+    }
+    const upd = {
+      request_id: r.id, tractor_id: tractor ? tractor.id : null, trailer_id: trailer ? trailer.id : null, carrier_id: carrierId,
+      price_minor: price, price_cur: price === null ? null : cur, fx_rate: cur === 'USD' ? (rate || r.fx_rate) : null,
+      vat_included: local ? !!val('vat_included') : false,
+      pay_timing: valOrNull('pay_timing'), pay_method: valOrNull('pay_method'), pay_days: val('pay_days') === '' ? null : parseInt(val('pay_days'), 10),
+      status, loaded_on: valOrNull('loaded_on'), delivered_on: valOrNull('delivered_on'),
+      failed_reason: valOrNull('failed_reason'), notes: valOrNull('notes'),
+    };
+    return saveRow('ak_trips', t, upd);
+  }, () => editRequest(r.id));
+}
+
+// ================= ДЕНЬГИ: КОШЕЛЬКИ И ДВИЖЕНИЯ =================
+const MV_KIND = {
+  factory_income: 'Поступление от завода', carrier_payment: 'Оплата перевозчику', cash_withdrawal: 'Снятие наличных по чеку',
+  transfer: 'Перевод / обмен', handover: 'Передача наличных', oformlenie_payment: 'Оплата оформления',
+  expense: 'Расход', partner_withdrawal: 'Изъятие партнёра', help_return: 'Возврат фин. помощи',
+  income_other: 'Прочее поступление', reversal: 'Отмена записи',
+};
+const LOSS_KIND = {
+  payment_order_fee: 'комиссия за поручение', cash_withdrawal_fee: 'комиссия за снятие', bank_fee: 'комиссия банка',
+  third_party_fee: 'комиссия третьих лиц', fx_diff: 'курсовая разница', cash_delivery: 'доставка наличных', other: 'прочие потери',
+};
+// Сценарии операций (ТЗ, раздел 5).
+const OPS = [
+  { id: 'factory_income', title: 'Поступление от завода', hint: 'Деньги от ANGREN KAOLIN на расчётный счёт.' },
+  { id: 'carrier_payment', title: 'Оплата перевозчику', hint: 'С Р/С (комиссия банка добавится сама) или наличными из кассы.' },
+  { id: 'cash_withdrawal', title: 'Снятие наличных по чеку', hint: 'Р/С → касса сум. Комиссия 0,5% запишется сама.' },
+  { id: 'via_counterparty', title: 'Наличные через контрагента', hint: 'Перевод с Р/С контрагенту, взамен наличные сумы или доллары. Контрагент — под реальным названием.' },
+  { id: 'exchange', title: 'Обмен валюты', hint: 'Сумы ↔ доллары между кассами. Курсовая разница к курсу ЦБ посчитается сама.' },
+  { id: 'handover', title: 'Передача наличных', hint: 'От одного держателя другому. Пока получатель не подтвердил — деньги «в пути».' },
+  { id: 'oformlenie_payment', title: 'Оплата оформления заводу', hint: 'По международным заявкам.' },
+  { id: 'partner_withdrawal', title: 'Изъятие партнёра (в счёт доли)', hint: 'Не расход и не уменьшает прибыль.' },
+  { id: 'help_return', title: 'Возврат финансовой помощи', hint: 'Партнёр раньше оплатил расход лично — возвращаем.' },
+  { id: 'income_other', title: 'Прочее поступление', hint: 'Любой другой приход в кошелёк.' },
+  { id: 'expense', title: 'Расход (грузчики, брокер, нотариус, логист…)', hint: 'Откроется форма расхода.' },
+];
+const walletOpts = (filter) => Object.fromEntries(S.wallets.filter((w) => w.active && (!filter || filter(w))).map((w) => [w.id, w.name]));
+const mvWhere = (m) => {
+  const c = carrierById(m.carrier_id), r = reqById(m.request_id), t = tripById(m.trip_id);
+  return [c && esc(c.name), t && `<span class="mono">${esc(plates(t))}</span>`, r && 'заявка ' + esc(reqLabel(r)),
+    m.partner_key && esc(LBL.partner[m.partner_key]), m.counterparty && esc(m.counterparty)].filter(Boolean).join(' · ');
+};
+RENDER.money = () => {
+  const w = S.mvWallet;
+  const rows = S.movements.filter((m) => !w || m.from_wallet === w || m.to_wallet === w)
+    .sort((a, b) => a.op_date < b.op_date ? 1 : a.op_date > b.op_date ? -1 : (a.created_at < b.created_at ? 1 : -1));
+  const lossesOf = (id) => S.losses.filter((l) => l.movement_id === id);
+  const body = rows.map((m) => {
+    const rev = S.reversedIds.has(m.id);
+    const ls = lossesOf(m.id);
+    const wf = walletById(m.from_wallet), wt = walletById(m.to_wallet);
+    return `<tr class="${rev || m.kind === 'reversal' ? 'off' : ''}">
+      <td style="white-space:nowrap;">${fmtDate(m.op_date)}</td>
+      <td>${esc(MV_KIND[m.kind])}${m.status === 'in_transit' && !rev ? ' <span class="tag amber">в пути</span>' : ''}${rev ? ' <span class="tag red">отменена</span>' : ''}
+        <div class="muted">${wf ? esc(wf.name) : 'извне'} → ${wt ? esc(wt.name) : 'наружу'}</div></td>
+      <td>${mvWhere(m)}${m.note ? `<div class="muted">${esc(m.note)}</div>` : ''}</td>
+      <td class="num">${m.amount_out_minor ? fmtMoney(m.amount_out_minor, m.cur_out) : ''}</td>
+      <td class="num">${fmtMoney(m.amount_in_minor, m.cur_in)}${m.fx_rate ? `<div class="muted">курс ${fmtRate(m.fx_rate)}</div>` : ''}</td>
+      <td style="font-size:11.5px;">${ls.map((l) => `${esc(LOSS_KIND[l.kind])}: ${fmtMoney(l.amount_minor, m.cur_out)}`).join('<br>')}</td>
+      <td style="white-space:nowrap;">${canEdit() && m.status === 'in_transit' && !rev ? `<button class="btn small" onclick="confirmMv('${m.id}')">Получено</button> ` : ''}
+        ${canEdit() && m.kind !== 'reversal' && !rev ? `<button class="btn small" onclick="reverseMv('${m.id}')">Отменить</button>` : ''}</td></tr>`;
+  }).join('');
+  return `<h1>Кошельки и движения${roBadge()}</h1>
+  <div class="lead">Каждая операция — движение «из кошелька → в кошелёк». Платёж не редактируется: ошибочный отменяется встречной записью и вносится верный. Остаток кошелька = стартовый остаток + все движения; уйти в минус нельзя.</div>
+  ${walletCards()}
+  <div class="toolbar" style="margin-top:14px;">
+    <select style="max-width:240px;" onchange="S.mvWallet=this.value;render()"><option value="">Все кошельки</option>${S.wallets.map((x) => `<option value="${x.id}"${w === x.id ? ' selected' : ''}>${esc(x.name)}</option>`).join('')}</select>
+    <span class="grow"></span>
+    ${canEdit() ? '<button class="btn primary" onclick="chooseOp()">+ Операция</button>' : ''}
+  </div>
+  <div class="tbl-wrap"><table><thead><tr><th>Дата</th><th>Операция</th><th>Кому / по чему</th><th class="num">Списано</th><th class="num">Получено</th><th>Потери</th><th></th></tr></thead>
+  <tbody>${body || '<tr><td colspan="7" class="empty">Движений пока нет</td></tr>'}</tbody></table></div>`;
+};
+function chooseOp() {
+  openModal(`<h3>Какая операция?</h3>
+  <div style="display:grid;gap:6px;">${OPS.map((o) => `<div class="card click" style="margin:0;cursor:pointer;padding:10px 12px;" onclick="openOp('${o.id}')"><b>${esc(o.title)}</b><div class="hint">${esc(o.hint)}</div></div>`).join('')}</div>
+  <div class="actions"><button class="btn" onclick="closeModal()">Отмена</button></div>`);
+}
+function openOp(op, preset = {}) {
+  if (op === 'expense') return editExpense();
+  const o = OPS.find((x) => x.id === op);
+  const F = [field({ k: 'op_date', label: 'Дата операции', type: 'date', val: todayIso(), req: true })];
+  const cash = (w) => w.kind === 'cash';
+  const reqOpts = (filter) => Object.fromEntries([['', '— не указывать —'], ...S.requests.filter((r) => r.status !== 'cancelled' && (!filter || filter(r)))
+    .sort((a, b) => a.loading_date < b.loading_date ? 1 : -1).slice(0, 80).map((r) => [r.id, reqTitle(r)])]);
+  const losses = () => `<div class="full hint" style="margin-top:4px;">Потери (если были), в валюте списания:</div>
+    ${field({ k: 'loss_third', label: 'Комиссия третьих лиц', type: 'money' })}${field({ k: 'loss_delivery', label: 'Доставка наличных (например, в Ангрен)', type: 'money' })}
+    ${field({ k: 'loss_other', label: 'Прочие потери', type: 'money' })}`;
+  switch (op) {
+    case 'factory_income':
+      F.push(field({ k: 'to_wallet', label: 'Куда', type: 'select', opts: walletOpts((w) => w.kind === 'bank'), val: 'rs' }),
+        field({ k: 'amount_in', label: 'Сумма, сум', type: 'money', req: true }),
+        field({ k: 'request_id', label: 'По заявке (необязательно)', type: 'select', opts: reqOpts(), full: true }));
+      break;
+    case 'carrier_payment': {
+      const trips = S.trips.filter((t) => t.carrier_id && t.status !== 'failed');
+      F.push(field({ k: 'from_wallet', label: 'Откуда', type: 'select', opts: walletOpts(), val: 'rs' }),
+        field({ k: 'carrier_id', label: 'Перевозчик', type: 'select', opts: carrierOpts(), val: preset.carrier_id, req: true }),
+        `<div class="fr full"><label>Рейс</label><select id="f_trip_id">${['<option value="">— без привязки к рейсу —</option>', ...trips.map((t) => `<option value="${t.id}" data-c="${t.carrier_id}"${preset.trip_id === t.id ? ' selected' : ''}>${esc(reqTitle(reqById(t.request_id)))} · ${esc(plates(t))}</option>`)].join('')}</select></div>`,
+        field({ k: 'amount_in', label: 'Сумма перевозчику (в валюте кошелька)', type: 'money', req: true }));
+      break;
+    }
+    case 'cash_withdrawal':
+      F.push(field({ k: 'to_wallet', label: 'В кассу', type: 'select', opts: walletOpts((w) => cash(w) && w.currency === 'UZS') }),
+        field({ k: 'amount_in', label: 'Получено наличными, сум', type: 'money', req: true }));
+      break;
+    case 'via_counterparty':
+      F.push(field({ k: 'to_wallet', label: 'Получено в кассу', type: 'select', opts: walletOpts(cash) }),
+        field({ k: 'counterparty', label: 'Контрагент (реальное название)', req: true }),
+        field({ k: 'amount_out', label: 'Переведено с Р/С, сум', type: 'money', req: true, hint: 'Сумма платёжки; комиссия банка добавится сама.' }),
+        field({ k: 'amount_in', label: 'Получено наличными (в валюте кассы)', type: 'money', req: true }), losses());
+      break;
+    case 'exchange':
+      F.push(field({ k: 'from_wallet', label: 'Из кассы', type: 'select', opts: walletOpts(cash) }),
+        field({ k: 'to_wallet', label: 'В кассу', type: 'select', opts: walletOpts(cash), val: 'cash_usd_ismat' }),
+        field({ k: 'amount_out', label: 'Отдали (в валюте первой кассы)', type: 'money', req: true }),
+        field({ k: 'amount_in', label: 'Получили (в валюте второй кассы)', type: 'money', req: true }),
+        field({ k: 'counterparty', label: 'Где менялись (необязательно)' }), losses());
+      break;
+    case 'handover':
+      F.push(field({ k: 'from_wallet', label: 'От кого (касса)', type: 'select', opts: walletOpts(cash) }),
+        field({ k: 'to_wallet', label: 'Кому (касса)', type: 'select', opts: walletOpts(cash), val: 'cash_uzs_sarvar' }),
+        field({ k: 'amount_in', label: 'Сумма', type: 'money', req: true }),
+        field({ k: 'received', label: 'Получатель уже подтвердил получение', type: 'check', full: true, hint: 'Без галочки деньги будут «в пути», пока получатель не подтвердит.' }));
+      break;
+    case 'oformlenie_payment':
+      F.push(field({ k: 'from_wallet', label: 'Откуда', type: 'select', opts: walletOpts(), val: 'cash_usd_ismat' }),
+        field({ k: 'amount_in', label: 'Сумма (в валюте кошелька)', type: 'money', req: true }),
+        field({ k: 'request_id', label: 'По заявке (необязательно)', type: 'select', opts: reqOpts((r) => r.kind === 'international'), full: true }));
+      break;
+    case 'partner_withdrawal':
+    case 'help_return':
+      F.push(field({ k: 'partner_key', label: 'Партнёр', type: 'select', opts: LBL.partner }),
+        field({ k: 'from_wallet', label: 'Откуда', type: 'select', opts: walletOpts() }),
+        field({ k: 'amount_in', label: 'Сумма (в валюте кошелька)', type: 'money', req: true }));
+      break;
+    case 'income_other':
+      F.push(field({ k: 'to_wallet', label: 'Куда', type: 'select', opts: walletOpts() }),
+        field({ k: 'counterparty', label: 'От кого' }), field({ k: 'amount_in', label: 'Сумма', type: 'money', req: true }));
+      break;
+  }
+  F.push(field({ k: 'note', label: 'Примечание', type: 'textarea', full: true }));
+  openModal(`<h3>${esc(o.title)}</h3><div class="hint" style="margin:-8px 0 12px;">${esc(o.hint)}</div>
+    <div class="grid2">${F.join('')}</div><div class="note" id="op-preview" style="margin-top:12px;"></div>
+    ${modalActions(`submitOp('${op}')`)}`);
+  // перевозчик ↔ рейсы
+  const cSel = document.getElementById('f_carrier_id'), tSel = document.getElementById('f_trip_id');
+  if (cSel && tSel) {
+    const sync = () => { [...tSel.options].forEach((op2) => { op2.hidden = !!op2.value && !!cSel.value && op2.dataset.c !== cSel.value; }); };
+    cSel.addEventListener('change', () => { if (tSel.selectedOptions[0]?.hidden) tSel.value = ''; sync(); });
+    tSel.addEventListener('change', () => { const c = tSel.selectedOptions[0]?.dataset.c; if (c) cSel.value = c; sync(); });
+    sync();
+  }
+  onModalInput(() => opPreview(op));
+}
+function opParams(op) {
+  const p = { op_date: val('op_date'), note: valOrNull('note') };
+  const money = (k) => { const s = val(k); if (!s) return null; const n = parseMoney(s); return Number.isNaN(n) ? NaN : n; };
+  p.kind = { via_counterparty: 'transfer', exchange: 'transfer' }[op] || op;
+  if (op === 'via_counterparty') p.from_wallet = 'rs';
+  for (const k of ['from_wallet', 'to_wallet', 'carrier_id', 'trip_id', 'request_id', 'partner_key', 'counterparty']) {
+    const el = document.getElementById('f_' + k); if (el && el.value) p[k] = el.value.trim();
+  }
+  p.amount_in = money('amount_in');
+  const out = money('amount_out'); if (out !== null) p.amount_out = out;
+  p.losses = [['third_party_fee', 'loss_third'], ['cash_delivery', 'loss_delivery'], ['other', 'loss_other']]
+    .map(([kind, k]) => ({ kind, amount: money(k) })).filter((l) => l.amount);
+  if (op === 'handover') p.in_transit = !val('received');
+  return p;
+}
+function opPreview(op) {
+  const box = document.getElementById('op-preview'); if (!box) return;
+  const p = opParams(op);
+  const wf = walletById(p.from_wallet), wt = walletById(p.to_wallet);
+  const lines = [];
+  if (wf && !p.amount_in) { box.innerHTML = `В «${esc(wf.name)}» сейчас: <b>${fmtMoney((S.balances.find((b) => b.wallet_id === wf.id) || {}).balance_minor || 0, wf.currency)}</b>`; return; }
+  if (!(p.amount_in > 0)) { box.innerHTML = 'Укажите сумму.'; return; }
+  const curOut = wf && wf.currency, curIn = wt ? wt.currency : curOut;
+  const manual = p.losses.reduce((a, l) => a + (l.amount || 0), 0);
+  let base = p.amount_out ?? (wf ? p.amount_in + manual : null);
+  let fee = 0;
+  if (wf && op === 'cash_withdrawal') { fee = Math.round(p.amount_in * 0.005); lines.push(`Комиссия за снятие 0,5%: ${fmtMoney(fee, 'UZS')}`); }
+  else if (wf && wf.kind === 'bank' && base) { fee = Math.round(base * 0.001) + 112000; lines.push(`Комиссия банка за поручение (0,1% + 1 120): ${fmtMoney(fee, 'UZS')}`); }
+  if (wf && curIn !== curOut && p.amount_out) {
+    const cbu = rateOn(p.op_date);
+    if (cbu) {
+      const conv = curOut === 'UZS' ? Math.round(p.amount_in * Number(cbu.usd_uzs)) : Math.round(p.amount_in / Number(cbu.usd_uzs));
+      const diff = p.amount_out - manual - conv;
+      const real = curOut === 'UZS' ? (p.amount_out - manual) / p.amount_in : p.amount_in / (p.amount_out - manual);
+      lines.push(`Реальный курс: ${fmtRate(real.toFixed(2))} · курс ЦБ ${fmtRate(cbu.usd_uzs)} · курсовая разница: ${fmtMoney(diff, curOut)} ${diff < 0 ? '(выгода)' : ''}`);
+    } else lines.push('<span style="color:var(--red);">Нет курса ЦБ на эту дату — загрузите на странице «Курсы ЦБ».</span>');
+  }
+  if (wf && base) {
+    const after = ((S.balances.find((b) => b.wallet_id === wf.id) || {}).balance_minor || 0) - base - fee;
+    lines.push(`Спишется из «${esc(wf.name)}»: <b>${fmtMoney(base + fee, curOut)}</b> · останется ${after < 0 ? `<b style="color:var(--red);">${fmtMoney(after, curOut)} — не хватает денег</b>` : fmtMoney(after, curOut)}`);
+  }
+  if (wt) lines.push(`Поступит в «${esc(wt.name)}»: <b>${fmtMoney(p.amount_in, curIn)}</b>${p.in_transit ? ' — после подтверждения получателем' : ''}`);
+  if (op === 'carrier_payment' && p.trip_id) {
+    const t = tripById(p.trip_id);
+    if (t && t.price_minor != null) lines.push(`По рейсу: цена ${fmtMoney(t.price_minor, t.price_cur)}, уже оплачено ${fmtMulti(tripPaid(t.id)) || '0'}`);
+  }
+  box.innerHTML = lines.join('<br>');
+}
+function submitOp(op) {
+  const p = opParams(op);
+  if (!(p.amount_in > 0)) return toast('Укажите сумму', true);
+  if (Number.isNaN(p.amount_out)) return toast('Сумма списания — число', true);
+  if (p.losses.some((l) => Number.isNaN(l.amount))) return toast('Потери — числа', true);
+  if (p.from_wallet && p.to_wallet && p.from_wallet === p.to_wallet) return toast('Кошельки «откуда» и «куда» совпадают', true);
+  if (op === 'via_counterparty' && !p.counterparty) return toast('Укажите контрагента', true);
+  saving(async () => {
+    const { data, error } = await sb.rpc('ak_post_movement', { p });
+    if (error) throw error;
+    return data;
+  }, null, 'Операция записана');
+}
+async function reverseMv(id) {
+  const m = S.movements.find((x) => x.id === id);
+  const reason = prompt(`Отменить «${MV_KIND[m.kind]}» от ${fmtDate(m.op_date)} на ${fmtMoney(m.amount_in_minor, m.cur_in)}?\nБудет создана встречная запись, кошельки вернутся как были.\n\nПричина:`);
+  if (!reason) return;
+  try { const { error } = await sb.rpc('ak_reverse_movement', { p_id: id, p_reason: reason }); if (error) throw error; await reload(); toast('Запись отменена'); }
+  catch (e) { toast(humanError(e), true); }
+}
+async function confirmMv(id) {
+  if (!confirm('Получатель подтвердил, что получил наличные?')) return;
+  try { const { error } = await sb.rpc('ak_confirm_movement', { p_id: id }); if (error) throw error; await reload(); toast('Получение подтверждено'); }
+  catch (e) { toast(humanError(e), true); }
+}
+
+// ================= РАСХОДЫ =================
+const EXP_CAT = {
+  loaders: 'Грузчики', broker: 'Брокер', notary: 'Нотариус', logist_fee: 'Комиссия логиста',
+  accountant_salary: 'Зарплата бухгалтера', profit_tax: 'Налог на прибыль', other_fixed: 'Прочие постоянные', other: 'Прочее',
+};
+const paidByLabel = (e) => e.paid_by === 'wallet'
+  ? esc((walletById((S.movements.find((m) => m.id === e.movement_id) || {}).from_wallet) || {}).name || 'кошелёк')
+  : `<span class="tag amber">лично ${esc(LBL.partner[e.paid_by])} — фин. помощь</span>`;
+RENDER.expenses = () => {
+  const rows = [...S.expenses].sort((a, b) => a.exp_date < b.exp_date ? 1 : -1);
+  const body = rows.map((e) => {
+    const reqs = S.expenseLinks.filter((l) => l.expense_id === e.id).map((l) => reqLabel(reqById(l.request_id)));
+    return `<tr class="${e.cancelled ? 'off' : ''}"><td>${fmtDate(e.exp_date)}</td><td>${esc(EXP_CAT[e.category])}${e.cancelled ? ' <span class="tag red">отменён</span>' : ''}<div class="muted">${esc(e.counterparty || '')} ${esc(e.note || '')}</div></td>
+      <td class="num">${fmtMoney(e.amount_minor, e.currency)}</td><td>${paidByLabel(e)}</td><td>${reqs.map(esc).join(', ')}</td>
+      <td><label style="display:flex;gap:5px;align-items:center;font-size:12px;"><input type="checkbox" ${e.docs_confirmed ? 'checked' : ''} ${canEdit() && !e.cancelled ? `onchange="toggleExpDocs('${e.id}',this.checked)"` : 'disabled'}> есть</label></td>
+      <td>${canEdit() && !e.cancelled ? `<button class="btn small" onclick="cancelExpense('${e.id}')">Отменить</button>` : ''}</td></tr>`;
+  }).join('');
+  return `<h1>Расходы${roBadge()}</h1>
+  <div class="lead">Доп. расходы (грузчики, брокеры, нотариус, комиссия логиста) и постоянные. Можно привязать к одной или нескольким заявкам — на машины не делятся. Если расход оплатил партнёр из своего кармана — это финансовая помощь: проект ему должен, кошельки не меняются.</div>
+  <div class="toolbar"><span class="grow"></span>${canEdit() ? '<button class="btn primary" onclick="editExpense()">+ Расход</button>' : ''}</div>
+  <div class="tbl-wrap"><table><thead><tr><th>Дата</th><th>Статья</th><th class="num">Сумма</th><th>Кто заплатил</th><th>Заявки</th><th>Документы</th><th></th></tr></thead>
+  <tbody>${body || '<tr><td colspan="7" class="empty">Расходов пока нет</td></tr>'}</tbody></table></div>`;
+};
+function editExpense() {
+  const payers = { ...Object.fromEntries(S.wallets.filter((w) => w.active).map((w) => ['w:' + w.id, w.name])), 'p:ismat': 'Лично Исмат (фин. помощь)', 'p:sarvar': 'Лично Сарвар (фин. помощь)' };
+  const reqs = S.requests.filter((r) => r.status !== 'cancelled').sort((a, b) => a.loading_date < b.loading_date ? 1 : -1).slice(0, 40);
+  openModal(`<h3>Новый расход</h3>
+  <div class="grid2">
+    ${field({ k: 'exp_date', label: 'Дата', type: 'date', val: todayIso(), req: true })}
+    ${field({ k: 'category', label: 'Статья', type: 'select', opts: EXP_CAT })}
+    ${field({ k: 'payer', label: 'Кто заплатил', type: 'select', opts: payers, full: true })}
+    ${field({ k: 'currency', label: 'Валюта', type: 'select', opts: { UZS: 'сумы', USD: 'доллары ($)' } })}
+    ${field({ k: 'amount', label: 'Сумма', type: 'money', req: true })}
+    ${field({ k: 'counterparty', label: 'Кому (реальное название / имя)', full: true })}
+    ${field({ k: 'docs_confirmed', label: 'Подтверждён документами (для налога)', type: 'check', full: true })}
+    ${field({ k: 'note', label: 'Примечание', type: 'textarea', full: true })}
+  </div>
+  <div class="sub-list"><h4>Относится к заявкам (необязательно)</h4>
+    <div style="max-height:180px;overflow:auto;font-size:12.5px;">${reqs.map((r) => `<label style="display:flex;gap:6px;align-items:center;padding:2px 0;"><input type="checkbox" class="exp-req" value="${r.id}"> ${esc(reqTitle(r))}</label>`).join('') || '<span class="muted">заявок нет</span>'}</div>
+  </div>
+  <div class="note" id="exp-preview" style="margin-top:12px;"></div>
+  ${modalActions('saveExpense()')}`);
+  onModalInput(() => {
+    const payer = val('payer');
+    const cur = document.getElementById('f_currency');
+    if (payer.startsWith('w:')) { cur.value = walletById(payer.slice(2)).currency; cur.disabled = true; } else cur.disabled = false;
+    const amt = parseMoney(val('amount'));
+    const box = document.getElementById('exp-preview');
+    if (Number.isNaN(amt)) { box.innerHTML = 'Укажите сумму.'; return; }
+    box.innerHTML = payer.startsWith('w:')
+      ? `Спишется из «${esc(walletById(payer.slice(2)).name)}»${walletById(payer.slice(2)).kind === 'bank' ? ' (плюс комиссия банка за поручение — отдельной строкой)' : ''}.`
+      : `Кошельки не меняются. Проект будет должен ${esc(LBL.partner[payer.slice(2)])}у ${fmtMoney(amt, val('currency'))} — возврат потом операцией «Возврат финансовой помощи».`;
+  });
+}
+function saveExpense() {
+  const payer = val('payer');
+  const amount = parseMoney(val('amount'));
+  if (!(amount > 0)) return toast('Укажите сумму', true);
+  const p = {
+    exp_date: val('exp_date'), category: val('category'), amount, currency: document.getElementById('f_currency').value,
+    paid_by: payer.startsWith('w:') ? 'wallet' : payer.slice(2), wallet: payer.startsWith('w:') ? payer.slice(2) : null,
+    counterparty: valOrNull('counterparty'), docs_confirmed: val('docs_confirmed'), note: valOrNull('note'),
+    request_ids: [...document.querySelectorAll('.exp-req:checked')].map((x) => x.value),
+  };
+  saving(async () => { const { data, error } = await sb.rpc('ak_add_expense', { p }); if (error) throw error; return data; }, null, 'Расход записан');
+}
+async function toggleExpDocs(id, on) {
+  try { await dbRun(sb.from('ak_expenses').update({ docs_confirmed: on }).eq('id', id)); await reload(); }
+  catch (e) { toast(humanError(e), true); }
+}
+async function cancelExpense(id) {
+  const e = S.expenses.find((x) => x.id === id);
+  const reason = prompt(`Отменить расход «${EXP_CAT[e.category]}» на ${fmtMoney(e.amount_minor, e.currency)}?${e.movement_id ? '\nДеньги вернутся в кошелёк встречной записью.' : ''}\n\nПричина:`);
+  if (!reason) return;
+  try {
+    if (e.movement_id && !S.reversedIds.has(e.movement_id)) {
+      const { error } = await sb.rpc('ak_reverse_movement', { p_id: e.movement_id, p_reason: reason }); if (error) throw error;
+    }
+    await dbRun(sb.from('ak_expenses').update({ cancelled: true, cancel_reason: reason }).eq('id', id), reason);
+    await reload(); toast('Расход отменён');
+  } catch (err) { toast(humanError(err), true); }
+}
+
+// ================= КУРСЫ ЦБ =================
+RENDER.rates = () => {
+  const rows = [...S.rates].reverse().slice(0, 120);
+  return `<h1>Курсы ЦБ${roBadge()}</h1>
+  <div class="lead">Курс доллара ЦБ Узбекистана загружается с cbu.uz каждый день в 09:00. Нужен для курсовой разницы и изъятий партнёров. Курс в заявке завода — свой, договорной; курс ЦБ подставляется как подсказка. Курс, введённый вручную, автоматически не перезаписывается.</div>
+  ${canEdit() ? `<div class="card"><div class="toolbar" style="margin:0;align-items:flex-end;">
+    <div style="max-width:170px;"><label style="font-size:11.5px;color:var(--text2);">Дата</label><input type="date" id="rate-date" value="${todayIso()}"></div>
+    <button class="btn" onclick="loadRateFor()">Загрузить с ЦБ</button>
+    <div style="max-width:150px;"><label style="font-size:11.5px;color:var(--text2);">или вручную, сум за $</label><input id="rate-manual" inputmode="decimal"></div>
+    <button class="btn" onclick="saveManualRate()">Сохранить вручную</button></div></div>` : ''}
+  <div class="tbl-wrap"><table><thead><tr><th>Дата</th><th class="num">Сум за 1 $</th><th>Источник</th></tr></thead>
+  <tbody>${rows.map((r) => `<tr><td>${fmtDate(r.rate_date)}</td><td class="num">${fmtRate(r.usd_uzs)}</td><td>${r.source === 'cbu' ? 'ЦБ (cbu.uz)' : '<span class="tag amber">вручную</span>'}</td></tr>`).join('') || '<tr><td colspan="3" class="empty">Курсов нет</td></tr>'}</tbody></table></div>`;
+};
+async function loadRateFor() {
+  try { const r = await fetchCbuRate(document.getElementById('rate-date').value); await reload(); toast(`Курс на ${fmtDate(r.rate_date)}: ${fmtRate(r.usd_uzs)}`); }
+  catch (e) { toast(humanError(e), true); }
+}
+async function saveManualRate() {
+  const d = document.getElementById('rate-date').value, rate = parseRate(document.getElementById('rate-manual').value);
+  if (!d || !rate) return toast('Укажите дату и курс, например 11975 или 11987,89', true);
+  try { await dbRun(sb.from('ak_fx_rates').upsert({ rate_date: d, usd_uzs: rate, source: 'manual' }), 'курс введён вручную'); await reload(); toast('Курс сохранён'); }
+  catch (e) { toast(humanError(e), true); }
+}
+
 // ================= РЕКВИЗИТЫ И ТЕКСТЫ =================
 const SETTING_SECTIONS = [
   { key: 'factory', title: 'Завод (Заказчик в заявке завода)', fields: [
@@ -784,6 +1527,8 @@ async function saveSettingSection(key) {
 const TABLE_LBL = {
   ak_carriers: 'Перевозчик', ak_vehicles: 'Машина', ak_vehicle_owners: 'Владелец машины', ak_routes: 'Маршрут',
   ak_directors: 'Директор', ak_wallets: 'Кошелёк', ak_opening_balances: 'Стартовый остаток', ak_settings: 'Настройки', ak_members: 'Доступ',
+  ak_requests: 'Заявка завода', ak_request_versions: 'Версия заявки', ak_trips: 'Рейс', ak_movements: 'Движение денег',
+  ak_movement_losses: 'Потери по движению', ak_expenses: 'Расход', ak_expense_requests: 'Расход ↔ заявка', ak_fx_rates: 'Курс ЦБ', ak_counters: 'Нумерация',
 };
 const FIELD_HIDE = new Set(['id', 'created_at', 'created_by', 'updated_at', 'updated_by', 'plate_norm']);
 async function loadAudit() {
@@ -800,6 +1545,11 @@ function auditTitle(a) {
   if (a.table_name === 'ak_vehicle_owners') { const v = S.vehicles.find((x) => x.id === d.vehicle_id); const c = carrierById(d.carrier_id); return `${v ? v.plate_norm : ''} → ${c ? c.name : ''} с ${fmtDate(d.valid_from)}`; }
   if (a.table_name === 'ak_directors') return d.full_name;
   if (a.table_name === 'ak_settings') return d.key;
+  if (a.table_name === 'ak_requests') return reqTitle(d);
+  if (a.table_name === 'ak_trips') return `${reqLabel(reqById(d.request_id))} · ${plates(d)} · ${(carrierById(d.carrier_id) || {}).name || 'без перевозчика'}`;
+  if (a.table_name === 'ak_movements') return `${MV_KIND[d.kind] || ''}: ${fmtMoney(d.amount_in_minor, d.cur_in)}`;
+  if (a.table_name === 'ak_expenses') return `${EXP_CAT[d.category] || ''}: ${fmtMoney(d.amount_minor, d.currency)}`;
+  if (a.table_name === 'ak_fx_rates') return `${fmtDate(d.rate_date)}: ${fmtRate(d.usd_uzs)}`;
   if (a.table_name === 'ak_opening_balances') return `${(OPENING_KINDS.find((k) => k.kind === d.kind) || {}).title || ''}: ${fmtMoney(d.amount_minor, d.currency)}`;
   return a.row_id;
 }
