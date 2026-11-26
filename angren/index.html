@@ -993,7 +993,7 @@ function reqPreview() {
   const price = parseMoney(val('price'));
   const n = parseInt(val('trucks_confirmed') || val('trucks_ordered') || '0', 10) || 0;
   if (!rt) { box.innerHTML = 'Выберите маршрут.'; return; }
-  if (!val('price') || Number.isNaN(price)) { box.innerHTML = `🟡 Цена завода не вписана — заявка сохранится «не заполненной», лотов откроется: <b>${parseInt(val('trucks_ordered') || '0', 10) || 0}</b>.`; return; }
+  if (!val('price') || Number.isNaN(price)) { box.innerHTML = `🟡 Цена завода не вписана — заявка сохранится «не заполненной», лотов откроется: <b>${parseInt(val('trucks_ordered') || '0', 10) || 0}</b>.${local ? '<br>Местный рейс: доллара и оформления нет.' : ''}`; return; }
   let perUzs, line;
   if (local || val('price_cur') === 'UZS') {
     perUzs = price; line = '';
@@ -1006,7 +1006,7 @@ function reqPreview() {
   const total = perUzs * n;
   const of = local ? 0 : (val('oformlenie') ? parseMoney(val('oformlenie')) : null);
   box.innerHTML = `За 1 ТС: <b>${fmtMoney(perUzs, 'UZS')}</b>${esc(line)} · машин: <b>${n}</b> · сумма заявки: <b>${fmtMoney(total, 'UZS')}</b>` +
-    (local ? `<br>в т. ч. НДС 12%: <b>${fmtMoney(vatOf(total), 'UZS')}</b>, без НДС: ${fmtMoney(netOfVat(total), 'UZS')}` : '') +
+    (local ? `<br>в т. ч. НДС 12%: <b>${fmtMoney(vatOf(total), 'UZS')}</b>, без НДС: ${fmtMoney(netOfVat(total), 'UZS')}<br>Оформление: на местных рейсах не начисляется.` : '') +
     (!local && of > 0 ? `<br>Оформление заводу: ${fmtMoney(of, 'USD')} × ${n} = <b>${fmtMoney(of * n, 'USD')}</b>` : '') +
     (!local && of == null ? '<br><span style="color:var(--amber);">🟡 Оформление не вписано (0 — если его нет).</span>' : '') +
     (!local && of === 0 ? '<br>Оформления нет (0).' : '');
