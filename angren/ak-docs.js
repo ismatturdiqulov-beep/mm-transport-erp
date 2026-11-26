@@ -116,7 +116,8 @@
           { text: `${s.name}${' '.repeat(6)}${LINE}`, bold: true },
         ]),
         // печать с подписью — поверх строки подписи, места не занимает
-        ...(withStamp ? [{ image: withStamp, width: 104, margin: [88, -40, 0, -46] }] : []),
+        // размер как в Word-образце (6,16 × 4,98 см); поверх строки подписи, места не занимает
+        ...(withStamp ? [{ image: withStamp, width: 174, margin: (p.requisites || []).length ? [52, -112, 0, -29] : [52, -52, 0, -89] }] : []),
       ],
     });
     const cols = [col(left, stampSide === 'left' && stamp), { width: 20, text: '' }, col(right, stampSide === 'right' && stamp)];

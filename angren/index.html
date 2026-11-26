@@ -925,7 +925,7 @@ RENDER.requests = () => {
     if (free && r.status !== 'cancelled') warn.push(`<span class="tag red">свободных лотов: ${free}</span>`);
     const total = reqTotal(r);
     return `<tr class="click${r.status === 'cancelled' ? ' off' : ''}" style="box-shadow:inset 4px 0 0 ${r.status === 'cancelled' ? 'transparent' : reqMissing(r).length ? '#e0a100' : '#2e9e5b'};" onclick="editRequest('${r.id}')">
-      <td class="mono"><b>${esc(r.number || '—')}</b></td>
+      <td class="mono" style="white-space:nowrap;">${reqPdfBtn(r)}</td>
       <td>${fmtDate(r.loading_date)}</td>
       <td>${esc(rt.name)} ${r.kind === 'local' ? '<span class="tag blue">местная</span>' : ''}</td>
       <td class="num">${reqTrucks(r)} <span class="muted">/ ${r.trucks_ordered}</span></td>
@@ -986,7 +986,7 @@ function editRequest(id) {
     ${r ? `<div class="sub-list"><h4>Лоты</h4>
       ${trips.length ? `<table><thead><tr><th></th><th>Тягач / прицеп</th><th>Перевозчик</th><th class="num">Цена</th><th class="num">Оплачено</th><th></th><th>№ заявки</th></tr></thead><tbody>
       ${trips.map((t) => `<tr class="click" onclick="editTrip('${t.id}')"><td>${COLOR[tripColor(t)][2]}</td><td class="mono">${esc(plates(t)) || '<span class="muted">свободный лот — выбрать машину</span>'}</td><td>${t.carrier_id ? esc((carrierById(t.carrier_id) || {}).name) : '<span class="muted">—</span>'}</td>
-        <td class="num">${t.price_minor != null ? fmtMoney(t.price_minor, t.price_cur) : ''}</td>${payCell(t)}<td class="mono">${esc(t.number || '')}</td></tr>`).join('')}
+        <td class="num">${t.price_minor != null ? fmtMoney(t.price_minor, t.price_cur) : ''}</td>${payCell(t)}<td class="mono">${lotPdfBtn(t)}</td></tr>`).join('')}
       </tbody></table>` : '<div class="muted" style="font-size:12.5px;">лотов нет</div>'}
       ${ed ? `<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;"><button class="btn small" onclick="addLot('${r.id}')">+ ещё лот</button>
         <span class="grow" style="flex:1;"></span><button class="btn small" onclick="cancelRequest('${r.id}')">Отменить заявку</button></div>` : ''}
@@ -1074,7 +1074,7 @@ RENDER.trips = () => {
       <td>${t.pay_timing ? esc(LBL.pay_timing[t.pay_timing]) + ', ' + esc(LBL.pay_method[t.pay_method] || '') : '<span class="muted">—</span>'}</td>
       ${payCell(t)}
       <td>${tripColorTag(t)} ${t.status !== 'assigned' && t.status !== 'cancelled' ? tag(STATUS_TRIP[t.status]) : ''}</td>
-      <td class="mono">${esc(t.number || '')}</td></tr>`;
+      <td class="mono" style="white-space:nowrap;">${lotPdfBtn(t)}</td></tr>`;
   };
   const blocks = reqs.map((r) => {
     const lots = tripsOf(r.id).filter((t) => t.status !== 'cancelled');
@@ -2010,12 +2010,12 @@ function directorOn(party, position, date) {
   return S.directors.filter((d) => d.party === party && d.position === position && d.valid_from <= date)
     .sort((a, b) => a.valid_from < b.valid_from ? 1 : -1)[0] || null;
 }
-function docBase(date) {
+function docBase(date, forceStamp) {
   return {
     mm: S.settings.mm || {}, factory: S.settings.factory || {}, defaults: S.settings.request_defaults || {},
     dirFactory: { director: directorOn('factory', 'director', date), deputy: directorOn('factory', 'deputy', date) },
     dirMM: { director: directorOn('mm', 'director', date) },
-    stamp: useStamp(),
+    stamp: forceStamp ? stampData() : useStamp(),
   };
 }
 const fileSafe = (s) => String(s || '').replace(/[\\/:*?"<>|]+/g, '').replace(/\s+/g, '_');
@@ -2023,20 +2023,29 @@ async function makePdf(def, filename) {
   try { await loadPdfLib(); window.pdfMake.createPdf(def).download(filename); toast('PDF готов: ' + filename); }
   catch (e) { toast(humanError(e), true); }
 }
+// Кнопка в строке: заявка с номером — сразу PDF с печатью и подписью.
+function reqPdfBtn(r) {
+  if (!r.number || r.status === 'cancelled') return esc(r.number || '—');
+  return `<button class="btn small" title="Заявка завода в PDF с печатью и подписью" onclick="event.stopPropagation();pdfFactory('${r.id}', true)">📄 ${esc(r.number)}</button>`;
+}
+function lotPdfBtn(t) {
+  if (!t.number || ['failed', 'cancelled'].includes(t.status)) return esc(t.number || '');
+  return `<button class="btn small" title="Заявка перевозчику в PDF с печатью и подписью" onclick="event.stopPropagation();pdfCarrier('${t.id}', true)">📄 ${esc(t.number)}</button>`;
+}
 const liveLots = (reqId) => tripsOf(reqId).filter((t) => t.tractor_id && !['failed', 'cancelled'].includes(t.status));
-function factoryCtx(r) {
+function factoryCtx(r, forceStamp) {
   const rt = routeById(r.route_id) || {};
-  return { ...docBase(r.loading_date), number: r.number, date: r.loading_date, kind: r.kind, route: rt,
+  return { ...docBase(r.loading_date, forceStamp), number: r.number, date: r.loading_date, kind: r.kind, route: rt,
     trucks: liveLots(r.id).map((t) => ({ tractor: (vehById(t.tractor_id) || {}).plate_norm, trailer: (vehById(t.trailer_id) || {}).plate_norm })),
     price_uzs_minor: r.price_uzs_minor, price_minor: r.price_minor, price_cur: r.price_cur, fx_rate: r.fx_rate, payment_days: r.payment_days };
 }
-function carrierCtx(t) {
+function carrierCtx(t, forceStamp) {
   const r = reqById(t.request_id), rt = routeById(r.route_id) || {};
   const c = carrierById(t.carrier_id) || {};
   const mm = S.settings.mm || {};
   // своя машина (в т. ч. машина партнёра): исполнитель — сама MM (ТЗ 3.2)
   const carrier = c.is_own ? { name: mm.name, contract_no: null, contract_date: null, director_name: (directorOn('mm', 'director', r.loading_date) || {}).full_name } : c;
-  return { ...docBase(r.loading_date), number: t.number, date: r.loading_date, kind: r.kind, route: rt,
+  return { ...docBase(r.loading_date, forceStamp), number: t.number, date: r.loading_date, kind: r.kind, route: rt,
     truck: { tractor: (vehById(t.tractor_id) || {}).plate_norm, trailer: (vehById(t.trailer_id) || {}).plate_norm },
     price_uzs_minor: t.price_uzs_minor, pay_days: t.pay_days, pay_method: t.pay_method, carrier };
 }
@@ -2047,19 +2056,19 @@ function carrierProblems(t) {
   if (t.price_minor == null) p.push('нет цены');
   return p;
 }
-function pdfFactory(reqId) {
+function pdfFactory(reqId, forceStamp) {
   const r = reqById(reqId);
   if (r.price_minor == null) return toast('Впишите цену завода — без неё заявку не сформировать', true);
   if (!liveLots(reqId).length) return toast('Нет машин в лотах', true);
   const rt = routeById(r.route_id) || {};
-  makePdf(AKDocs.factoryRequest(factoryCtx(r)), `Заявка_${fileSafe(r.number)}_${fileSafe(rt.name)}_${fmtDate(r.loading_date)}.pdf`);
+  makePdf(AKDocs.factoryRequest(factoryCtx(r, forceStamp)), `Заявка_${fileSafe(r.number)}_${fileSafe(rt.name)}_${fmtDate(r.loading_date)}.pdf`);
 }
-function pdfCarrier(tripId) {
+function pdfCarrier(tripId, forceStamp) {
   const t = tripById(tripId);
   const p = carrierProblems(t);
   if (p.length) return toast('Заявку перевозчику не сформировать: ' + p.join(', '), true);
   const c = carrierById(t.carrier_id) || {};
-  makePdf(AKDocs.carrierRequest(carrierCtx(t)), `Заявка_перевозчику_${fileSafe(t.number)}_${fileSafe(c.name)}.pdf`);
+  makePdf(AKDocs.carrierRequest(carrierCtx(t, forceStamp)), `Заявка_перевозчику_${fileSafe(t.number)}_${fileSafe(c.name)}.pdf`);
 }
 function pdfCarriers(reqId) {
   const r = reqById(reqId);
