@@ -749,6 +749,17 @@ async function cmdQuestions(chatId: number) {
   await tg('sendMessage', { chat_id: chatId, parse_mode: 'HTML', text: out.length ? `❓ <b>Открытые вопросы</b>\n\n${out.join('\n')}` : '✅ Открытых вопросов нет.' });
 }
 
+async function sendHelp(chatId: number) {
+  await tg('sendMessage', { chat_id: chatId, parse_mode: 'HTML', text:
+    '👋 <b>Бот учёта «Ангрен Каолин» на связи.</b>\n\n' +
+    'Команды (кнопка «/» у поля ввода или словом):\n' +
+    '• /otchet — <b>отчёт</b>: кошельки, долг завода, долги перевозчикам, оформление\n' +
+    '• /zayavki — <b>заявки</b>: заводу или перевозчику, PDF с печатью\n' +
+    '• /voprosy — <b>открытые вопросы</b>\n\n' +
+    'Пишите как обычно: цены по рейсу, поступления, расходы, фото чеков. Я предложу запись с кнопками; записывает Исмат. ' +
+    'Список машин в группе «Перевозки» подтверждают Исмат или Сарвар; всё, что записано через меня, Исмат ещё одобряет на сайте.' });
+}
+
 // Ошибку команды — сообщением в группу, а не молча.
 async function runSafe(chatId: number, job: () => Promise<unknown>) {
   try { await job(); }
@@ -797,6 +808,7 @@ async function handleUpdate(u: any) {
   // команды и поиск — только в «Расчётах» (в «Перевозках» бот молчит)
   if (c.role === 'finance' && text) {
     EdgeRuntime.waitUntil(ensureCommands(chat.id));
+    if (/^\/(start|help)\b/i.test(text)) { EdgeRuntime.waitUntil(runSafe(chat.id, () => sendHelp(chat.id))); return; }
     const cmd = commandOf(text);
     if (cmd) { EdgeRuntime.waitUntil(runSafe(chat.id, () => cmd === 'otchet' ? cmdReport(chat.id) : cmd === 'zayavki' ? cmdRequests(chat.id) : cmdQuestions(chat.id))); return; }
     const rt = m.reply_to_message?.from?.is_bot ? (m.reply_to_message.text || '') : '';
@@ -900,6 +912,12 @@ Deno.serve(async (req) => {
           out.schema = { ms: Date.now() - t, stop: r.stop_reason, text: (r.content || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('').slice(0, 400) };
         } catch (e: any) { out.schema = { ms: Date.now() - t, error: e?.message || String(e) }; }
         return json(out);
+      }
+      if (mode === 'hello') {
+        const finance = await chatByRole('finance');
+        if (!finance) return json({ ok: false, error: 'группа «Расчёты» не назначена' });
+        await sendHelp(finance.chat_id);
+        return json({ ok: true });
       }
       if (mode === 'test_cmd') {
         // { cmd: 'otchet'|'voprosy'|'list_f'|'list_c'|'search', kind, q, req_id, trip_id }
