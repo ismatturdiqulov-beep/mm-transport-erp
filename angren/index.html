@@ -1244,7 +1244,8 @@ const mvWhere = (m) => {
 };
 RENDER.money = () => {
   const w = S.mvWallet;
-  const rows = S.movements.filter((m) => !w || m.from_wallet === w || m.to_wallet === w)
+  const withLoss = new Set(S.losses.map((l) => l.movement_id));
+  const rows = S.movements.filter((m) => (!w || m.from_wallet === w || m.to_wallet === w) && (!S.mvLossOnly || withLoss.has(m.id)))
     .sort((a, b) => a.op_date < b.op_date ? 1 : a.op_date > b.op_date ? -1 : (a.created_at < b.created_at ? 1 : -1));
   const lossesOf = (id) => S.losses.filter((l) => l.movement_id === id);
   const body = rows.map((m) => {
@@ -1267,6 +1268,7 @@ RENDER.money = () => {
   ${walletCards()}
   <div class="toolbar" style="margin-top:14px;">
     <select style="max-width:240px;" onchange="S.mvWallet=this.value;render()"><option value="">Все кошельки</option>${S.wallets.map((x) => `<option value="${x.id}"${w === x.id ? ' selected' : ''}>${esc(x.name)}</option>`).join('')}</select>
+    <label style="font-size:12.5px;display:flex;gap:6px;align-items:center;"><input type="checkbox" ${S.mvLossOnly ? 'checked' : ''} onchange="S.mvLossOnly=this.checked;render()"> только с потерями</label>
     <span class="grow"></span>
     ${canEdit() ? '<button class="btn primary" onclick="chooseOp()">+ Операция</button>' : ''}
   </div>
@@ -1707,6 +1709,20 @@ function safeToTake() {
   return { wallets, carriers, taxReserve, fixed, help, oform, safe: wallets - carriers - taxReserve - fixed - help - oform };
 }
 
+// Расшифровка потерь за период + переход к операциям с потерями.
+const LOSS_GROUPS = [
+  ['Банковские комиссии', ['payment_order_fee', 'cash_withdrawal_fee', 'bank_fee']],
+  ['Курсовая разница к ЦБ', ['fx_diff']],
+  ['Прочие потери', ['third_party_fee', 'cash_delivery', 'other']],
+];
+function lossesCard(s) {
+  const d = s.losses_detail || {};
+  if (!Object.keys(d).length) return '';
+  return `<div class="card"><h2>Расшифровка потерь за период</h2><table style="max-width:560px;"><tbody>
+    ${LOSS_GROUPS.map(([g, kinds]) => kinds.filter((k) => d[k] != null).map((k) => `<tr><td>${esc(g)}: ${esc(LOSS_KIND[k])}</td><td class="num">${k === 'fx_diff' && N(d[k]) < 0 ? 'выгода ' + fmtMoney(-N(d[k]), 'UZS') : fmtMoney(d[k], 'UZS')}</td></tr>`).join('')).join('')}
+    <tr><td><b>Итого потерь</b></td><td class="num"><b>${fmtMoney(s.losses_uzs, 'UZS')}</b></td></tr>
+  </tbody></table><div style="margin-top:8px;"><button class="btn small" onclick="S.mvLossOnly=true;go('money')">Показать операции с потерями →</button></div></div>`;
+}
 RENDER.calc = () => {
   if (!S.periodSum) { loadPeriod(); }
   const s = S.periodSum || S.sumAll;
@@ -1733,13 +1749,16 @@ RENDER.calc = () => {
     ${row(`− Оформление (${fmtMoney(s.oformlenie_usd, 'USD')})`, fmtMoney(s.oformlenie_uzs, 'UZS'))}
     ${row('− Доп. расходы по заявкам', fmtMoney(s.expenses_linked_uzs, 'UZS'))}
     ${row(`= Прибыль по заявкам <span class="muted">(международные ${fmtMoney(s.profit_intl_uzs, 'UZS')}, местные ${fmtMoney(s.profit_local_uzs, 'UZS')})</span>`, colored(s.profit_requests_uzs, 'UZS'), true)}
-    ${row('− Потери (комиссии банка, курсовая разница, доставка наличных)', fmtMoney(s.losses_uzs, 'UZS'))}
+    ${row('− Банковские комиссии', fmtMoney(s.losses_bank_uzs, 'UZS'), false, 'платёжные поручения, снятие наличных, комиссии карт')}
+    ${row(N(s.losses_fx_uzs) < 0 ? '+ Курсовая разница к ЦБ (выгода)' : '− Курсовая разница к ЦБ', fmtMoney(Math.abs(N(s.losses_fx_uzs)), 'UZS'), false, 'обмен валюты и наличные через контрагента — разница с курсом ЦБ на день операции')}
+    ${row('− Прочие потери', fmtMoney(s.losses_other_uzs, 'UZS'), false, 'доставка наличных, комиссии посредников')}
     ${row('− Постоянные и прочие расходы', fmtMoney(s.expenses_fixed_uzs, 'UZS'))}
     ${row('= Прибыль до налога', colored(s.profit_pre_tax_uzs, 'UZS'), true)}
     ${row('− Налог на прибыль 15% (оценка, резерв)', fmtMoney(s.tax_estimate_uzs, 'UZS'), false, 'Фактическая сумма — от бухгалтерии при закрытии квартала')}
     ${row('= Чистая прибыль', colored(s.net_profit_uzs, 'UZS'), true)}
     ${row('Доля каждого партнёра (50%)', fmtMoney(Math.round(N(s.net_profit_uzs) / 2), 'UZS'), true)}
   </tbody></table></div>
+  ${lossesCard(s)}
   <div class="card"><h2>Партнёры — на сегодня</h2>
     <div class="hint" style="margin:-6px 0 8px;">Доля считается по реально поступившим деньгам: завод оплатил ${S.partners.received_share != null ? Math.round(N(S.partners.received_share) * 100) + '%' : '—'} выставленного. Минус в балансе — партнёр взял авансом.</div>
     <table><thead><tr><th>Партнёр</th><th class="num">Доля 50%</th><th class="num">Взято в счёт доли</th><th class="num">Баланс</th><th class="num">Проект должен (фин. помощь)</th></tr></thead><tbody>
