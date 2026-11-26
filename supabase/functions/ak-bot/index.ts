@@ -258,7 +258,9 @@ function buttons(item: any) {
     if (item.proposal.type === 'expense') rows.push([{ text: `Лично ${item.author_partner ? PARTNER[item.author_partner] : 'автор'} (фин. помощь)`, callback_data: `wl:${item.id}:me` }]);
     rows.push([{ text: '❌ Не записывать', callback_data: `rj:${item.id}` }]);
   } else {
-    rows.push([{ text: '✅ Записать', callback_data: `ap:${item.id}` }, { text: '❌ Не записывать', callback_data: `rj:${item.id}` }]);
+    rows.push(item.proposal?._transport
+      ? [{ text: '✅ Верно', callback_data: `ap:${item.id}` }, { text: '❌ Ошибка', callback_data: `rj:${item.id}` }]
+      : [{ text: '✅ Записать', callback_data: `ap:${item.id}` }, { text: '❌ Не записывать', callback_data: `rj:${item.id}` }]);
   }
   return { inline_keyboard: rows };
 }
@@ -267,6 +269,55 @@ function itemText(item: any, footer = '') {
   const conf = a.confidence === 'low' ? '\n⚠️ Не уверен — проверьте.' : '';
   const ask = item.status === 'needs_wallet' ? '\n❓ Из какого кошелька?' : '';
   return `📝 <b>Предлагаю записать</b>${item.author_partner ? ' (пишет ' + PARTNER[item.author_partner] + ')' : ''}\n${esc(item.summary)}${conf}${ask}\n<i>«${esc((a.quote || '').slice(0, 200))}»</i>${footer ? '\n\n' + footer : ''}`;
+}
+
+// ---------- сверка номеров со справочником (для группы «Перевозки») ----------
+function lev(a: string, b: string): number {
+  if (Math.abs(a.length - b.length) > 1) return 9;
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+  for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++)
+    d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+  return d[a.length][b.length];
+}
+// Точное совпадение или единственная машина, отличающаяся одним символом (опечатка).
+function matchPlate(p: string, all: any[], kind: string): { plate: string; veh: any | null; fixedFrom: string | null } {
+  const n = normPlate(p);
+  const exact = all.find((v) => v.plate_norm === n);
+  if (exact) return { plate: n, veh: exact, fixedFrom: null };
+  const near = all.filter((v) => v.kind === kind && lev(v.plate_norm, n) === 1);
+  if (near.length === 1) return { plate: near[0].plate_norm, veh: near[0], fixedFrom: n };
+  return { plate: n, veh: null, fixedFrom: null };
+}
+// Дополнить предложение погрузки: исправленные номера, свой прицеп, фирма на дату погрузки.
+async function enrichLoading(a: any): Promise<string[]> {
+  const { data: vs } = await db.from('ak_vehicles').select('id, plate_norm, kind, default_trailer_id').eq('active', true);
+  const all = vs || [];
+  const byId = Object.fromEntries(all.map((v: any) => [v.id, v]));
+  const date = a.loading_date || today();
+  const lines: string[] = [];
+  let i = 0;
+  for (const p of a.plates || []) {
+    i++;
+    const t = matchPlate(p.tractor, all, 'tractor');
+    p.tractor = t.plate;
+    let trailerTxt = '';
+    if (p.trailer) { const tr = matchPlate(p.trailer, all, 'trailer'); p.trailer = tr.plate; trailerTxt = ' / ' + tr.plate + (tr.fixedFrom ? ` (было ${tr.fixedFrom})` : ''); }
+    else if (t.veh?.default_trailer_id && byId[t.veh.default_trailer_id]) trailerTxt = ' / ' + byId[t.veh.default_trailer_id].plate_norm;
+    let firm = '❓ нет в справочнике, фирма неизвестна';
+    if (t.veh) {
+      const cid = await ownerOn(t.veh.id, date);
+      if (cid) { const { data: c } = await db.from('ak_carriers').select('name').eq('id', cid).single(); firm = c?.name || firm; }
+      else firm = '❓ машина в справочнике, но фирма не указана';
+    }
+    lines.push(`${i}. ${t.plate}${t.fixedFrom ? ` (исправлено из ${t.fixedFrom})` : ''}${trailerTxt} — ${firm}`);
+  }
+  return lines;
+}
+function transportText(item: any, footer = '') {
+  const a = item.proposal;
+  return `🚚 <b>${esc(a.route || '?')} ${a.loading_date ? dmy(a.loading_date) : ''} — ${(a.plates || []).length} маш.</b>\n${(a._lines || []).map(esc).join('\n')}` +
+    `\n\n${footer ? esc(footer) : 'Всё верно? Подтвердить может Исмат или Сарвар.'}`;
 }
 
 async function proposeFromMessage(msg: any) {
@@ -281,18 +332,24 @@ async function proposeFromMessage(msg: any) {
   }
   if (!actions.length) return;
   const finance = await chatByRole('finance');
+  const transport = await chatByRole('transport');
   const author = await partnerOf(msg.tg_user_id);
   for (const a of actions) {
-    if (a.type === 'expense' && !a.paid_by_partner && !a.wallet) { /* спросим кнопками */ }
+    // список машин из «Перевозок» — подтверждение там же: только номера и фирмы, без денег
+    const inTransport = a.type === 'loading' && transport && msg.chat_id === transport.chat_id;
+    if (a.type === 'loading') a._lines = await enrichLoading(a);
+    if (inTransport) a._transport = true;
     const status = walletNeed(a) ? 'needs_wallet' : 'pending';
+    const target = inTransport ? transport : finance;
     const { data: item, error } = await db.from('ak_inbox').insert({
       source_chat_id: msg.chat_id, source_message_id: msg.message_id, author_tg_user_id: msg.tg_user_id, author_partner: author,
       kind: a.type, summary: describe(a), proposal: a, status, last_asked_at: status === 'needs_wallet' ? new Date().toISOString() : null,
-      wallet_asks: status === 'needs_wallet' ? 1 : 0,
+      wallet_asks: status === 'needs_wallet' ? 1 : 0, tg_chat_id: target?.chat_id ?? null,
     }).select().single();
     if (error) { console.error('inbox', error); continue; }
-    if (finance) {
-      const sent = await tg('sendMessage', { chat_id: finance.chat_id, text: itemText(item), parse_mode: 'HTML', reply_markup: buttons(item), disable_web_page_preview: true });
+    if (target) {
+      const sent = await tg('sendMessage', { chat_id: target.chat_id, text: inTransport ? transportText(item) : itemText(item), parse_mode: 'HTML',
+        reply_markup: buttons(item), disable_web_page_preview: true, ...(inTransport ? { reply_to_message_id: msg.message_id } : {}) });
       if (sent.ok) await db.from('ak_inbox').update({ tg_message_id: sent.result.message_id }).eq('id', item.id);
     }
   }
@@ -317,7 +374,7 @@ async function findRequest(a: any, d: SupabaseClient, create: boolean) {
   if (ex && ex.length) return ex[0];
   if (!create) throw new Error(`нет заявки ${route.name} на ${dmy(a.loading_date)}`);
   const n = Math.max(a.plates?.length || 0, a.trucks || 0, 1);
-  const { data, error } = await d.from('ak_requests').insert({ route_id: route.id, loading_date: a.loading_date, trucks_ordered: n, price_cur: route.kind === 'local' ? 'UZS' : 'USD' }).select().single();
+  const { data, error } = await d.from('ak_requests').insert({ route_id: route.id, loading_date: a.loading_date, trucks_ordered: n, price_cur: route.kind === 'local' ? 'UZS' : 'USD', bot_pending: true }).select().single();
   if (error) throw error;
   return data;
 }
@@ -354,7 +411,8 @@ async function applyAction(a: any, wallet: string | null, author: string | null,
         const carrierId = await ownerOn(tractor.id, r.loading_date);
         const { data: carrier } = carrierId ? await d.from('ak_carriers').select('*').eq('id', carrierId).single() : { data: null };
         const trailerId = p.trailer ? (await vehicleId(p.trailer, 'trailer', d)).id : tractor.default_trailer_id;
-        const upd: any = { tractor_id: tractor.id, trailer_id: trailerId ?? null, carrier_id: carrierId };
+        // всё, что заполнил бот, ждёт одобрения Исмата на сайте (решение владельца)
+        const upd: any = { tractor_id: tractor.id, trailer_id: trailerId ?? null, carrier_id: carrierId, bot_pending: true };
         if (carrier) Object.assign(upd, { pay_timing: carrier.pay_timing, pay_method: carrier.pay_method, pay_days: carrier.pay_days });
         if (p.pay_method === 'cash') upd.pay_method = 'cash';
         if (p.carrier_price != null) { upd.price_minor = toMinor(p.carrier_price); upd.price_cur = r.kind === 'local' ? 'UZS' : (p.price_cur || 'USD'); }
@@ -362,21 +420,22 @@ async function applyAction(a: any, wallet: string | null, author: string | null,
         if (error) throw error;
         if (!carrierId) notes.push(`${normPlate(p.tractor)} — новая машина, перевозчик не известен (укажите на сайте)`);
       }
-      return `заявка №${r.number}` + (notes.length ? '\n' + notes.join('\n') : '');
+      await d.from('ak_requests').update({ bot_pending: true }).eq('id', r.id);
+      return `заявка №${r.number} — на сайте ждёт одобрения Исмата` + (notes.length ? '\n' + notes.join('\n') : '');
     }
     case 'prices': {
       const r = await findRequest(a, d, false);
-      const upd: any = {};
+      const upd: any = { bot_pending: true };
       if (a.factory_price != null) { upd.price_minor = toMinor(a.factory_price); upd.price_cur = r.kind === 'local' ? 'UZS' : (a.factory_price_cur || 'USD'); }
       if (a.oformlenie_usd != null && r.kind === 'international') upd.oformlenie_minor = toMinor(a.oformlenie_usd);
-      if (Object.keys(upd).length) { const { error } = await d.from('ak_requests').update(upd).eq('id', r.id); if (error) throw error; }
+      if (Object.keys(upd).length > 1) { const { error } = await d.from('ak_requests').update(upd).eq('id', r.id); if (error) throw error; }
       let n = 0;
       if (a.carrier_price != null) {
         const { data: lots } = await d.from('ak_trips').select('id, tractor_id').eq('request_id', r.id).not('tractor_id', 'is', null).not('status', 'in', '(cancelled,failed)');
         const only = (a.plates || []).map((p: any) => normPlate(p.tractor));
         for (const t of lots || []) {
           if (only.length) { const { data: v } = await d.from('ak_vehicles').select('plate_norm').eq('id', t.tractor_id).single(); if (!only.includes(v.plate_norm)) continue; }
-          const { error } = await d.from('ak_trips').update({ price_minor: toMinor(a.carrier_price), price_cur: r.kind === 'local' ? 'UZS' : (a.carrier_price_cur || 'USD') }).eq('id', t.id);
+          const { error } = await d.from('ak_trips').update({ price_minor: toMinor(a.carrier_price), price_cur: r.kind === 'local' ? 'UZS' : (a.carrier_price_cur || 'USD'), bot_pending: true }).eq('id', t.id);
           if (error) throw error; n++;
         }
       }
@@ -470,9 +529,13 @@ async function chooseWallet(id: string, code: string, by: { tg?: number; user?: 
 }
 async function updateMsg(item: any, footer: string, keepButtons = false) {
   if (!item.tg_message_id) return;
-  const finance = await chatByRole('finance');
-  if (!finance) return;
-  await tg('editMessageText', { chat_id: finance.chat_id, message_id: item.tg_message_id, text: itemText(item, esc(footer)), parse_mode: 'HTML',
+  const chatId = item.tg_chat_id ?? (await chatByRole('finance'))?.chat_id;
+  if (!chatId) return;
+  // в «Перевозках» — без денег: ошибки записи там не расписываем (подробно — на сайте)
+  const transport = !!item.proposal?._transport;
+  const tfooter = transport && footer.startsWith('⚠️') ? '⚠️ Не записалось — подробности на сайте («Ждут подтверждения»).' : footer;
+  await tg('editMessageText', { chat_id: chatId, message_id: item.tg_message_id, parse_mode: 'HTML',
+    text: transport ? transportText(item, tfooter) : itemText(item, esc(footer)),
     reply_markup: keepButtons ? buttons(item) : { inline_keyboard: [] } });
 }
 
@@ -673,6 +736,8 @@ async function cmdQuestions(chatId: number) {
     if (miss.length) lotIssues.push(`• №${r.number} ${rn[r.route_id] || ''} ${dmy(r.loading_date)}: ${miss.join(', ')}`);
   }
   if (lotIssues.length) out.push('', `<b>Не заполнено по заявкам: ${lotIssues.length}</b>`, ...lotIssues.slice(0, 15));
+  const botPend = (reqs || []).filter((r: any) => r.bot_pending);
+  if (botPend.length) out.push('', `<b>Из бота, ждут одобрения Исмата на сайте: ${botPend.length}</b>`, ...botPend.slice(0, 15).map((r: any) => `• №${r.number} ${rn[r.route_id] || ''} ${dmy(r.loading_date)}`));
   const { data: transit } = await db.from('ak_movements').select('id, amount_in_minor, cur_in, op_date').eq('status', 'in_transit');
   const { data: revs } = await db.from('ak_movements').select('reverses_id').not('reverses_id', 'is', null);
   const reversed = new Set((revs || []).map((x: any) => x.reverses_id));
@@ -750,7 +815,9 @@ async function handleCallback(q: any) {
   const answer = (text: string, alert = false) => tg('answerCallbackQuery', { callback_query_id: q.id, text, show_alert: alert });
   if (!partner) return answer('Вы не отмечены как партнёр — попросите Исмата отметить вас на сайте.', true);
   if (op === 'ap' || op === 'rj') {
-    if (partner !== 'ismat') return answer('Записи подтверждает Исмат.', true);
+    // погрузку (номера машин) подтверждают оба партнёра — как статус машин; остальное — Исмат
+    const { data: it } = await db.from('ak_inbox').select('kind').eq('id', id).maybeSingle();
+    if (partner !== 'ismat' && it?.kind !== 'loading') return answer('Записи подтверждает Исмат.', true);
     const r = op === 'ap' ? await applyItem(id, { tg: q.from.id, name }) : await rejectItem(id, { tg: q.from.id, name });
     return answer(r.ok ? (op === 'ap' ? 'Записано' : 'Не записываем') : (r.error || 'ошибка'), !r.ok);
   }
@@ -856,7 +923,9 @@ Deno.serve(async (req) => {
         const chat = await chatByRole(b.role === 'transport' ? 'transport' : 'finance');
         const fake = { id: 0, chat_id: chat?.chat_id ?? 0, message_id: -1, tg_user_id: null, sent_at: new Date().toISOString(), text: b.text, file_id: null, reply_to_message_id: null };
         const actions = await parseMessage(fake);
-        return json({ ok: true, actions, summaries: actions.map(describe) });
+        const cards: string[] = [];
+        for (const a of actions) if (a.type === 'loading') { a._lines = await enrichLoading(a); cards.push(transportText({ proposal: a })); }
+        return json({ ok: true, actions, summaries: actions.map(describe), cards });
       }
       return json({ ok: true, note: 'расписание — часть 3' });
     }

@@ -455,6 +455,8 @@ RENDER.overview = () => {
   if (intlNoOf.length) issues.push(['amber', `Международные заявки без оформления: ${intlNoOf.map((r) => r.number || 'черновик ' + fmtDate(r.loading_date)).join(', ')}`, 'requests']);
   if (!opening.locked) issues.push(['amber', 'Стартовые остатки ещё не зафиксированы', 'opening']);
   periodReminders().forEach((x) => issues.push(x));
+  const botReq = S.requests.filter((r) => r.status !== 'cancelled' && reqBotPending(r));
+  if (botReq.length) issues.unshift(['red', `Из бота, ждут вашего одобрения: ${botReq.map((r) => r.number).join(', ')}`, 'requests']);
   const waiting = (S.inbox || []).filter((x) => ['pending', 'needs_wallet', 'error'].includes(x.status)).length;
   if (waiting) issues.unshift(['red', `Бот предлагает записи — ждут подтверждения: ${waiting}`, 'inbox']);
   fixedDue().forEach((fc) => issues.push(['amber', `Постоянный расход за ${monthLabel()}: ${fc.name} — ${fmtMoney(fc.amount, fc.currency)} не записан`, 'calc']));
@@ -917,6 +919,17 @@ function tripColor(t) {
 const COLOR = { red: ['#fdf0f0', 'var(--red)', '🔴'], yellow: ['#fff8e8', 'var(--amber)', '🟡'], green: ['#e8f5ee', 'var(--green)', '🟢'], grey: ['#f0efe9', 'var(--text3)', '⚪'] };
 const tripColorTag = (t) => { const c = tripColor(t); const txt = { red: 'не заполнено: ' + tripMissing(t).join(', '), yellow: 'ждёт оплаты', green: 'оплачено', grey: STATUS_TRIP[t.status][1] }[c];
   return `<span class="tag" style="background:${COLOR[c][0]};color:${COLOR[c][1]};border-color:${COLOR[c][1]}33;">${COLOR[c][2]} ${esc(txt)}</span>`; };
+// Записано через Telegram-бота и ждёт одобрения Исмата на сайте (решение владельца).
+const reqBotPending = (r) => !!r.bot_pending || S.trips.some((t) => t.request_id === r.id && t.bot_pending && t.status !== 'cancelled');
+const botTag = '<span class="tag" style="background:#efe7ff;color:#5b21b6;border-color:#c9b6f5;">🤖 из бота — ждёт одобрения</span>';
+async function approveBot(reqId, tripId) {
+  try {
+    const { data, error } = await sb.rpc('ak_bot_approve', { p_request_id: reqId, p_trip_id: tripId || null });
+    if (error) throw error;
+    await reload(); toast(data ? 'Одобрено' : 'Нечего одобрять');
+    if (tripId) editTrip(tripId); else editRequest(reqId);
+  } catch (e) { toast(humanError(e), true); }
+}
 const reqStatusTag = (r) => r.status === 'cancelled' ? '<span class="tag">отменена</span>' : '';
 const tag = ([c, t]) => `<span class="tag ${c}">${esc(t)}</span>`;
 async function fetchCbuRate(date) {
@@ -958,7 +971,7 @@ RENDER.requests = () => {
       <td class="num">${fmtMoney(total, 'UZS')}${r.kind === 'local' ? `<div class="muted">НДС ${fmtMoney(vatOf(total), 'UZS')}</div>` : ''}</td>
       <td class="num">${r.kind === 'international' ? (r.oformlenie_minor == null ? '<span class="muted">—</span>' : fmtMoney(reqTrucks(r) * r.oformlenie_minor, 'USD')) : ''}</td>
       <td class="num">${profitCell(r)}</td>
-      <td>${reqReadyTag(r)} ${reqStatusTag(r)} ${r.version > 1 ? `<span class="tag">версия ${r.version}</span>` : ''}${warn.join(' ')}</td></tr>`;
+      <td>${reqBotPending(r) ? botTag + ' ' : ''}${reqReadyTag(r)} ${reqStatusTag(r)} ${r.version > 1 ? `<span class="tag">версия ${r.version}</span>` : ''}${warn.join(' ')}</td></tr>`;
   }).join('');
   const sum = rows.filter((r) => r.status !== 'cancelled').reduce((a, r) => a + reqTotal(r), 0);
   const filt = { active: 'действующие', draft: 'черновики', issued: 'выпущенные', cancelled: 'отменённые', all: 'все' };
@@ -985,6 +998,7 @@ function editRequest(id) {
   const c = r && S.reqCalcBy.get(r.id);
   openModal(`<h3>${r ? 'Заявка завода № ' + esc(r.number || '—') : 'Новая заявка завода'} ${r ? reqReadyTag(r) + ' ' + reqStatusTag(r) : ''}</h3>
   ${r && r.status !== 'cancelled' ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin:-4px 0 10px;"><button class="btn small" onclick="pdfFactory('${r.id}')">📄 Заявка завода (PDF)</button><button class="btn small" onclick="pdfCarriers('${r.id}')">📄 Заявки перевозчикам (PDF)</button>${pdfStampToggle()}</div>` : ''}
+  ${r && reqBotPending(r) ? `<div class="note" style="background:#f6f1ff;border-color:#c9b6f5;color:#4c1d95;margin:-4px 0 10px;">🤖 Заявка или её лоты записаны через Telegram-бота и ждут вашего одобрения. Проверьте маршрут, дату, машины и цены.${canEdit() ? ` <button class="btn small primary" onclick="approveBot('${r.id}')">✅ Одобрить заявку и лоты</button>` : ''}</div>` : ''}
   ${r ? `<div class="hint" style="margin:-8px 0 10px;">Лотов ${trips.length}${freeLots ? ` · <span style="color:var(--red);">свободных ${freeLots}</span>` : ''}${r.version > 1 ? ` · версия ${r.version}` : ''}</div>` : '<div class="hint" style="margin:-8px 0 10px;">Номер присвоится сразу при сохранении. Цену и оформление можно вписать позже.</div>'}
   <div class="grid3" style="margin-top:0;grid-template-columns:2fr 1.2fr 1fr;">
     ${field({ k: 'route_id', label: 'Маршрут', type: 'select', opts: routes, val: v.route_id, req: true })}
@@ -1098,7 +1112,7 @@ RENDER.trips = () => {
       <td class="num">${t.price_minor != null ? fmtMoney(t.price_minor, t.price_cur) : '<span class="muted">—</span>'}${t.price_cur === 'USD' && t.price_uzs_minor ? `<div class="muted">${fmtMoney(t.price_uzs_minor, 'UZS')}</div>` : ''}</td>
       <td>${t.pay_timing ? esc(LBL.pay_timing[t.pay_timing]) + ', ' + esc(LBL.pay_method[t.pay_method] || '') : '<span class="muted">—</span>'}</td>
       ${payCell(t)}
-      <td>${tripColorTag(t)} ${t.status !== 'assigned' && t.status !== 'cancelled' ? tag(STATUS_TRIP[t.status]) : ''}</td>
+      <td>${t.bot_pending ? '🤖 ' : ''}${tripColorTag(t)} ${t.status !== 'assigned' && t.status !== 'cancelled' ? tag(STATUS_TRIP[t.status]) : ''}</td>
       <td class="mono" style="white-space:nowrap;">${lotPdfBtn(t)}</td></tr>`;
   };
   const blocks = reqs.map((r) => {
@@ -1141,6 +1155,7 @@ function editTrip(id, requestId) {
   const pays = t ? S.movements.filter((m) => m.trip_id === t.id && m.kind === 'carrier_payment') : [];
   openModal(`<h3>${t ? 'Рейс' + (t.number ? ' · заявка перевозчику № ' + esc(t.number) : '') : 'Новая машина в заявку'}</h3>
   <div class="hint" style="margin:-8px 0 12px;">Заявка завода ${esc(reqTitle(r))}${local ? ' · местная' : ''}</div>
+  ${t && t.bot_pending ? `<div class="note" style="background:#f6f1ff;border-color:#c9b6f5;color:#4c1d95;margin:-4px 0 10px;">🤖 Лот заполнен через Telegram-бота — ждёт вашего одобрения.${canEdit() ? ` <button class="btn small primary" onclick="approveBot('${r.id}','${t.id}')">✅ Одобрить лот</button>` : ''}</div>` : ''}
   ${t && t.number ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin:-4px 0 10px;"><button class="btn small" onclick="pdfCarrier('${t.id}')">📄 Заявка перевозчику № ${esc(t.number)} (PDF)</button>${pdfStampToggle()}</div>` : ''}
   <datalist id="dl-tractors">${tractors}</datalist><datalist id="dl-trailers">${trailers}</datalist>
   <div class="grid2">
