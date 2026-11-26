@@ -168,7 +168,7 @@ details.more[open]{padding-bottom:12px;}
 <div class="toast" id="toast"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="ak-docs.js?v=2026-11-26-2"></script>
+<script src="ak-docs.js?v=2026-11-26-3"></script>
 <script>
 'use strict';
 const SUPABASE_URL = 'https://otzerelogdbinclmalyp.supabase.co';
@@ -380,6 +380,13 @@ function openModal(html) { document.getElementById('modal').innerHTML = html; do
 function closeModal() { document.getElementById('modal-bg').classList.remove('open'); }
 document.getElementById('modal-bg').addEventListener('mousedown', (e) => { if (e.target.id === 'modal-bg') closeModal(); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+// Поля сумм: при выходе из поля разряды разделяются пробелами (22776991 → 22 776 991).
+document.addEventListener('focusout', (e) => {
+  const el = e.target;
+  if (!el || !el.dataset || !el.dataset.money || !el.value) return;
+  const n = parseMoney(el.value);
+  if (!Number.isNaN(n)) { const v = minorToInput(n); if (v !== el.value) { el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); } }
+});
 
 // Поле формы. f = {k, label, type, opts, val, hint, full, req}
 function field(f) {
@@ -390,7 +397,7 @@ function field(f) {
   if (f.type === 'select') inp = `<select id="${id}"${dis}>${Object.entries(f.opts).map(([v, t]) => `<option value="${esc(v)}"${String(f.val ?? '') === v ? ' selected' : ''}>${esc(t)}</option>`).join('')}</select>`;
   else if (f.type === 'check') return `<div class="${cls}"><label><input type="checkbox" id="${id}"${f.val ? ' checked' : ''}${dis}> ${esc(f.label)}</label>${f.hint ? `<div class="hint">${esc(f.hint)}</div>` : ''}</div>`;
   else if (f.type === 'textarea') inp = `<textarea id="${id}"${dis}>${esc(f.val)}</textarea>`;
-  else inp = `<input id="${id}" type="${f.type || 'text'}" value="${esc(f.val)}"${f.type === 'money' ? ' inputmode="decimal"' : ''}${dis}>`.replace('type="money"', 'type="text"');
+  else inp = `<input id="${id}" type="${f.type || 'text'}" value="${esc(f.val)}"${f.type === 'money' ? ' inputmode="decimal" data-money="1"' : ''}${dis}>`.replace('type="money"', 'type="text"');
   return `<div class="${cls}"><label>${esc(f.label)}${f.req ? ' *' : ''}</label>${inp}${f.hint ? `<div class="hint">${esc(f.hint)}</div>` : ''}</div>`;
 }
 const val = (k) => { const el = document.getElementById('f_' + k); if (!el) return undefined; return el.type === 'checkbox' ? el.checked : el.value.trim(); };
@@ -970,7 +977,7 @@ function editRequest(id) {
     <div class="fr local-only"><label>Валюта</label><div class="cur-static">сумы (с НДС 12%)</div></div>
     <div class="fr intl-only"><label>Курс (сум за $)</label><div style="display:flex;gap:4px;"><input id="f_fx_rate" value="${esc(v.fx_rate ?? '')}" inputmode="decimal" placeholder="ЦБ"${canEdit() ? '' : ' disabled'}>${canEdit() ? '<button class="btn small" type="button" title="Курс ЦБ на дату погрузки" onclick="reqFetchRate()">ЦБ</button>' : ''}</div></div>
     <div class="fr local-only"><label>&nbsp;</label><div class="hint">местный рейс: без доллара</div></div>
-    <div class="fr intl-only"><label>Оформление, $ за машину</label><input id="f_oformlenie" value="${esc(minorToInput(v.oformlenie_minor))}" inputmode="decimal" placeholder="пусто — не вписано"${canEdit() ? '' : ' disabled'}></div>
+    <div class="fr intl-only"><label>Оформление, $ за машину</label><input id="f_oformlenie" data-money="1" value="${esc(minorToInput(v.oformlenie_minor))}" inputmode="decimal" placeholder="пусто — не вписано"${canEdit() ? '' : ' disabled'}></div>
   </div>
   <div class="note" id="req-preview" style="margin-top:12px;"></div>
   ${c && r.status !== 'cancelled' ? `<div style="font-size:13px;margin-top:8px;">Сумма завода по факту (${c.trucks} маш.): <b>${fmtMoney(c.factory_uzs, 'UZS')}</b> · прибыль: <b>${colored(c.profit_uzs, 'UZS')}</b></div>` : ''}
@@ -1755,7 +1762,7 @@ function adjustmentsList(list, reqId) {
     ${list.length ? list.map((x) => `<div style="font-size:12.5px;${x.cancelled ? 'color:var(--text3);text-decoration:line-through;' : ''}">${fmtDate(x.adj_date)} · ${N(x.amount_minor) > 0 ? '+' : '−'}${fmtMoney(Math.abs(N(x.amount_minor)), 'UZS')} · ${esc(x.reason)}
       ${canEdit() && !x.cancelled ? `<button class="btn small" onclick="cancelAdjustment('${x.id}')">отменить</button>` : ''}</div>`).join('') : '<div class="muted" style="font-size:12.5px;">нет</div>'}
     ${canEdit() ? `<div class="grid2" style="margin-top:6px;grid-template-columns:160px 2fr auto;align-items:end;">
-      <div class="fr"><label>Сумма, сум (±)</label><input id="adj_amount" placeholder="-1 300 000" inputmode="decimal"></div>
+      <div class="fr"><label>Сумма, сум (±)</label><input id="adj_amount" placeholder="-1 300 000" inputmode="decimal" data-money="1"></div>
       <div class="fr"><label>Причина</label><input id="adj_reason" placeholder="например: по акту сверки за ноябрь"></div>
       <button class="btn small" onclick="addAdjustment(${reqId ? `'${reqId}'` : 'null'})">Добавить</button></div>
       <div class="hint">Плюс — завод должен больше, минус — меньше. Корректировку не правят — только отменяют.</div>` : ''}</div>`;
@@ -1786,7 +1793,7 @@ function deductionsBlock(t) {
     ${list.length ? list.map((d) => `<div style="font-size:12.5px;${d.cancelled ? 'color:var(--text3);text-decoration:line-through;' : ''}">${fmtDate(d.ded_date)} · ${fmtMoney(d.amount_minor, d.currency)} · ${esc(d.reason)}
       ${canEdit() && !d.cancelled ? `<button class="btn small" onclick="cancelDeduction('${d.id}','${t.id}')">отменить</button>` : ''}</div>`).join('') : '<div class="muted" style="font-size:12.5px;">удержаний нет</div>'}
     ${canEdit() ? `<div class="grid2" style="margin-top:8px;grid-template-columns:1fr 110px 2fr auto;align-items:end;">
-      <div class="fr"><label>Сумма</label><input id="ded_amount" inputmode="decimal"></div>
+      <div class="fr"><label>Сумма</label><input id="ded_amount" inputmode="decimal" data-money="1"></div>
       <div class="fr"><label>Валюта</label><select id="ded_cur"><option value="UZS">сум</option><option value="USD"${t.price_cur === 'USD' ? ' selected' : ''}>$</option></select></div>
       <div class="fr"><label>Причина</label><input id="ded_reason" placeholder="например: порча 2 мешков"></div>
       <button class="btn small" onclick="addDeduction('${t.id}')">Удержать</button></div>` : ''}

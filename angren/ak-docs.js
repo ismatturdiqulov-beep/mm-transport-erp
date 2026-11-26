@@ -56,11 +56,14 @@
     const whole = Math.floor(m / 100), frac = String(m % 100).padStart(2, '0');
     return `${cap(numberWords(whole))} сум ${frac} тийин`;
   }
-  const sumDigits = (minor) => String(Math.floor(Math.round(Number(minor)) / 100)) + (Math.round(Number(minor)) % 100 ? ',' + String(Math.round(Number(minor)) % 100).padStart(2, '0') : '');
+  // Разряды через неразрывный пробел: 22 776 991 (число не разорвётся на две строки).
+  const NB = ' ';
+  const groups = (intStr) => intStr.replace(/\B(?=(\d{3})+(?!\d))/g, NB);
+  const sumDigits = (minor) => { const m = Math.round(Number(minor)); return groups(String(Math.floor(m / 100))) + (m % 100 ? ',' + String(m % 100).padStart(2, '0') : ''); };
   const money = (minor) => `${sumDigits(minor)} (${sumWords(minor)})`;
   const countText = (n) => `${n} (${numberWords(n)})`;
-  const usd = (cents) => (Number(cents) / 100).toLocaleString('ru-RU', { maximumFractionDigits: 2 }).replace(/\s/g, '');
-  const rateText = (r) => String(Number(r)).replace('.', ',');
+  const usd = (cents) => { const c = Math.round(Number(cents)); return groups(String(Math.floor(c / 100))) + (c % 100 ? ',' + String(c % 100).padStart(2, '0') : ''); };
+  const rateText = (r) => { const [i, d] = Number(r).toFixed(2).split('.'); return groups(i) + (d === '00' ? '' : ',' + d); };
   const dmy = (iso) => { if (!iso) return ''; const [y, m, d] = String(iso).slice(0, 10).split('-'); return `${d}.${m}.${y}`; };
 
   // ---------- общий макет ----------
