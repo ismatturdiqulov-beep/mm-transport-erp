@@ -900,8 +900,27 @@ async function replaceTruck(chatId: number, lotNumber: string, text: string, fro
     `${carrierId !== t.carrier_id ? '\nПеревозчик сменился — впишите цену на сайте.' : ''}\nИсмат одобрит замену на сайте.` });
 }
 
+// Куда слать отчёты и напоминания (решение Исмата 2026-11-26): каждому партнёру — в личку с ботом.
+// Кто ещё не нажал «Запустить» в личке — тому в группу «Расчёты» (одно сообщение на группу).
+async function partnerTargets(groupId: number): Promise<{ chat_id: number; partners: string[] }[]> {
+  const { data: us } = await db.from('ak_tg_users').select('tg_user_id, partner_key').not('partner_key', 'is', null);
+  const ids = (us || []).map((u: any) => u.tg_user_id);
+  const { data: pcs } = ids.length ? await db.from('ak_tg_chats').select('chat_id').eq('type', 'private').in('chat_id', ids) : { data: [] };
+  const priv = new Set((pcs || []).map((c: any) => Number(c.chat_id)));
+  const out: { chat_id: number; partners: string[] }[] = [];
+  const group: string[] = [];
+  for (const u of us || []) {
+    if (priv.has(Number(u.tg_user_id))) out.push({ chat_id: Number(u.tg_user_id), partners: [u.partner_key] });
+    else group.push(u.partner_key);
+  }
+  if (group.length || !out.length) out.push({ chat_id: groupId, partners: group.length ? group : ['ismat', 'sarvar'] });
+  return out;
+}
+
 // ---------- 09:00: кошелёк не указан — напомнить; 3 дня — лично автор ----------
-async function morningWallets(chatId: number) {
+async function morningWallets(groupId: number) {
+  const targets = await partnerTargets(groupId);
+  const chatFor = (p: string | null) => (targets.find((x) => x.partners.includes(p || 'ismat')) || targets[0]).chat_id;
   const { data: items } = await db.from('ak_inbox').select('*').eq('status', 'needs_wallet');
   let reminded = 0, closed = 0;
   for (const it of items || []) {
@@ -914,6 +933,10 @@ async function morningWallets(chatId: number) {
       continue;
     }
     if (it.last_asked_at && Date.now() - Date.parse(it.last_asked_at) < 20 * 3600000) continue;
+    // напоминание — автору сообщения в личку (нет автора-партнёра — Исмату); старая карточка в группе гасится
+    const chatId = chatFor(it.author_partner);
+    if (it.tg_message_id && it.tg_chat_id && Number(it.tg_chat_id) !== chatId)
+      await updateMsg(it, 'Напоминание о кошельке отправлено в личку с ботом.');
     const sent = await tg('sendMessage', { chat_id: chatId, parse_mode: 'HTML', reply_markup: buttons(it),
       text: `⏰ <b>Напоминание</b>: из какого кошелька?\n${itemText(it)}${it.kind === 'expense' ? '\n\nЕсли не ответить — через 3 дня от сообщения расход запишется как оплаченный лично автором.' : ''}` });
     await db.from('ak_inbox').update({ wallet_asks: (it.wallet_asks || 0) + 1, last_asked_at: new Date().toISOString(), ...(sent.ok ? { tg_message_id: sent.result.message_id, tg_chat_id: chatId } : {}) }).eq('id', it.id);
@@ -928,7 +951,8 @@ function periodTitle(id: string) {
   if (id[0] === 'M') return `${MONTHS_RU[+id.slice(6, 8) - 1]} ${id.slice(1, 5)}`;
   return `${['I', 'II', 'III', 'IV'][+id.slice(6, 7) - 1]} квартал ${id.slice(1, 5)}`;
 }
-async function morningPeriods(chatId: number) {
+async function morningPeriods(groupId: number) {
+  const targets = await partnerTargets(groupId);
   const t = today();
   // все месяцы / кварталы, закончившиеся и ещё не закрытые
   const ids: string[] = [];
@@ -963,7 +987,13 @@ async function morningPeriods(chatId: number) {
       (needConfirm ? `Подтвердить до ${dmy(p.confirm_due)}; ждём: ${who}. Подробный PDF — на сайте («Отчёты и закрытие»).\n` : '') +
       (needTax ? `❗ Исмат, впишите на сайте фактический налог на прибыль от бухгалтерии до ${dmy(p.confirm_due)} (иначе останется оценка 15%).\n` : '') +
       `С ${dmy(p.lock_from)} период закроется сам.`;
-    await tg('sendMessage', { chat_id: chatId, parse_mode: 'HTML', text, reply_markup: needConfirm ? { inline_keyboard: [[{ text: '✅ Подтверждаю отчёт', callback_data: `cf:${id}` }]] } : MENU });
+    for (const tgt of targets) {
+      // кнопка — только тому, кто ещё не подтвердил; кому нечего делать — не пишем
+      const mine = tgt.partners.some((x) => !p[`confirmed_${x}_at`]);
+      const taxMine = needTax && tgt.partners.includes('ismat');
+      if (!mine && !taxMine) continue;
+      await tg('sendMessage', { chat_id: tgt.chat_id, parse_mode: 'HTML', text, reply_markup: mine ? { inline_keyboard: [[{ text: '✅ Подтверждаю отчёт', callback_data: `cf:${id}` }]] } : MENU });
+    }
     if (!DRY) await db.from('ak_periods').update({ last_reminded: t }).eq('id', id);
     sent++;
   }
@@ -984,7 +1014,8 @@ async function confirmPeriodTg(q: any, id: string, partner: string, name: string
 }
 
 // ---------- 21:00: ежедневный отчёт ----------
-async function eveningReport(chatId: number) {
+async function eveningReport(groupId: number) {
+  const targets = await partnerTargets(groupId);
   const t = today();
   const [{ data: wallets }, { data: bal }, { data: s }] = await Promise.all([
     db.from('ak_wallets').select('*').eq('active', true).order('sort_order'),
@@ -1017,7 +1048,8 @@ async function eveningReport(chatId: number) {
     `📑 Оформление заводу: ${money(Number(s?.oformlenie_debt_usd || 0), 'USD')}\n` +
     `⏰ К оплате перевозчикам сегодня и просрочено: ${payCnt ? `${money(payNow, 'UZS')} (${payCnt} рейс.)` : 'нет'}` +
     ((open || botPend) ? `\n\n❓ Ждут подтверждения: ${open || 0} в боте${botPend ? `, ${botPend} заявок — одобрение на сайте` : ''}. Подробно — кнопка «❓ Вопросы».` : '');
-  await tg('sendMessage', { chat_id: chatId, parse_mode: 'HTML', text, reply_markup: MENU });
+  for (const tgt of targets) await tg('sendMessage', { chat_id: tgt.chat_id, parse_mode: 'HTML', text, reply_markup: MENU });
+  return targets.map((x) => x.chat_id === groupId ? 'группа' : x.partners.join(','));
 }
 
 async function sendHelp(chatId: number) {
