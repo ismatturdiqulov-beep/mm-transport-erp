@@ -753,6 +753,210 @@ async function cmdQuestions(chatId: number) {
   await tg('sendMessage', { chat_id: chatId, parse_mode: 'HTML', text: out.length ? `❓ <b>Открытые вопросы</b>\n\n${out.join('\n')}` : '✅ Открытых вопросов нет.', reply_markup: MENU });
 }
 
+// ================= РАСПИСАНИЕ: 09:00 и 21:00 =================
+const addDays = (iso: string, n: number) => new Date(Date.parse(iso + 'T00:00:00Z') + n * 86400000).toISOString().slice(0, 10);
+function addWorkdays(iso: string, n: number) {
+  const d = new Date(iso + 'T00:00:00Z'); let left = Number(n || 0);
+  while (left > 0) { d.setUTCDate(d.getUTCDate() + 1); const w = d.getUTCDay(); if (w !== 0 && w !== 6) left--; }
+  return d.toISOString().slice(0, 10);
+}
+
+// ---------- 09:00: вопрос по машинам вчерашней погрузки ----------
+const LOAD_MARK = '🔁 Замена машины в лоте №';
+// Одно сообщение на заявку: список машин и под ним строка кнопок на каждую машину.
+const LOAD_ANS: Record<string, string> = { loaded: '✅ загрузилась', failed: '❌ не приехала', replaced: '🔁 заменена' };
+async function loadingCard(reqId: string, lotsIn?: any[]) {
+  const { data: r } = await db.from('ak_requests').select('id, number, route_id, loading_date').eq('id', reqId).single();
+  const lots = lotsIn || (await db.from('ak_trips').select('*').eq('request_id', reqId).not('tractor_id', 'is', null).not('load_asked_at', 'is', null).order('created_at')).data || [];
+  const rn = await routeNames();
+  const lbl = await lotLabels(lots);
+  const { data: vs } = await db.from('ak_vehicles').select('id, plate_norm').in('id', lots.map((t: any) => t.tractor_id));
+  const pv = Object.fromEntries((vs || []).map((v: any) => [v.id, v.plate_norm]));
+  const lines = lots.map((t: any) => `${esc(lbl(t))} — ${t.load_answer ? LOAD_ANS[t.load_answer] + ' (' + esc(t.load_answer_by) + ')' + (t.load_answer === 'replaced' && t.notes?.startsWith('замена') ? '' : t.load_answer === 'replaced' ? ' — ответьте новым номером' : '') : '❔'}`);
+  const open = lots.filter((t: any) => !t.load_answer);
+  const text = `🌅 <b>${esc(rn[r.route_id] || '')} ${dmy(r.loading_date)} (заявка №${r.number})</b>
+${open.length ? 'Загрузились ли машины? Ответить может Исмат или Сарвар.' : 'Все ответы получены.'}
+
+${lines.join('\n')}`;
+  const keyboard = open.map((t: any) => [{ text: `✅ ${pv[t.tractor_id] || t.number}`, callback_data: `ld:${t.id}:ok` }, { text: '❌ не приехала', callback_data: `ld:${t.id}:no` }, { text: '🔁 заменена', callback_data: `ld:${t.id}:rp` }]);
+  return { text, reply_markup: { inline_keyboard: keyboard } };
+}
+async function morningLoading(chatId: number, forDate?: string) {
+  const y = forDate || addDays(today(), -1);
+  const { data: reqs } = await db.from('ak_requests').select('id').eq('loading_date', y).neq('status', 'cancelled');
+  let n = 0;
+  for (const r of reqs || []) {
+    const { data: lots } = await db.from('ak_trips').select('*').eq('request_id', r.id).not('tractor_id', 'is', null).in('status', ['assigned', 'loaded']).is('load_asked_at', null).order('created_at');
+    if (!lots?.length) continue;
+    if (!DRY) await db.from('ak_trips').update({ load_asked_at: new Date().toISOString() }).in('id', lots.map((t: any) => t.id));
+    const card = await loadingCard(r.id, DRY ? lots : undefined);
+    await tg('sendMessage', { chat_id: chatId, parse_mode: 'HTML', ...card });
+    n += lots.length;
+  }
+  return n;
+}
+async function answerLoading(q: any, tripId: string, ans: string, name: string) {
+  const { data: t } = await db.from('ak_trips').select('*').eq('id', tripId).single();
+  if (!t) return 'лот не найден';
+  if (t.load_answer) return `уже ответил ${t.load_answer_by}`;
+  const d = dbAs(`Бот: статус машины по утреннему вопросу · ответил ${name}`);
+  let upd: any;
+  if (ans === 'ok') upd = { status: 'loaded', load_answer: 'loaded', load_answer_by: name };
+  else if (ans === 'no') upd = { status: 'failed', failed_reason: `не приехала (ответ в Telegram: ${name})`, load_answer: 'failed', load_answer_by: name, bot_pending: true };
+  else upd = { load_answer: 'replaced', load_answer_by: name };
+  const { error } = await d.from('ak_trips').update(upd).eq('id', tripId);
+  if (error) return error.message;
+  const card = await loadingCard(t.request_id);
+  await tg('editMessageText', { chat_id: q.message.chat.id, message_id: q.message.message_id, parse_mode: 'HTML', ...card });
+  if (ans === 'rp') {
+    await tg('sendMessage', { chat_id: q.message.chat.id, text: `${LOAD_MARK}${t.number}
+Ответьте на это сообщение новым номером машины (тягач / прицеп).`, reply_markup: { force_reply: true, input_field_placeholder: 'например: 10V266LB / 107546BA' } });
+    return 'ждём новый номер';
+  }
+  return ans === 'no' ? 'рейс «не состоялся»; Исмат одобрит на сайте' : 'записано';
+}
+async function replaceTruck(chatId: number, lotNumber: string, text: string, fromName: string) {
+  const { data: t } = await db.from('ak_trips').select('*').eq('number', lotNumber).single();
+  if (!t) throw new Error(`нет лота №${lotNumber}`);
+  const { data: r } = await db.from('ak_requests').select('*').eq('id', t.request_id).single();
+  const { data: vs } = await db.from('ak_vehicles').select('id, plate_norm, kind, default_trailer_id').eq('active', true);
+  const [a, b] = text.split('/').map((x) => x.trim());
+  const m = matchPlate(a, vs || [], 'tractor');
+  const d = dbAs(`Бот: замена машины в лоте №${t.number} · сообщил ${fromName}`);
+  const tractor = m.veh || await vehicleId(m.plate, 'tractor', d);
+  const trailer = b ? (matchPlate(b, vs || [], 'trailer').veh || await vehicleId(b, 'trailer', d)) : null;
+  const carrierId = await ownerOn(tractor.id, r.loading_date);
+  const { data: c } = carrierId ? await db.from('ak_carriers').select('*').eq('id', carrierId).single() : { data: null };
+  const upd: any = { tractor_id: tractor.id, trailer_id: trailer?.id ?? tractor.default_trailer_id ?? null, carrier_id: carrierId,
+    status: 'loaded', load_answer: 'replaced', load_answer_by: fromName, bot_pending: true, notes: `замена машины (сообщил ${fromName})` };
+  if (c) Object.assign(upd, { pay_timing: c.pay_timing, pay_method: c.pay_method, pay_days: c.pay_days });
+  if (carrierId !== t.carrier_id) Object.assign(upd, { price_minor: null, price_cur: null });   // новая фирма — цену уточнить
+  const { error } = await d.from('ak_trips').update(upd).eq('id', t.id);
+  if (error) throw error;
+  await tg('sendMessage', { chat_id: chatId, reply_markup: MENU, text: `✅ Лот №${t.number}: теперь ${m.plate}${m.fixedFrom ? ` (исправлено из ${m.fixedFrom})` : ''} — ${c?.name || '❓ фирма неизвестна'}.` +
+    `${carrierId !== t.carrier_id ? '\nПеревозчик сменился — впишите цену на сайте.' : ''}\nИсмат одобрит замену на сайте.` });
+}
+
+// ---------- 09:00: кошелёк не указан — напомнить; 3 дня — лично автор ----------
+async function morningWallets(chatId: number) {
+  const { data: items } = await db.from('ak_inbox').select('*').eq('status', 'needs_wallet');
+  let reminded = 0, closed = 0;
+  for (const it of items || []) {
+    const ageDays = (Date.now() - Date.parse(it.created_at)) / 86400000;
+    if (ageDays >= 3 && it.kind === 'expense' && it.author_partner) {
+      // решение владельца: 3 дня без ответа — расход как оплаченный лично автором (фин. помощь)
+      await db.from('ak_inbox').update({ status: 'pending', wallet: 'personal' }).eq('id', it.id);
+      await applyItem(it.id, { name: `автоматически (3 дня без ответа о кошельке)` });
+      closed++;
+      continue;
+    }
+    if (it.last_asked_at && Date.now() - Date.parse(it.last_asked_at) < 20 * 3600000) continue;
+    const sent = await tg('sendMessage', { chat_id: chatId, parse_mode: 'HTML', reply_markup: buttons(it),
+      text: `⏰ <b>Напоминание</b>: из какого кошелька?\n${itemText(it)}${it.kind === 'expense' ? '\n\nЕсли не ответить — через 3 дня от сообщения расход запишется как оплаченный лично автором.' : ''}` });
+    await db.from('ak_inbox').update({ wallet_asks: (it.wallet_asks || 0) + 1, last_asked_at: new Date().toISOString(), ...(sent.ok ? { tg_message_id: sent.result.message_id, tg_chat_id: chatId } : {}) }).eq('id', it.id);
+    reminded++;
+  }
+  return { reminded, closed };
+}
+
+// ---------- 09:00: подтверждение месячных и квартальных отчётов ----------
+const MONTHS_RU = ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь'];
+function periodTitle(id: string) {
+  if (id[0] === 'M') return `${MONTHS_RU[+id.slice(6, 8) - 1]} ${id.slice(1, 5)}`;
+  return `${['I', 'II', 'III', 'IV'][+id.slice(6, 7) - 1]} квартал ${id.slice(1, 5)}`;
+}
+async function morningPeriods(chatId: number) {
+  const t = today();
+  // все месяцы / кварталы, закончившиеся и ещё не закрытые
+  const ids: string[] = [];
+  for (let k = 1; k <= 3; k++) {
+    const d = new Date(Date.parse(t.slice(0, 8) + '01T00:00:00Z')); d.setUTCMonth(d.getUTCMonth() - k);
+    const y = d.getUTCFullYear(), m = d.getUTCMonth() + 1;
+    ids.push(`M${y}-${String(m).padStart(2, '0')}`);
+    if (m % 3 === 0) ids.push(`Q${y}-${m / 3}`);
+  }
+  let sent = 0;
+  for (const id of ids) {
+    const { data: p, error } = await db.rpc('ak_period_ensure', { p_id: id });
+    if (error || !p) continue;
+    if (p.status === 'closed' || t >= p.lock_from || t <= p.date_to) continue;
+    const needConfirm = !p.confirmed_ismat_at || !p.confirmed_sarvar_at;
+    const needTax = p.kind === 'quarter' && p.tax_actual_minor == null;
+    if (!needConfirm && !needTax) continue;
+    // в первый день после конца периода, затем раз в 3 дня, в последние 3 дня до срока — каждый день
+    const first = t === addDays(p.date_to, 1);
+    const late = t >= addDays(p.confirm_due, -3);
+    const due = first || late || !p.last_reminded || t >= addDays(p.last_reminded, 3);
+    if (!due || p.last_reminded === t) continue;
+    const { data: s } = await db.rpc('ak_summary_core', { p_from: p.date_from, p_to: p.date_to });
+    // пустой период (ни заявок, ни расходов, ни потерь) — подтверждать нечего
+    if (!Number(s?.requests) && !Number(s?.expenses_fixed_uzs) && !Number(s?.losses_uzs)) continue;
+    const half =Math.round(Number(s?.net_profit_uzs || 0) / 2);
+    const who = [!p.confirmed_ismat_at && 'Исмат', !p.confirmed_sarvar_at && 'Сарвар'].filter(Boolean).join(', ');
+    const text = `🗓 <b>Отчёт: ${periodTitle(id)}</b>\n` +
+      `Заявок ${s?.requests ?? 0}, машин ${s?.trucks ?? 0}\nПрибыль по заявкам: ${money(Number(s?.profit_requests_uzs || 0), 'UZS')}\n` +
+      `Налог на прибыль: ${money(Number(s?.tax_estimate_uzs || 0), 'UZS')}${p.kind === 'quarter' && p.tax_actual_minor == null ? ' (оценка 15%)' : ''}\n` +
+      `<b>Чистая прибыль: ${money(Number(s?.net_profit_uzs || 0), 'UZS')}</b> — по ${money(half, 'UZS')} каждому\n\n` +
+      (needConfirm ? `Подтвердить до ${dmy(p.confirm_due)}; ждём: ${who}. Подробный PDF — на сайте («Отчёты и закрытие»).\n` : '') +
+      (needTax ? `❗ Исмат, впишите на сайте фактический налог на прибыль от бухгалтерии до ${dmy(p.confirm_due)} (иначе останется оценка 15%).\n` : '') +
+      `С ${dmy(p.lock_from)} период закроется сам.`;
+    await tg('sendMessage', { chat_id: chatId, parse_mode: 'HTML', text, reply_markup: needConfirm ? { inline_keyboard: [[{ text: '✅ Подтверждаю отчёт', callback_data: `cf:${id}` }]] } : MENU });
+    if (!DRY) await db.from('ak_periods').update({ last_reminded: t }).eq('id', id);
+    sent++;
+  }
+  return sent;
+}
+async function confirmPeriodTg(q: any, id: string, partner: string, name: string) {
+  const { data: p } = await db.from('ak_periods').select('*').eq('id', id).single();
+  if (!p) return 'период не найден';
+  const col = `confirmed_${partner}_at`;
+  if (p[col]) return 'вы уже подтвердили';
+  await dbAs(`Бот: подтверждение отчёта ${periodTitle(id)} · ${name}`).from('ak_periods').update({ [col]: new Date().toISOString() }).eq('id', id);
+  const { data: np } = await db.from('ak_periods').select('*').eq('id', id).single();
+  const both = np.confirmed_ismat_at && np.confirmed_sarvar_at;
+  await tg('editMessageText', { chat_id: q.message.chat.id, message_id: q.message.message_id, parse_mode: 'HTML',
+    text: esc(q.message.text) + `\n\n✅ Подтвердил ${name}` + (both ? '\n🎉 Отчёт подтверждён обоими.' : ''),
+    reply_markup: both ? { inline_keyboard: [] } : { inline_keyboard: [[{ text: '✅ Подтверждаю отчёт', callback_data: `cf:${id}` }]] } });
+  return 'подтверждено';
+}
+
+// ---------- 21:00: ежедневный отчёт ----------
+async function eveningReport(chatId: number) {
+  const t = today();
+  const [{ data: wallets }, { data: bal }, { data: s }] = await Promise.all([
+    db.from('ak_wallets').select('*').eq('active', true).order('sort_order'),
+    db.from('ak_wallet_balances').select('*'),
+    db.rpc('ak_summary_core', { p_from: null, p_to: null }),
+  ]);
+  const { data: mvs } = await db.from('ak_movements').select('*').eq('op_date', t).neq('kind', 'reversal');
+  const KIND: Record<string, string> = { factory_income: 'от завода', carrier_payment: 'перевозчикам', cash_withdrawal: 'снятие наличных', transfer: 'переводы/обмены', handover: 'передачи наличных', oformlenie_payment: 'оформление', expense: 'расходы', partner_withdrawal: 'изъятия партнёров', help_return: 'возврат фин. помощи', income_other: 'прочие поступления' };
+  const agg: Record<string, Record<string, number>> = {};
+  for (const m of mvs || []) { agg[m.kind] = agg[m.kind] || {}; agg[m.kind][m.cur_in] = (agg[m.kind][m.cur_in] || 0) + Number(m.amount_in_minor); }
+  const dayLines = Object.entries(agg).map(([k, v]) => `• ${KIND[k] || k}: ${Object.entries(v).map(([c, x]) => money(x, c)).join(' + ')}`);
+  const b = (id: string) => (bal || []).find((x: any) => x.wallet_id === id) || {};
+  const wl = (wallets || []).map((w: any) => `• ${esc(w.name)}: ${money(Number(b(w.id).balance_minor || 0), w.currency)}`);
+  // к оплате перевозчикам сегодня (по условиям рейса, в рабочих днях)
+  const { data: lots } = await db.from('ak_trips').select('id, request_id, number, carrier_id, status, loaded_on, delivered_on, pay_timing, pay_days').not('carrier_id', 'is', null).not('status', 'in', '(cancelled,failed)');
+  const { data: calc } = await db.from('ak_trip_calc_uzs').select('trip_id, debt_uzs');
+  const debt = Object.fromEntries((calc || []).map((c: any) => [c.trip_id, Number(c.debt_uzs || 0)]));
+  const { data: reqs } = await db.from('ak_requests').select('id, loading_date');
+  const ld = Object.fromEntries((reqs || []).map((r: any) => [r.id, r.loading_date]));
+  let payNow = 0, payCnt = 0;
+  for (const l of lots || []) {
+    if (!(debt[l.id] > 0)) continue;
+    const base = l.pay_timing === 'advance' ? ld[l.request_id] : l.pay_timing === 'after_delivery' ? (l.status === 'delivered' ? l.delivered_on : null) : (['loaded', 'delivered'].includes(l.status) ? (l.loaded_on || ld[l.request_id]) : null);
+    if (base && addWorkdays(base, l.pay_days || 0) <= t) { payNow += debt[l.id]; payCnt++; }
+  }
+  const { count: open } = await db.from('ak_inbox').select('id', { count: 'exact', head: true }).in('status', ['pending', 'needs_wallet', 'error']);
+  const { count: botPend } = await db.from('ak_requests').select('id', { count: 'exact', head: true }).eq('bot_pending', true).neq('status', 'cancelled');
+  const text = `🌙 <b>Итоги дня ${dmy(t)}</b>\n\n<b>Движение денег сегодня</b>\n${dayLines.join('\n') || '• не было'}\n\n<b>Кошельки</b>\n${wl.join('\n')}\n\n` +
+    `🏭 Завод должен нам: ${money(Number(s?.factory_debt_uzs || 0), 'UZS')}\n🚚 Мы должны перевозчикам: ${money(Number(s?.carriers_debt_uzs || 0), 'UZS')}\n` +
+    `📑 Оформление заводу: ${money(Number(s?.oformlenie_debt_usd || 0), 'USD')}\n` +
+    `⏰ К оплате перевозчикам сегодня и просрочено: ${payCnt ? `${money(payNow, 'UZS')} (${payCnt} рейс.)` : 'нет'}` +
+    ((open || botPend) ? `\n\n❓ Ждут подтверждения: ${open || 0} в боте${botPend ? `, ${botPend} заявок — одобрение на сайте` : ''}. Подробно — кнопка «❓ Вопросы».` : '');
+  await tg('sendMessage', { chat_id: chatId, parse_mode: 'HTML', text, reply_markup: MENU });
+}
+
 async function sendHelp(chatId: number) {
   await tg('sendMessage', { chat_id: chatId, parse_mode: 'HTML', text:
     '👋 <b>Бот учёта «Ангрен Каолин» на связи.</b>\n\n' +
@@ -819,6 +1023,11 @@ async function handleUpdate(u: any) {
     const rt = m.reply_to_message?.from?.is_bot ? (m.reply_to_message.text || '') : '';
     const kind = rt.includes(SEARCH_MARK.f) ? 'f' : rt.includes(SEARCH_MARK.c) ? 'c' : null;
     if (kind) { EdgeRuntime.waitUntil(runSafe(chat.id, () => doSearch(chat.id, kind, text))); return; }
+    const lotMatch = rt.match(/Замена машины в лоте №(\S+)/);
+    if (lotMatch) {
+      const who = PARTNER[(await partnerOf(from.id)) || ''] || from.first_name || 'кто-то';
+      EdgeRuntime.waitUntil(runSafe(chat.id, () => replaceTruck(chat.id, lotMatch[1], text, who))); return;
+    }
   }
   // разбираем только то, где есть цифры или файл (болтовню не отправляем в Claude)
   const relevant = /\d/.test(row.text || '') || !!row.file_id;
@@ -843,6 +1052,8 @@ async function handleCallback(q: any) {
     return answer(r.ok ? 'Кошелёк выбран' : (r.error || 'ошибка'), !r.ok);
   }
   const chatId = q.message?.chat?.id;
+  if (op === 'ld') return answer(await answerLoading(q, id, code, name));             // утренний вопрос — любой из партнёров
+  if (op === 'cf') return answer(await confirmPeriodTg(q, id, partner, name));        // подтверждение отчёта — каждый за себя
   if (chatId && ['zl', 'zs', 'pf', 'pc'].includes(op)) {
     await answer(op === 'pf' || op === 'pc' ? 'Готовлю PDF…' : '');
     const job = op === 'zl' ? () => listRequests(chatId, id as 'f' | 'c')
@@ -918,6 +1129,22 @@ Deno.serve(async (req) => {
         } catch (e: any) { out.schema = { ms: Date.now() - t, error: e?.message || String(e) }; }
         return json(out);
       }
+      if (mode === 'morning' || mode === 'evening') {
+        const finance = await chatByRole('finance');
+        if (!finance) return json({ ok: false, error: 'группа «Расчёты» не назначена' });
+        const res: Record<string, unknown> = {};
+        const safe = async (k: string, f: () => Promise<unknown>) => { try { res[k] = await f(); } catch (e: any) { console.error(k, e); res[k] = 'ошибка: ' + (e?.message || e); } };
+        if (mode === 'morning') {
+          // Утренний вопрос «загрузилась / не приехала / заменена» ОТКЛЮЧЁН (решение владельца
+          // 2026-11-26): список машин и так подтверждается в «Перевозках», лот с машиной считается
+          // погруженным сам; исключения отмечают на сайте. Код оставлен (morningLoading) на случай возврата.
+          await safe('wallets', () => morningWallets(finance.chat_id));
+          await safe('periods', () => morningPeriods(finance.chat_id));
+        } else {
+          await safe('report', () => eveningReport(finance.chat_id));
+        }
+        return json({ ok: true, ...res });
+      }
       if (mode === 'hello') {
         const finance = await chatByRole('finance');
         if (!finance) return json({ ok: false, error: 'группа «Расчёты» не назначена' });
@@ -934,6 +1161,9 @@ Deno.serve(async (req) => {
           else if (b.cmd === 'zayavki') await cmdRequests(0);
           else if (b.cmd === 'list') await listRequests(0, b.kind);
           else if (b.cmd === 'search') await doSearch(0, b.kind, b.q);
+          else if (b.cmd === 'evening') await eveningReport(0);
+          else if (b.cmd === 'morning_loading') await morningLoading(0, b.date);
+          else if (b.cmd === 'morning_periods') await morningPeriods(0);
           else if (b.cmd === 'pdf_f') await pdfFactoryReq(0, b.req_id);
           else if (b.cmd === 'pdf_c') await pdfCarrierReq(0, b.trip_id);
           return json({ ok: true, out: DRY });
