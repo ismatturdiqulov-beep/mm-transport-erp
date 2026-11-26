@@ -162,7 +162,7 @@ async function contextFor(msg: any) {
     `Маршруты: ${(routes.data || []).map((r: any) => `${r.name} (${r.kind === 'local' ? 'местный' : 'международный'})`).join('; ')}.`,
     `Недавние заявки завода: ${(reqs.data || []).map((r: any) => `№${r.number} ${routeName[r.route_id]} ${r.loading_date} машин ${r.trucks_ordered}${r.price_minor != null ? ' цена ' + r.price_minor / 100 + ' ' + r.price_cur : ''}`).join('; ') || 'нет'}.`,
     '', 'Недавние сообщения (старые сверху):',
-    ...(recent.data || []).slice().reverse().filter((m: any) => m.message_id !== msg.message_id || m.chat_id !== msg.chat_id)
+    ...(recent.data || []).slice().reverse().filter((m: any) => roleOf[m.chat_id] !== 'другая' && (m.message_id !== msg.message_id || m.chat_id !== msg.chat_id))
       .map((m: any) => `[${roleOf[m.chat_id]} · ${m.sent_at.slice(0, 16).replace('T', ' ')} · ${who(m.tg_user_id)}] ${(m.text || '(файл)').slice(0, 400)}`),
     '',
     replied ? `НОВОЕ СООБЩЕНИЕ — ответ на: «${(replied.text || '').slice(0, 300)}»` : 'НОВОЕ СООБЩЕНИЕ:',
@@ -1052,6 +1052,81 @@ async function eveningReport(groupId: number) {
   return targets.map((x) => x.chat_id === groupId ? 'группа' : x.partners.join(','));
 }
 
+// ---------- вопросы в личке (решение Исмата 2026-11-26) ----------
+// «Сколько перевозок на Ишимбай за ноябрь?» — Claude пишет SELECT, бот выполняет его через
+// ak_bot_query (роль ak_reader: только чтение таблиц ak_*, транзакция read-only; миграция 0076).
+let schemaCache: string | null = null;
+async function akSchema(): Promise<string> {
+  if (schemaCache) return schemaCache;
+  const { data, error } = await db.rpc('ak_bot_query', { q: `select table_name t, string_agg(column_name || ' ' || data_type, ', ' order by ordinal_position) c
+    from information_schema.columns where table_schema = 'public' and table_name like 'ak\\_%' group by 1 order by 1` });
+  if (error) throw error;
+  schemaCache = (data || []).map((r: any) => `${r.t}(${r.c})`).join('\n');
+  return schemaCache;
+}
+const ASK_SYSTEM = `Ты — помощник учёта блока «Ангрен Каолин» (перевозки каолина с завода ANGREN KAOLIN; партнёры Исмат и Сарвар, прибыль 50/50). Отвечаешь партнёру в личке Telegram на вопросы по данным учёта.
+Данные читай инструментом run_sql (PostgreSQL, только SELECT, одна команда, до 200 строк). Не выдумывай цифры — только из запросов. Если вопрос неясен — сделай разумное допущение и назови его.
+
+Как устроены данные:
+- ak_requests — заявки завода: number («6-37»), route_id → ak_routes(name, kind: 'local' местный / 'international'), loading_date (дата погрузки), trucks_ordered, price_minor/price_cur (цена завода за машину), oformlenie_minor (оформление, USD), status ('cancelled' — отменена, не считать).
+- ak_trips — лоты = машины по заявке: request_id, number (номер заявки перевозчику), tractor_id/trailer_id → ak_vehicles(plate_norm), carrier_id → ak_carriers(name), price_minor/price_cur (цена перевозчику), status: 'assigned' (лот ещё без машины, если tractor_id null), 'loaded', 'delivered', 'failed' (не состоялся), 'cancelled'.
+  ПЕРЕВОЗКА (рейс) = лот с tractor_id is not null и status not in ('cancelled','failed'). Дата перевозки = loading_date заявки (или loaded_on лота).
+- ak_trip_calc_uzs (trip_id, debt_uzs — долг перевозчику в тийинах) и другие представления *_calc — готовые расчёты.
+- ak_movements — движения денег: kind (factory_income от завода, carrier_payment, expense, transfer, cash_withdrawal, handover, oformlenie_payment, partner_withdrawal…), op_date, from_wallet/to_wallet, amount_out_minor/cur_out, amount_in_minor/cur_in, carrier_id, trip_id, request_id, counterparty, note; kind='reversal' (сторно) и движения, на которые ссылается reverses_id другого движения, — отменённые, не считать. ak_wallet_balances — остатки кошельков (ak_wallets.name).
+- ak_expenses — расходы; ak_factory_adjustments — корректировки сверки с заводом; ak_periods — месяцы/кварталы и их подтверждение.
+- Функция ak_summary_core(from date, to date) → jsonb: requests, trucks, factory_uzs, carriers_uzs, profit_requests_uzs, net_profit_uzs, tax_estimate_uzs, factory_debt_uzs, carriers_debt_uzs, oformlenie_debt_usd, losses_uzs, vat_payable_uzs и др. (null, null — за всё время). Для прибыли и долгов используй её.
+- ВСЕ суммы *_minor и *_uzs/*_usd в jsonb — в минимальных единицах (тийины/центы): дели на 100.
+
+Ответ: коротко, по-русски, простым текстом без Markdown и HTML. Числа — с пробелами по три цифры (22 776 991 сум). Если перечисляешь рейсы — номер машины, фирма, дата. Укажи период, за который считал.
+Если сообщение — не вопрос, а запись (оплата, расход, цена), ответь, что записи в учёт вносятся через группу «Расчёты», здесь только ответы на вопросы.`;
+
+async function askData(chatId: number, question: string) {
+  if (!DRY) await tg('sendChatAction', { chat_id: chatId, action: 'typing' });
+  // короткая память: последние реплики этой лички за 30 минут (для «а за октябрь?»)
+  const msgs: any[] = [];
+  if (!DRY) {
+    const { data: hist } = await db.from('ak_tg_messages').select('tg_user_id, text, sent_at').eq('chat_id', chatId)
+      .gte('sent_at', new Date(Date.now() - 30 * 60000).toISOString()).order('sent_at', { ascending: false }).limit(9);
+    for (const h of (hist || []).reverse().slice(0, -1)) {
+      if (!h.text) continue;
+      const role = h.tg_user_id ? 'user' : 'assistant';
+      if (msgs.length && msgs[msgs.length - 1].role === role) msgs[msgs.length - 1].content += '\n' + h.text;
+      else msgs.push({ role, content: h.text });
+    }
+    while (msgs.length && msgs[0].role !== 'user') msgs.shift();
+    if (msgs.length && msgs[msgs.length - 1].role === 'user') msgs.pop();
+  }
+  msgs.push({ role: 'user', content: `Сегодня ${today()}. Вопрос: ${question}` });
+  const system = ASK_SYSTEM + '\n\nСхема (таблица(колонка тип, …)):\n' + await akSchema();
+  const tools = [{ name: 'run_sql', description: 'Выполнить один SELECT по данным учёта (только чтение). Возвращает JSON-массив строк (до 200).',
+    input_schema: { type: 'object', properties: { query: { type: 'string', description: 'SQL SELECT' } }, required: ['query'] } }];
+  let answer = '';
+  for (let step = 0; step < 8; step++) {
+    const resp: any = await (anthropic.messages.create as any)({ model: MODEL, max_tokens: 4000, system, tools, messages: msgs,
+      thinking: { type: 'adaptive' }, output_config: { effort: 'medium' } }, { timeout: 120000, maxRetries: 1 });
+    msgs.push({ role: 'assistant', content: resp.content });
+    const uses = (resp.content || []).filter((b: any) => b.type === 'tool_use');
+    if (resp.stop_reason !== 'tool_use' || !uses.length) {
+      answer = (resp.content || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('\n').trim();
+      break;
+    }
+    if (!DRY) await tg('sendChatAction', { chat_id: chatId, action: 'typing' });
+    const results = [];
+    for (const u of uses) {
+      const { data, error } = await db.rpc('ak_bot_query', { q: String(u.input?.query || '') });
+      const out = error ? `Ошибка: ${error.message}` : JSON.stringify(data).slice(0, 30000);
+      if (DRY) DRY.push({ method: 'sql', text: u.input?.query, result: out.slice(0, 500) });
+      results.push({ type: 'tool_result', tool_use_id: u.id, content: out, ...(error ? { is_error: true } : {}) });
+    }
+    msgs.push({ role: 'user', content: results });
+  }
+  if (!answer) answer = 'Не получилось найти ответ — попробуйте спросить иначе.';
+  const sent = await tg('sendMessage', { chat_id: chatId, text: answer.slice(0, 4000), reply_markup: MENU });
+  // ответ бота — в историю лички (для уточняющих вопросов)
+  if (!DRY && sent.ok) await db.from('ak_tg_messages').upsert({ chat_id: chatId, message_id: sent.result.message_id, tg_user_id: null,
+    sent_at: new Date().toISOString(), text: answer.slice(0, 4000) }, { onConflict: 'chat_id,message_id' });
+}
+
 async function sendHelp(chatId: number) {
   await tg('sendMessage', { chat_id: chatId, parse_mode: 'HTML', text:
     '👋 <b>Бот учёта «Ангрен Каолин» на связи.</b>\n\n' +
@@ -1130,7 +1205,8 @@ async function handleUpdate(u: any) {
     }
   }
   if (isPrivate) {
-    if (text) await tg('sendMessage', { chat_id: chat.id, text: 'Здесь, в личке, я отвечаю на команды: 📊 Отчёт, 📄 Заявки, ❓ Вопросы. Записи в учёт пишите в группу «Расчёты».', reply_markup: MENU });
+    // свободный вопрос по данным — отвечает Claude (только чтение); записи — только через группу
+    if (text) EdgeRuntime.waitUntil(runSafe(chat.id, () => askData(chat.id, text)));
     return;
   }
   // разбираем только то, где есть цифры или файл (болтовню не отправляем в Claude)
@@ -1271,6 +1347,7 @@ Deno.serve(async (req) => {
           else if (b.cmd === 'list') await listRequests(0, b.kind);
           else if (b.cmd === 'search') await doSearch(0, b.kind, b.q);
           else if (b.cmd === 'evening') await eveningReport(0);
+          else if (b.cmd === 'ask') await askData(0, b.q);
           else if (b.cmd === 'morning_loading') await morningLoading(0, b.date);
           else if (b.cmd === 'morning_periods') await morningPeriods(0);
           else if (b.cmd === 'pdf_f') await pdfFactoryReq(0, b.req_id);
