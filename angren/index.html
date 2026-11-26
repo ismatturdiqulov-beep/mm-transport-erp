@@ -173,7 +173,8 @@ const S = {
   user: null, me: null,
   members: [], carriers: [], vehicles: [], owners: [], routes: [], directors: [],
   wallets: [], opening: [], settings: {}, audit: [],
-  rates: [], requests: [], trips: [], movements: [], losses: [], expenses: [], expenseLinks: [], balances: [],
+  rates: [], requests: [], trips: [], reqCalc: [], tripCalc: [], carrierCalc: [], deductions: [], sumAll: {}, partners: {}, calcPeriod: 'quarter',
+  reqCalcBy: new Map(), tripCalcBy: new Map(), carrierCalcBy: new Map(), movements: [], losses: [], expenses: [], expenseLinks: [], balances: [],
   reversedIds: new Set(),
   page: 'overview', showArchived: false, search: { carriers: '', vehicles: '', requests: '' }, auditTable: '',
   reqFilter: 'active', tripFilter: 'active', mvWallet: '',
@@ -297,17 +298,29 @@ async function loadAll() {
     ['rates', 'ak_fx_rates', 'rate_date'], ['requests', 'ak_requests', 'loading_date'], ['trips', 'ak_trips', 'created_at'],
     ['movements', 'ak_movements', 'created_at'], ['losses', 'ak_movement_losses', 'id'], ['expenses', 'ak_expenses', 'exp_date'],
     ['expenseLinks', 'ak_expense_requests', 'expense_id'], ['balances', 'ak_wallet_balances', 'wallet_id'],
+    ['reqCalc', 'ak_request_calc', 'request_id'], ['tripCalc', 'ak_trip_calc_uzs', 'trip_id'], ['carrierCalc', 'ak_carrier_calc', 'carrier_id'],
+    ['deductions', 'ak_trip_deductions', 'created_at'],
   ];
   const res = await Promise.all(T.map(([, t, o]) => fetchAll(t, o)));
   T.forEach(([k], i) => { S[k] = res[i]; });
   S.settings = Object.fromEntries(S.settingsRows.map((r) => [r.key, r.value]));
   S.reversedIds = new Set(S.movements.filter((m) => m.reverses_id).map((m) => m.reverses_id));
+  S.reqCalcBy = new Map(S.reqCalc.map((x) => [x.request_id, x]));
+  S.tripCalcBy = new Map(S.tripCalc.map((x) => [x.trip_id, x]));
+  S.carrierCalcBy = new Map(S.carrierCalc.map((x) => [x.carrier_id, x]));
+  const [sumRes, partRes] = await Promise.all([sb.rpc('ak_summary'), sb.rpc('ak_partners')]);
+  if (sumRes.error) throw sumRes.error;
+  if (partRes.error) throw partRes.error;
+  S.sumAll = sumRes.data; S.partners = partRes.data;
+  S.periodSum = null;
 }
 async function reload() { await loadAll(); render(); }
 
 // ================= навигация =================
 const PAGES = [
   { id: 'overview', ico: '◼', name: 'Обзор', grp: 'Главное' },
+  { id: 'calc', ico: '📊', name: 'Расчёты и долги', grp: 'Главное' },
+  { id: 'topay', ico: '⏰', name: 'К оплате и поступления', grp: 'Главное' },
   { id: 'requests', ico: '📑', name: 'Заявки завода', grp: 'Работа' },
   { id: 'trips', ico: '🚚', name: 'Рейсы', grp: 'Работа' },
   { id: 'money', ico: '💰', name: 'Кошельки и движения', grp: 'Деньги' },
@@ -413,6 +426,7 @@ RENDER.overview = () => {
   const drafts = active.filter((r) => r.status === 'draft');
   if (drafts.length) issues.push(['blue', `Заявки-черновики (номер ещё не присвоен): ${drafts.length}`, 'requests']);
   if (!opening.locked) issues.push(['amber', 'Стартовые остатки ещё не зафиксированы', 'opening']);
+  fixedDue().forEach((fc) => issues.push(['amber', `Постоянный расход за ${monthLabel()}: ${fc.name} — ${fmtMoney(fc.amount, fc.currency)} не записан`, 'calc']));
   return `<h1>Ангрен Каолин${roBadge()}</h1>
   <div class="lead">Учёт перевозок по договору с заводом ANGREN KAOLIN: заявки, рейсы, перевозчики, деньги. Расчёт прибыли и долгов, PDF-заявки и Telegram-бот подключаются следующими этапами.</div>
   ${issues.length ? `<div class="card"><h2>Требует внимания</h2>${issues.map(([c, t, p]) => `<div class="note ${c === 'blue' ? '' : 'amber'}" style="cursor:pointer;margin-bottom:6px;${c === 'red' ? 'background:var(--red-bg);border-color:#f0c0c0;color:var(--red);' : ''}" onclick="go('${p}')">${esc(t)} →</div>`).join('')}</div>` : ''}
@@ -444,7 +458,7 @@ RENDER.carriers = () => {
       <td>${esc(c.phone)}${c.contact_person ? `<div class="muted">${esc(c.contact_person)}</div>` : ''}</td>
       <td>${c.contract_no ? `№ ${esc(c.contract_no)}${c.contract_date ? ' от ' + fmtDate(c.contract_date) : ''}` : ''} <span class="tag ${c.contract_status === 'signed' ? 'green' : c.contract_status === 'expired' ? 'red' : 'amber'}">${LBL.contract_status[c.contract_status]}</span></td>
       <td>${LBL.pay_timing[c.pay_timing]}, ${LBL.pay_method[c.pay_method]}, ${c.pay_days} раб. дн.</td>
-      <td class="num">${vs.length || ''}</td></tr>`;
+      <td class="num">${vs.length || ''}</td><td class="num">${debtCell((S.carrierCalcBy.get(c.id) || {}).debt_uzs)}</td></tr>`;
   }).join('');
   return `<h1>Перевозчики${roBadge()}</h1>
   <div class="lead">Фирмы, которых MM нанимает на рейсы. Условия оплаты здесь — по умолчанию; на конкретном рейсе их можно будет изменить. Повторные записи из Excel объединены по ИНН, договор взят последний.</div>
@@ -454,8 +468,8 @@ RENDER.carriers = () => {
     <span class="grow"></span>
     ${canEdit() ? '<button class="btn primary" onclick="editCarrier()">+ Перевозчик</button>' : ''}
   </div>
-  <div class="tbl-wrap" id="tbl-carriers"><table><thead><tr><th>Название</th><th>ИНН</th><th>Телефон / контакт</th><th>Договор</th><th>Оплата по умолчанию</th><th class="num">Машин</th></tr></thead>
-  <tbody>${body || '<tr><td colspan="6" class="empty">Ничего не найдено</td></tr>'}</tbody></table></div>`;
+  <div class="tbl-wrap" id="tbl-carriers"><table><thead><tr><th>Название</th><th>ИНН</th><th>Телефон / контакт</th><th>Договор</th><th>Оплата по умолчанию</th><th class="num">Машин</th><th class="num">Должны</th></tr></thead>
+  <tbody>${body || '<tr><td colspan="7" class="empty">Ничего не найдено</td></tr>'}</tbody></table></div>`;
 };
 // Перерисовать только таблицу, не сбивая курсор в поле поиска.
 function rerenderTable(page) {
@@ -808,13 +822,9 @@ function tripPaid(tripId) {
 }
 // Остаток к оплате по рейсу в валюте цены (оплаты в другой валюте — по курсу рейса / ЦБ).
 function tripRemaining(t) {
-  if (t.price_minor == null) return null;
-  const paid = tripPaid(t.id);
-  const rate = Number(t.fx_rate || (rateOn(todayIso()) || {}).usd_uzs || 0);
-  let rest = t.price_minor - (paid[t.price_cur] || 0);
-  const other = t.price_cur === 'USD' ? 'UZS' : 'USD';
-  if (paid[other] && rate) rest -= t.price_cur === 'USD' ? Math.round(paid[other] / rate) : Math.round(paid[other] * rate);
-  return { cur: t.price_cur, amount: rest };
+  const c = S.tripCalcBy.get(t.id);
+  if (!c || c.debt_minor == null) return null;
+  return { cur: t.price_cur || 'UZS', amount: Number(c.debt_minor), uzs: Number(c.debt_uzs) };
 }
 // Кошелёк и сумма по умолчанию для оплаты рейса.
 function tripPayDefaults(t, walletId) {
@@ -883,6 +893,7 @@ RENDER.requests = () => {
       <td class="num">${r.price_cur === 'USD' ? fmtMoney(r.price_minor, 'USD') + '<div class="muted">' + fmtMoney(r.price_uzs_minor, 'UZS') + '</div>' : fmtMoney(r.price_uzs_minor, 'UZS')}</td>
       <td class="num">${fmtMoney(total, 'UZS')}${r.kind === 'local' ? `<div class="muted">НДС ${fmtMoney(vatOf(total), 'UZS')}</div>` : ''}</td>
       <td class="num">${r.kind === 'international' ? fmtMoney(reqTrucks(r) * r.oformlenie_minor, 'USD') : ''}</td>
+      <td class="num">${profitCell(r)}</td>
       <td>${tag(STATUS_REQ[r.status])} ${r.version > 1 ? `<span class="tag">версия ${r.version}</span>` : ''}${warn.join(' ')}</td></tr>`;
   }).join('');
   const sum = rows.filter((r) => r.status !== 'cancelled').reduce((a, r) => a + reqTotal(r), 0);
@@ -895,9 +906,9 @@ RENDER.requests = () => {
     <span class="grow"></span>
     ${canEdit() ? '<button class="btn primary" onclick="editRequest()">+ Заявка</button>' : ''}
   </div>
-  <div class="tbl-wrap" id="tbl-requests"><table><thead><tr><th>№</th><th>Погрузка</th><th>Маршрут</th><th class="num">Машин подтв. / заказ.</th><th class="num">Цена за 1 ТС</th><th class="num">Сумма заявки</th><th class="num">Оформление</th><th>Статус</th></tr></thead>
-  <tbody>${body || '<tr><td colspan="8" class="empty">Заявок пока нет</td></tr>'}</tbody>
-  ${rows.length ? `<tfoot><tr><td colspan="5"><b>Итого (без отменённых)</b></td><td class="num"><b>${fmtMoney(sum, 'UZS')}</b></td><td colspan="2"></td></tr></tfoot>` : ''}</table></div>`;
+  <div class="tbl-wrap" id="tbl-requests"><table><thead><tr><th>№</th><th>Погрузка</th><th>Маршрут</th><th class="num">Машин подтв. / заказ.</th><th class="num">Цена за 1 ТС</th><th class="num">Сумма заявки</th><th class="num">Оформление</th><th class="num">Прибыль</th><th>Статус</th></tr></thead>
+  <tbody>${body || '<tr><td colspan="9" class="empty">Заявок пока нет</td></tr>'}</tbody>
+  ${rows.length ? `<tfoot><tr><td colspan="5"><b>Итого (без отменённых)</b></td><td class="num"><b>${fmtMoney(sum, 'UZS')}</b></td><td></td><td class="num"><b>${fmtMoney(rows.filter((r) => r.status !== 'cancelled').reduce((s2, r) => s2 + Number((S.reqCalcBy.get(r.id) || {}).profit_uzs || 0), 0), 'UZS')}</b></td><td></td></tr></tfoot>` : ''}</table></div>`;
 };
 
 function editRequest(id) {
@@ -929,6 +940,7 @@ function editRequest(id) {
     ${reasonField(!!r)}
   </div>
   <div class="note" id="req-preview" style="margin-top:12px;"></div>
+  ${r ? reqCalcBlock(r) : ''}
   ${r ? `<div class="sub-list"><h4>Машины (${trips.length})</h4>
     ${trips.length ? `<table><thead><tr><th>Тягач / прицеп</th><th>Перевозчик</th><th class="num">Цена</th><th class="num">Оплачено</th><th></th><th>Статус</th><th>№ заявки</th></tr></thead><tbody>
     ${trips.map((t) => `<tr class="click" onclick="editTrip('${t.id}')"><td class="mono">${esc(plates(t)) || '—'}</td><td>${t.carrier_id ? esc((carrierById(t.carrier_id) || {}).name) : '<span class="tag red">нет перевозчика</span>'}</td>
@@ -1072,6 +1084,7 @@ function editTrip(id, requestId) {
     ${reasonField(!!t)}
   </div>
   <div class="note" id="trip-preview" style="margin-top:12px;"></div>
+  ${t ? deductionsBlock(t) : ''}
   ${t ? `<div class="sub-list"><h4>Оплаты перевозчику</h4>
     ${pays.length ? pays.map((m) => `<div style="font-size:12.5px;">${fmtDate(m.op_date)} · ${fmtMoney(m.amount_in_minor, m.cur_in)} из «${esc((walletById(m.from_wallet) || {}).name)}» ${S.reversedIds.has(m.id) ? '<span class="tag red">отменена</span>' : ''}</div>`).join('') : '<div class="muted" style="font-size:12.5px;">оплат нет</div>'}
     ${canEdit() && t.carrier_id ? `<button class="btn small" style="margin-top:8px;" onclick="openOp('carrier_payment',{trip_id:'${t.id}',carrier_id:'${t.carrier_id}'})">+ Оплатить перевозчику</button>` : ''}
@@ -1445,19 +1458,20 @@ RENDER.expenses = () => {
   <div class="tbl-wrap"><table><thead><tr><th>Дата</th><th>Статья</th><th class="num">Сумма</th><th>Кто заплатил</th><th>Заявки</th><th>Документы</th><th></th></tr></thead>
   <tbody>${body || '<tr><td colspan="7" class="empty">Расходов пока нет</td></tr>'}</tbody></table></div>`;
 };
-function editExpense() {
+function editExpense(preset = {}) {
   const payers = { ...Object.fromEntries(S.wallets.filter((w) => w.active).map((w) => ['w:' + w.id, w.name])), 'p:ismat': 'Лично Исмат (фин. помощь)', 'p:sarvar': 'Лично Сарвар (фин. помощь)' };
   const reqs = S.requests.filter((r) => r.status !== 'cancelled').sort((a, b) => a.loading_date < b.loading_date ? 1 : -1).slice(0, 40);
   openModal(`<h3>Новый расход</h3>
   <div class="grid2">
     ${field({ k: 'exp_date', label: 'Дата', type: 'date', val: todayIso(), req: true })}
-    ${field({ k: 'category', label: 'Статья', type: 'select', opts: EXP_CAT })}
-    ${field({ k: 'payer', label: 'Кто заплатил', type: 'select', opts: payers, full: true })}
-    ${field({ k: 'currency', label: 'Валюта', type: 'select', opts: { UZS: 'сумы', USD: 'доллары ($)' } })}
-    ${field({ k: 'amount', label: 'Сумма', type: 'money', req: true })}
+    ${field({ k: 'category', label: 'Статья', type: 'select', opts: EXP_CAT, val: preset.category })}
+    ${field({ k: 'payer', label: 'Кто заплатил', type: 'select', opts: payers, full: true, val: preset.payer })}
+    ${field({ k: 'bank_debit', label: 'Списано банком без платёжного поручения (без комиссии 0,1% + 1 120)', type: 'check', full: true, val: preset.bank_debit, hint: 'Например, абонентская плата.' })}
+    ${field({ k: 'currency', label: 'Валюта', type: 'select', opts: { UZS: 'сумы', USD: 'доллары ($)' }, val: preset.currency })}
+    ${field({ k: 'amount', label: 'Сумма', type: 'money', req: true, val: preset.amount ? minorToInput(preset.amount) : '' })}
     ${field({ k: 'counterparty', label: 'Кому (реальное название / имя)', full: true })}
     ${field({ k: 'docs_confirmed', label: 'Подтверждён документами (для налога)', type: 'check', full: true })}
-    ${field({ k: 'note', label: 'Примечание', type: 'textarea', full: true })}
+    ${field({ k: 'note', label: 'Примечание', type: 'textarea', full: true, val: preset.note })}
   </div>
   <div class="sub-list"><h4>Относится к заявкам (необязательно)</h4>
     <div style="max-height:180px;overflow:auto;font-size:12.5px;">${reqs.map((r) => `<label style="display:flex;gap:6px;align-items:center;padding:2px 0;"><input type="checkbox" class="exp-req" value="${r.id}"> ${esc(reqTitle(r))}</label>`).join('') || '<span class="muted">заявок нет</span>'}</div>
@@ -1468,11 +1482,12 @@ function editExpense() {
     const payer = val('payer');
     const cur = document.getElementById('f_currency');
     if (payer.startsWith('w:')) { cur.value = walletById(payer.slice(2)).currency; cur.disabled = true; } else cur.disabled = false;
+    const bd = document.getElementById('f_bank_debit').closest('.fr'); bd.style.display = payer.startsWith('w:') && walletById(payer.slice(2)).kind === 'bank' ? '' : 'none';
     const amt = parseMoney(val('amount'));
     const box = document.getElementById('exp-preview');
     if (Number.isNaN(amt)) { box.innerHTML = 'Укажите сумму.'; return; }
     box.innerHTML = payer.startsWith('w:')
-      ? `Спишется из «${esc(walletById(payer.slice(2)).name)}»${walletById(payer.slice(2)).kind === 'bank' ? ' (плюс комиссия банка за поручение — отдельной строкой)' : ''}.`
+      ? `Спишется из «${esc(walletById(payer.slice(2)).name)}»${walletById(payer.slice(2)).kind === 'bank' && !val('bank_debit') ? ' (плюс комиссия банка за поручение — отдельной строкой)' : ''}.`
       : `Кошельки не меняются. Проект будет должен ${esc(LBL.partner[payer.slice(2)])}у ${fmtMoney(amt, val('currency'))} — возврат потом операцией «Возврат финансовой помощи».`;
   });
 }
@@ -1484,6 +1499,7 @@ function saveExpense() {
     exp_date: val('exp_date'), category: val('category'), amount, currency: document.getElementById('f_currency').value,
     paid_by: payer.startsWith('w:') ? 'wallet' : payer.slice(2), wallet: payer.startsWith('w:') ? payer.slice(2) : null,
     counterparty: valOrNull('counterparty'), docs_confirmed: val('docs_confirmed'), note: valOrNull('note'),
+    bank_debit: payer.startsWith('w:') && walletById(payer.slice(2)).kind === 'bank' && !!val('bank_debit'),
     request_ids: [...document.querySelectorAll('.exp-req:checked')].map((x) => x.value),
   };
   saving(async () => { const { data, error } = await sb.rpc('ak_add_expense', { p }); if (error) throw error; return data; }, null, 'Расход записан');
@@ -1528,6 +1544,228 @@ async function saveManualRate() {
   try { await dbRun(sb.from('ak_fx_rates').upsert({ rate_date: d, usd_uzs: rate, source: 'manual' }), 'курс введён вручную'); await reload(); toast('Курс сохранён'); }
   catch (e) { toast(humanError(e), true); }
 }
+
+// ================= ЭТАП 3: РАСЧЁТЫ =================
+// Все цифры — из представлений базы (ak_request_calc, ak_trip_calc_uzs,
+// ak_carrier_calc, ak_summary, ak_partners). Здесь только показ.
+const N = (x) => Number(x || 0);
+const colored = (v, cur) => `<span style="color:${N(v) < 0 ? 'var(--red)' : 'var(--green)'};">${fmtMoney(v, cur)}</span>`;
+function profitCell(r) {
+  const c = S.reqCalcBy.get(r.id);
+  return c && r.status !== 'cancelled' ? colored(c.profit_uzs, 'UZS') : '';
+}
+// долг: плюс — MM должна, минус — должны MM
+function debtCell(v) {
+  if (v == null || N(v) === 0) return '';
+  return N(v) > 0 ? fmtMoney(v, 'UZS') : `<span style="color:var(--green);" title="перевозчик должен MM">−${fmtMoney(-N(v), 'UZS')} нам</span>`;
+}
+function reqCalcBlock(r) {
+  const c = S.reqCalcBy.get(r.id);
+  if (!c || r.status === 'cancelled') return '';
+  const local = r.kind === 'local';
+  const row = (l, v, b) => `<tr><td>${l}</td><td class="num">${b ? '<b>' + v + '</b>' : v}</td></tr>`;
+  return `<div class="sub-list"><h4>Расчёт по заявке ${c.confirmed ? '' : '<span class="tag amber">машин по погрузке — завод ещё не подтвердил</span>'}</h4>
+  <table style="max-width:520px;"><tbody>
+    ${row(`Завод: ${c.trucks} маш. × ${fmtMoney(r.price_uzs_minor, 'UZS')}`, fmtMoney(c.factory_uzs, 'UZS'))}
+    ${local ? row('− НДС 12% (к уплате в бюджет)', fmtMoney(c.vat_out_uzs, 'UZS')) : ''}
+    ${row(`− Перевозчики (${c.trips_live} маш., средняя ${fmtMoney(c.carrier_avg_uzs, 'UZS')})`, fmtMoney(c.carriers_uzs, 'UZS'))}
+    ${local && N(c.carriers_vat_uzs) ? row('+ НДС перевозчиков (к зачёту)', fmtMoney(c.carriers_vat_uzs, 'UZS')) : ''}
+    ${local ? '' : row(`− Оформление ${fmtMoney(c.oformlenie_usd, 'USD')} (выплачено ${fmtMoney(c.oformlenie_paid_usd, 'USD')}, должны ${fmtMoney(c.oformlenie_debt_usd, 'USD')})`, fmtMoney(c.oformlenie_uzs, 'UZS'))}
+    ${N(c.expenses_uzs) ? row('− Доп. расходы по заявке', fmtMoney(c.expenses_uzs, 'UZS')) : ''}
+    ${row('= Прибыль', colored(c.profit_uzs, 'UZS'), true)}
+  </tbody></table>
+  ${c.trips_no_carrier ? '<div class="hint" style="color:var(--red);">Есть рейс без перевозчика — прибыль неполная.</div>' : ''}</div>`;
+}
+
+// ---------- удержания у перевозчика ----------
+function deductionsBlock(t) {
+  const list = S.deductions.filter((d) => d.trip_id === t.id);
+  const c = S.tripCalcBy.get(t.id);
+  return `<div class="sub-list"><h4>Удержания у перевозчика (порча, опоздание…)</h4>
+    ${list.length ? list.map((d) => `<div style="font-size:12.5px;${d.cancelled ? 'color:var(--text3);text-decoration:line-through;' : ''}">${fmtDate(d.ded_date)} · ${fmtMoney(d.amount_minor, d.currency)} · ${esc(d.reason)}
+      ${canEdit() && !d.cancelled ? `<button class="btn small" onclick="cancelDeduction('${d.id}','${t.id}')">отменить</button>` : ''}</div>`).join('') : '<div class="muted" style="font-size:12.5px;">удержаний нет</div>'}
+    ${canEdit() ? `<div class="grid2" style="margin-top:8px;grid-template-columns:1fr 110px 2fr auto;align-items:end;">
+      <div class="fr"><label>Сумма</label><input id="ded_amount" inputmode="decimal"></div>
+      <div class="fr"><label>Валюта</label><select id="ded_cur"><option value="UZS">сум</option><option value="USD"${t.price_cur === 'USD' ? ' selected' : ''}>$</option></select></div>
+      <div class="fr"><label>Причина</label><input id="ded_reason" placeholder="например: порча 2 мешков"></div>
+      <button class="btn small" onclick="addDeduction('${t.id}')">Удержать</button></div>` : ''}
+    ${c && c.debt_minor != null ? `<div class="hint" style="margin-top:6px;">Итог по рейсу: ${N(c.debt_minor) >= 0 ? 'MM должна перевозчику ' + fmtMoney(c.debt_minor, t.price_cur || 'UZS') : 'перевозчик должен MM ' + fmtMoney(-N(c.debt_minor), t.price_cur || 'UZS')}</div>` : ''}
+  </div>`;
+}
+async function addDeduction(tripId) {
+  const amount = parseMoney(document.getElementById('ded_amount').value);
+  const reason = document.getElementById('ded_reason').value.trim();
+  if (!(amount > 0)) return toast('Укажите сумму удержания', true);
+  if (!reason) return toast('Укажите причину удержания', true);
+  try {
+    await dbRun(sb.from('ak_trip_deductions').insert({ trip_id: tripId, amount_minor: amount, currency: document.getElementById('ded_cur').value, reason }), reason);
+    await reload(); editTrip(tripId); toast('Удержание записано');
+  } catch (e) { toast(humanError(e), true); }
+}
+async function cancelDeduction(id, tripId) {
+  const reason = prompt('Почему отменяете удержание?');
+  if (!reason) return;
+  try { await dbRun(sb.from('ak_trip_deductions').update({ cancelled: true, cancel_reason: reason }).eq('id', id), reason); await reload(); editTrip(tripId); toast('Удержание отменено'); }
+  catch (e) { toast(humanError(e), true); }
+}
+
+// ---------- постоянные расходы: напоминание раз в месяц ----------
+const monthKey = (d) => String(d).slice(0, 7);
+const monthLabel = () => new Date().toLocaleDateString('ru-RU', { month: 'long', year: 'numeric', timeZone: 'Asia/Tashkent' });
+function fixedDue() {
+  const m = monthKey(todayIso());
+  return (S.settings.fixed_costs || []).filter((fc) => !S.expenses.some((e) => !e.cancelled && e.category === fc.category &&
+    monthKey(e.exp_date) === m && N(e.amount_minor) === N(fc.amount) && e.currency === fc.currency));
+}
+function payFixed(key) {
+  const fc = (S.settings.fixed_costs || []).find((x) => x.key === key);
+  editExpense({ category: fc.category, amount: fc.amount, currency: fc.currency, payer: 'w:' + fc.wallet, bank_debit: !!fc.bank_debit, note: `${fc.name} за ${monthLabel()}` });
+}
+
+// ---------- рабочие дни (сб, вс — выходные; праздники пока не учитываются) ----------
+function addWorkdays(iso, n) {
+  const d = new Date(iso + 'T00:00:00Z');
+  let left = Number(n || 0);
+  while (left > 0) { d.setUTCDate(d.getUTCDate() + 1); const wd = d.getUTCDay(); if (wd !== 0 && wd !== 6) left--; }
+  return d.toISOString().slice(0, 10);
+}
+
+// ---------- период ----------
+function periodRange(p) {
+  const today = todayIso(); const y = +today.slice(0, 4); const m = +today.slice(5, 7);
+  const pad = (x) => String(x).padStart(2, '0');
+  const last = (yy, mm) => new Date(Date.UTC(yy, mm, 0)).toISOString().slice(0, 10);
+  const q = Math.floor((m - 1) / 3);
+  switch (p) {
+    case 'month': return [`${y}-${pad(m)}-01`, last(y, m)];
+    case 'prev_month': { const pm = m === 1 ? 12 : m - 1, py = m === 1 ? y - 1 : y; return [`${py}-${pad(pm)}-01`, last(py, pm)]; }
+    case 'quarter': return [`${y}-${pad(q * 3 + 1)}-01`, last(y, q * 3 + 3)];
+    case 'prev_quarter': { const pq = q === 0 ? 3 : q - 1, py = q === 0 ? y - 1 : y; return [`${py}-${pad(pq * 3 + 1)}-01`, last(py, pq * 3 + 3)]; }
+    case 'year': return [`${y}-01-01`, `${y}-12-31`];
+    default: return [null, null];
+  }
+}
+const PERIODS = { quarter: 'текущий квартал', prev_quarter: 'прошлый квартал', month: 'текущий месяц', prev_month: 'прошлый месяц', year: 'текущий год', all: 'всё время' };
+async function loadPeriod() {
+  const [f, t] = periodRange(S.calcPeriod);
+  const { data, error } = await sb.rpc('ak_summary', { p_from: f, p_to: t });
+  if (error) { toast(humanError(error), true); return; }
+  S.periodSum = data; if (S.page === 'calc') render();
+}
+
+// ---------- безопасно взять сейчас ----------
+function safeToTake() {
+  const rate = N((rateOn(todayIso()) || {}).usd_uzs);
+  const wallets = S.balances.reduce((a, b) => a + (b.currency === 'USD' ? Math.round(N(b.balance_minor) * rate) : N(b.balance_minor)), 0);
+  const carriers = N(S.sumAll.carriers_debt_uzs);
+  const [qf, qt] = periodRange('quarter');
+  const taxReserve = N((S.periodSum && S.calcPeriod === 'quarter' ? S.periodSum : S.sumAll).tax_estimate_uzs);
+  const fixed = (S.settings.fixed_costs || []).reduce((a, fc) => a + (fc.currency === 'USD' ? Math.round(N(fc.amount) * rate) : N(fc.amount)), 0);
+  let help = 0;
+  for (const p of Object.values((S.partners || {}).partners || {})) for (const [cur, v] of Object.entries(p.help_owed || {})) help += cur === 'USD' ? Math.round(N(v) * rate) : N(v);
+  const oform = Math.max(0, Math.round(N(S.sumAll.oformlenie_debt_usd) * rate));
+  return { wallets, carriers, taxReserve, fixed, help, oform, safe: wallets - carriers - taxReserve - fixed - help - oform };
+}
+
+RENDER.calc = () => {
+  if (!S.periodSum) { loadPeriod(); }
+  const s = S.periodSum || S.sumAll;
+  const all = S.sumAll;
+  const P = (S.partners || {}).partners || {};
+  const st = safeToTake();
+  const row = (l, v, b, hint) => `<tr><td>${l}${hint ? `<div class="hint">${hint}</div>` : ''}</td><td class="num">${b ? '<b>' + v + '</b>' : v}</td></tr>`;
+  const fixed = fixedDue();
+  return `<h1>Расчёты и долги${roBadge()}</h1>
+  <div class="lead">Всё считается автоматически из заявок, рейсов, движений и расходов — ручного ввода нет. Налог на прибыль здесь — оценка 15% (резерв); фактическую сумму от бухгалтерии вы впишете при закрытии квартала.</div>
+  ${fixed.length ? `<div class="card"><h2>Постоянные расходы за ${monthLabel()} — не записаны</h2>${fixed.map((fc) => `<div class="toolbar" style="margin:4px 0;"><span>${esc(fc.name)}: <b>${fmtMoney(fc.amount, fc.currency)}</b> из «${esc((walletById(fc.wallet) || {}).name)}»</span>${canEdit() ? `<button class="btn small primary" onclick="payFixed('${fc.key}')">Записать оплату</button>` : ''}</div>`).join('')}</div>` : ''}
+  <div class="card"><h2>Долги на сегодня</h2><div class="stat-grid" style="margin-bottom:0;">
+    <div class="stat"><div class="sl">Завод должен MM</div><div class="sv">${fmtMoney(all.factory_debt_uzs, 'UZS')}</div><div class="ss">по подтверждённым заявкам${N(all.factory_unconfirmed_uzs) ? ` · ещё ${fmtMoney(all.factory_unconfirmed_uzs, 'UZS')} ждут подтверждения` : ''}</div></div>
+    <div class="stat"><div class="sl">MM должна перевозчикам</div><div class="sv">${fmtMoney(all.carriers_debt_uzs, 'UZS')}</div><div class="ss">${N(all.carriers_owe_us_uzs) ? `перевозчики должны MM: ${fmtMoney(all.carriers_owe_us_uzs, 'UZS')}` : '&nbsp;'}</div></div>
+    <div class="stat"><div class="sl">Оформление заводу</div><div class="sv">${fmtMoney(all.oformlenie_debt_usd, 'USD')}</div><div class="ss">должны всего</div></div>
+    <div class="stat"><div class="sl">НДС к уплате (оценка)</div><div class="sv">${fmtMoney(all.vat_payable_uzs, 'UZS')}</div><div class="ss">НДС от завода ${fmtMoney(all.vat_out_uzs, 'UZS')} − к зачёту ${fmtMoney(all.vat_in_uzs, 'UZS')}</div></div>
+  </div></div>
+  <div class="card"><div class="toolbar" style="margin:0 0 10px;"><h2 style="margin:0;">Прибыль</h2><select style="max-width:200px;" onchange="S.calcPeriod=this.value;S.periodSum=null;render()">${Object.entries(PERIODS).map(([k, v]) => `<option value="${k}"${S.calcPeriod === k ? ' selected' : ''}>${v}</option>`).join('')}</select>
+    ${s.period && s.period.from ? `<span class="muted" style="font-size:12px;">${fmtDate(s.period.from)} — ${fmtDate(s.period.to)} · по дате погрузки</span>` : ''}</div>
+  <table style="max-width:640px;"><tbody>
+    ${row(`Заявки завода (${s.requests} заявок, ${s.trucks} машин)`, fmtMoney(s.factory_uzs, 'UZS'))}
+    ${row('− НДС по местным (в бюджет)', fmtMoney(s.vat_out_uzs, 'UZS'))}
+    ${row('− Перевозчики (без НДС к зачёту)', fmtMoney(N(s.carriers_uzs) - N(s.vat_in_uzs), 'UZS'))}
+    ${row(`− Оформление (${fmtMoney(s.oformlenie_usd, 'USD')})`, fmtMoney(s.oformlenie_uzs, 'UZS'))}
+    ${row('− Доп. расходы по заявкам', fmtMoney(s.expenses_linked_uzs, 'UZS'))}
+    ${row(`= Прибыль по заявкам <span class="muted">(международные ${fmtMoney(s.profit_intl_uzs, 'UZS')}, местные ${fmtMoney(s.profit_local_uzs, 'UZS')})</span>`, colored(s.profit_requests_uzs, 'UZS'), true)}
+    ${row('− Потери (комиссии банка, курсовая разница, доставка наличных)', fmtMoney(s.losses_uzs, 'UZS'))}
+    ${row('− Постоянные и прочие расходы', fmtMoney(s.expenses_fixed_uzs, 'UZS'))}
+    ${row('= Прибыль до налога', colored(s.profit_pre_tax_uzs, 'UZS'), true)}
+    ${row('− Налог на прибыль 15% (оценка, резерв)', fmtMoney(s.tax_estimate_uzs, 'UZS'), false, 'Фактическая сумма — от бухгалтерии при закрытии квартала')}
+    ${row('= Чистая прибыль', colored(s.net_profit_uzs, 'UZS'), true)}
+    ${row('Доля каждого партнёра (50%)', fmtMoney(Math.round(N(s.net_profit_uzs) / 2), 'UZS'), true)}
+  </tbody></table></div>
+  <div class="card"><h2>Партнёры — на сегодня</h2>
+    <div class="hint" style="margin:-6px 0 8px;">Доля считается по реально поступившим деньгам: завод оплатил ${S.partners.received_share != null ? Math.round(N(S.partners.received_share) * 100) + '%' : '—'} выставленного. Минус в балансе — партнёр взял авансом.</div>
+    <table><thead><tr><th>Партнёр</th><th class="num">Доля 50%</th><th class="num">Взято в счёт доли</th><th class="num">Баланс</th><th class="num">Проект должен (фин. помощь)</th></tr></thead><tbody>
+    ${['ismat', 'sarvar'].map((k) => { const p = P[k] || {}; return `<tr><td><b>${LBL.partner[k]}</b></td><td class="num">${fmtMoney(N(p.share_uzs) + N(p.opening_uzs), 'UZS')}</td><td class="num">${fmtMoney(p.taken_uzs, 'UZS')}</td><td class="num">${colored(p.balance_uzs, 'UZS')}</td><td class="num">${fmtMulti(p.help_owed || {}) || '—'}</td></tr>`; }).join('')}
+    </tbody></table></div>
+  <div class="card"><h2>Можно безопасно взять сейчас</h2>
+    <table style="max-width:560px;"><tbody>
+      ${row('Деньги во всех кошельках (доллары — по курсу ЦБ)', fmtMoney(st.wallets, 'UZS'))}
+      ${row('− Долги перевозчикам', fmtMoney(st.carriers, 'UZS'))}
+      ${row('− Долг по оформлению', fmtMoney(st.oform, 'UZS'))}
+      ${row('− Резерв налога (текущий квартал)', fmtMoney(st.taxReserve, 'UZS'))}
+      ${row('− Ближайшие постоянные расходы (месяц)', fmtMoney(st.fixed, 'UZS'))}
+      ${row('− Долг по финансовой помощи партнёрам', fmtMoney(st.help, 'UZS'))}
+      ${row('= Можно взять, не оставив проект без денег', colored(st.safe, 'UZS'), true)}
+    </tbody></table><div class="hint">Это подсказка: превысить можно, но блок предупредит.</div></div>`;
+};
+
+// ---------- к оплате перевозчикам и поступления от завода ----------
+function tripDue(t) {
+  const r = reqById(t.request_id) || {};
+  const timing = t.pay_timing || (carrierById(t.carrier_id) || {}).pay_timing || 'after_loading';
+  const days = t.pay_days ?? (carrierById(t.carrier_id) || {}).pay_days ?? 0;
+  let base = null;
+  if (timing === 'advance') base = r.loading_date;
+  else if (timing === 'after_loading') base = ['loaded', 'delivered'].includes(t.status) ? (t.loaded_on || r.loading_date) : null;
+  else base = t.status === 'delivered' ? t.delivered_on : null;
+  return base ? addWorkdays(base, days) : null;
+}
+RENDER.topay = () => {
+  const today = todayIso(), week = addWorkdays(today, 5);
+  const items = S.trips.filter((t) => t.carrier_id && t.status !== 'failed' && (reqById(t.request_id) || {}).status !== 'cancelled')
+    .map((t) => ({ t, rem: tripRemaining(t), due: tripDue(t) })).filter((x) => x.rem && x.rem.amount > 0)
+    .sort((a, b) => (a.due || '9999') < (b.due || '9999') ? -1 : 1);
+  const now = items.filter((x) => x.due && x.due <= today), soon = items.filter((x) => x.due && x.due > today && x.due <= week),
+    later = items.filter((x) => !x.due || x.due > week);
+  const sumUzs = (arr) => arr.reduce((a, x) => a + N(x.rem.uzs), 0);
+  const tbl = (arr) => arr.length ? `<table><thead><tr><th>Срок</th><th>Перевозчик</th><th>Рейс</th><th>Как</th><th class="num">Остаток</th><th></th></tr></thead><tbody>
+    ${arr.map(({ t, rem, due }) => { const r = reqById(t.request_id); return `<tr class="click" onclick="editTrip('${t.id}')"><td>${due ? fmtDate(due) : '<span class="muted">после ' + (t.pay_timing === 'after_delivery' ? 'доставки' : 'погрузки') + '</span>'}${due && due < today ? ' <span class="tag red">просрочено</span>' : ''}</td>
+      <td>${esc((carrierById(t.carrier_id) || {}).name)}</td><td>${esc(reqTitle(r))}<div class="muted mono">${esc(plates(t))}</div></td><td>${LBL.pay_method[t.pay_method || 'transfer']}</td>
+      <td class="num">${fmtMoney(rem.amount, rem.cur)}</td><td>${canEdit() ? `<button class="btn small primary" onclick="event.stopPropagation();payTrip('${t.id}')">Оплатить</button>` : ''}</td></tr>`; }).join('')}</tbody></table>` : '<div class="muted" style="font-size:12.5px;">нет</div>';
+
+  // поступления от завода: распределяем полученное по заявкам от старых к новым
+  let received = N(S.sumAll.factory_received_uzs);
+  const reqs = S.requests.filter((r) => r.status === 'issued').sort((a, b) => a.loading_date < b.loading_date ? -1 : 1)
+    .map((r) => { const c = S.reqCalcBy.get(r.id) || {}; const total = N(c.factory_uzs); const cover = Math.min(total, received); received -= cover;
+      const start = r.confirmed_on || r.issued_on || r.loading_date;
+      return { r, c, rest: total - cover, due: addWorkdays(start, r.payment_days || 90) }; }).filter((x) => x.rest > 0);
+  const in30 = reqs.filter((x) => x.due <= addWorkdays(today, 22)).reduce((a, x) => a + x.rest, 0);
+  const out30 = items.filter((x) => !x.due || x.due <= addWorkdays(today, 22)).reduce((a, x) => a + N(x.rem.uzs), 0);
+  const rate = N((rateOn(today) || {}).usd_uzs);
+  const cashNow = S.balances.reduce((a, b) => a + (b.currency === 'USD' ? Math.round(N(b.balance_minor) * rate) : N(b.balance_minor)), 0);
+  return `<h1>К оплате и поступления${roBadge()}</h1>
+  <div class="lead">Сроки оплаты перевозчикам — по условиям рейса (или перевозчика по умолчанию), в рабочих днях. Поступления от завода — 90 рабочих дней с подписи заявки; завод иногда платит раньше. Праздники пока не учитываются.</div>
+  <div class="stat-grid">
+    <div class="stat"><div class="sl">К оплате сегодня и просрочено</div><div class="sv">${fmtMoney(sumUzs(now), 'UZS')}</div><div class="ss">${now.length} рейс(ов)</div></div>
+    <div class="stat"><div class="sl">На этой неделе</div><div class="sv">${fmtMoney(sumUzs(soon), 'UZS')}</div><div class="ss">${soon.length} рейс(ов)</div></div>
+    <div class="stat"><div class="sl">Кассовый разрыв за месяц</div><div class="sv" style="color:${cashNow + in30 - out30 < 0 ? 'var(--red)' : 'var(--green)'};">${fmtMoney(cashNow + in30 - out30, 'UZS')}</div><div class="ss">деньги ${fmtMoney(cashNow, 'UZS')} + от завода ${fmtMoney(in30, 'UZS')} − перевозчикам ${fmtMoney(out30, 'UZS')}</div></div>
+  </div>
+  <div class="card"><h2>Сегодня и просрочено</h2>${tbl(now)}</div>
+  <div class="card"><h2>На неделю вперёд</h2>${tbl(soon)}</div>
+  <div class="card"><h2>Позже / срок ещё не наступил</h2>${tbl(later)}</div>
+  <div class="card"><h2>Ожидаемые поступления от завода</h2>
+    ${reqs.length ? `<table><thead><tr><th>Ожидается до</th><th>Заявка</th><th class="num">Осталось получить</th></tr></thead><tbody>
+      ${reqs.map((x) => `<tr class="click" onclick="editRequest('${x.r.id}')"><td>${fmtDate(x.due)}${x.due < today ? ' <span class="tag red">срок прошёл</span>' : ''}</td><td>${esc(reqTitle(x.r))}${x.c.confirmed ? '' : ' <span class="tag amber">не подтверждена</span>'}</td><td class="num">${fmtMoney(x.rest, 'UZS')}</td></tr>`).join('')}
+    </tbody></table><div class="hint">Поступившие деньги засчитываются в самые старые заявки.</div>` : '<div class="muted" style="font-size:12.5px;">всё получено</div>'}</div>`;
+};
 
 // ================= РЕКВИЗИТЫ И ТЕКСТЫ =================
 const SETTING_SECTIONS = [
