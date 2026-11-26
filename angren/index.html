@@ -2397,10 +2397,10 @@ function botSettingsCard() {
   const chats = S.tgChats || [], users = S.tgUsers || [];
   const ed = canEdit();
   return `<div class="card"><h2>Telegram-бот @angren_kaolin_uchet_bot</h2>
-    <div class="hint" style="margin:-6px 0 8px;">Группа «Перевозки» — бот только читает и молчит (там есть Зафар). Группа «Расчёты» — туда бот пишет предложения записей, вопросы и отчёты. Группы и люди появляются здесь, как только бот увидит в них сообщение.</div>
+    <div class="hint" style="margin:-6px 0 8px;">Группа «Перевозки» — бот отвечает только на списки машин: номера и фирмы для подтверждения (Исмат или Сарвар), без денег — там есть Зафар. Группа «Расчёты» — всё остальное: предложения записей, команды, вопросы и отчёты. Группы и люди появляются здесь, как только бот увидит в них сообщение.</div>
     <table><thead><tr><th>Группа</th><th>Роль</th></tr></thead><tbody>
     ${chats.filter((c) => c.type !== 'private').map((c) => `<tr><td>${esc(c.title || c.chat_id)}</td><td>${ed ? `<select style="max-width:220px;" onchange="setChatRole(${c.chat_id}, this.value)">
-      <option value="">— не используется —</option><option value="transport"${c.role === 'transport' ? ' selected' : ''}>Перевозки (только читать)</option><option value="finance"${c.role === 'finance' ? ' selected' : ''}>Расчёты (сюда пишет бот)</option></select>`
+      <option value="">— не используется —</option><option value="transport"${c.role === 'transport' ? ' selected' : ''}>Перевозки (только списки машин, без денег)</option><option value="finance"${c.role === 'finance' ? ' selected' : ''}>Расчёты (всё остальное)</option></select>`
       : esc({ transport: 'Перевозки', finance: 'Расчёты' }[c.role] || '—')}</td></tr>`).join('') || '<tr><td colspan="2" class="muted">бот пока не видел ни одной группы</td></tr>'}
     </tbody></table>
     <table style="margin-top:10px;"><thead><tr><th>Человек в Telegram</th><th>Кто это</th></tr></thead><tbody>
