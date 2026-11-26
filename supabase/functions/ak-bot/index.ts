@@ -1037,12 +1037,14 @@ async function runSafe(chatId: number, job: () => Promise<unknown>) {
   try { await job(); }
   catch (e: any) { console.error(e); await tg('sendMessage', { chat_id: chatId, text: `⚠️ Не получилось: ${e?.message || e}`, reply_markup: MENU }); }
 }
-// Меню команд (кнопка «/» в Telegram) — только в группе «Расчёты».
+// Меню команд (кнопка «/» в Telegram) — в группе «Расчёты» и в личке партнёров.
 async function ensureCommands(chatId: number) {
   const { data } = await db.from('ak_settings').select('value').eq('key', 'bot').maybeSingle();
-  if (data?.value?.commands_chat === chatId) return;
+  const v = data?.value || {};
+  const done: number[] = v.commands_chats || (v.commands_chat ? [v.commands_chat] : []);
+  if (done.includes(chatId)) return;
   const r = await tg('setMyCommands', { commands: COMMANDS, scope: { type: 'chat', chat_id: chatId } });
-  if (r.ok) await db.from('ak_settings').update({ value: { ...(data?.value || {}), commands_chat: chatId } }).eq('key', 'bot');
+  if (r.ok) await db.from('ak_settings').update({ value: { ...v, commands_chats: [...done, chatId] } }).eq('key', 'bot');
 }
 
 // ================= ВХОДЯЩИЕ ОТ TELEGRAM =================
@@ -1068,16 +1070,19 @@ async function handleUpdate(u: any) {
   const { data: saved } = await db.from('ak_tg_messages').upsert(row, { onConflict: 'chat_id,message_id' }).select().single();
 
   const text = (m.text || '').trim();
-  // личка с ботом: только справка (сообщения в личке не разбираются)
-  if (chat.type === 'private') {
+  // Личка с ботом (решение Исмата 2026-11-26): партнёрам — те же команды, что в «Расчётах»
+  // (отчёт, заявки, вопросы, поиск), чтобы не засорять группу. Чужим — только справка с ID.
+  // Свободные сообщения в личке в учёт не разбираются — записи только из групп.
+  const isPrivate = chat.type === 'private';
+  if (isPrivate && !(await partnerOf(from.id))) {
     if (text.startsWith('/start') || text.startsWith('/help')) {
       await tg('sendMessage', { chat_id: chat.id, parse_mode: 'HTML', text: `Здравствуйте! Я бот учёта «Ангрен Каолин».\nЯ читаю группы «Перевозки» и «Расчёты» и предлагаю записи в учёт; подтверждает Исмат.\n\nВаш Telegram ID: <code>${from.id}</code>` });
     }
     return;
   }
-  const { data: c } = await db.from('ak_tg_chats').select('role').eq('chat_id', chat.id).single();
+  const { data: c } = isPrivate ? { data: { role: 'finance' } } : await db.from('ak_tg_chats').select('role').eq('chat_id', chat.id).single();
   if (!c?.role || !saved || from.is_bot) return;          // группа ещё не назначена на сайте
-  // команды и поиск — только в «Расчётах» (в «Перевозках» бот молчит)
+  // команды и поиск — в «Расчётах» и в личке партнёра (в «Перевозках» — только списки машин)
   if (c.role === 'finance' && text) {
     EdgeRuntime.waitUntil(ensureCommands(chat.id));
     if (/^\/(start|help)\b/i.test(text)) { EdgeRuntime.waitUntil(runSafe(chat.id, () => sendHelp(chat.id))); return; }
@@ -1091,6 +1096,10 @@ async function handleUpdate(u: any) {
       const who = PARTNER[(await partnerOf(from.id)) || ''] || from.first_name || 'кто-то';
       EdgeRuntime.waitUntil(runSafe(chat.id, () => replaceTruck(chat.id, lotMatch[1], text, who))); return;
     }
+  }
+  if (isPrivate) {
+    if (text) await tg('sendMessage', { chat_id: chat.id, text: 'Здесь, в личке, я отвечаю на команды: 📊 Отчёт, 📄 Заявки, ❓ Вопросы. Записи в учёт пишите в группу «Расчёты».', reply_markup: MENU });
+    return;
   }
   // разбираем только то, где есть цифры или файл (болтовню не отправляем в Claude)
   const relevant = /\d/.test(row.text || '') || !!row.file_id;
