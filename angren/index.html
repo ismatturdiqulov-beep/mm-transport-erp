@@ -1448,6 +1448,7 @@ function openOp(op, preset = {}) {
   F.push(field({ k: 'note', label: 'Примечание', type: 'textarea', full: true }));
   openModal(`<h3>${esc(o.title)}</h3><div class="hint" style="margin:-8px 0 12px;">${esc(o.hint)}</div>
     <div class="grid2">${F.join('')}</div><div class="note" id="op-preview" style="margin-top:12px;"></div>
+    <div id="purpose-box" class="card" style="display:none;margin:10px 0 0;padding:10px 12px;"><div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;"><b style="font-size:12.5px;">Назначение платежа для бухгалтера</b><span class="grow" style="flex:1;"></span><button class="btn small" type="button" onclick="copyPurpose()">Скопировать</button></div><div id="purpose-text" style="font-size:13px;line-height:1.45;user-select:all;"></div></div>
     ${modalActions(`submitOp('${op}')`)}`);
   // перевозчик ↔ рейсы
   const cSel = document.getElementById('f_carrier_id'), tSel = document.getElementById('f_trip_id');
@@ -1514,13 +1515,39 @@ function opParams(op) {
   if (PAY_OUT_OPS.includes(op)) applyPayWay(p, p.from_wallet);
   return p;
 }
+// Назначение платежа перевозчику (перечисление с Р/С). Формат — как пишет бухгалтер:
+// «Оплата за перевозку грузов автомобильным транспортом в международном сообщении по
+// маршруту: Ангрен - Ишимбай (АТС:01605СМА, перевозка от 26.11.2026).»
+// «Частичная оплата» — если сумма меньше остатка по рейсу; «Оплата» — целиком или остаток.
+function paymentPurpose(t, amount, walletId) {
+  const r = reqById(t.request_id) || {};
+  const route = (routeById(r.route_id) || {}).name || '';
+  const plate = (vehById(t.tractor_id) || {}).plate_norm || '—';
+  const date = fmtDate(t.loaded_on || r.loading_date);
+  const rest = tripPayDefaults(t, walletId).amount;
+  const partial = rest != null && amount < rest;
+  const scope = r.kind === 'local' ? 'междугородном' : 'международном';
+  return `${partial ? 'Частичная оплата' : 'Оплата'} за перевозку грузов автомобильным транспортом в ${scope} сообщении по маршруту: Ангрен - ${route} (АТС:${plate}, перевозка от ${date}).`;
+}
+function updatePurpose(op, p) {
+  const box = document.getElementById('purpose-box'); if (!box) return;
+  const w = walletById(p.from_wallet), t = tripById(p.trip_id);
+  const show = op === 'carrier_payment' && w && w.kind === 'bank' && t && p.amount_in > 0;
+  box.style.display = show ? '' : 'none';
+  document.getElementById('purpose-text').textContent = show ? paymentPurpose(t, p.amount_in, w.id) : '';
+}
+async function copyPurpose() {
+  const txt = document.getElementById('purpose-text').textContent;
+  try { await navigator.clipboard.writeText(txt); toast('Назначение скопировано'); }
+  catch (e) { const r = document.createRange(); r.selectNodeContents(document.getElementById('purpose-text')); const s = getSelection(); s.removeAllRanges(); s.addRange(r); toast('Выделено — нажмите Ctrl+C'); }
+}
 function opPreview(op) {
   const box = document.getElementById('op-preview'); if (!box) return;
   const p = opParams(op);
   const wf = walletById(p.from_wallet), wt = walletById(p.to_wallet);
   const lines = [];
   if (wf && !p.amount_in) { box.innerHTML = `В «${esc(wf.name)}» сейчас: <b>${fmtMoney((S.balances.find((b) => b.wallet_id === wf.id) || {}).balance_minor || 0, wf.currency)}</b>`; return; }
-  if (!(p.amount_in > 0)) { box.innerHTML = 'Укажите сумму.'; return; }
+  if (!(p.amount_in > 0)) { box.innerHTML = 'Укажите сумму.'; updatePurpose(op, p); return; }
   const curOut = wf && wf.currency, curIn = wt ? wt.currency : curOut;
   const manual = p.losses.reduce((a, l) => a + (l.amount || 0), 0);
   let base = p.amount_out ?? (wf ? p.amount_in + manual : null);
@@ -1546,6 +1573,7 @@ function opPreview(op) {
     if (t && t.price_minor != null) lines.push(`По рейсу: цена ${fmtMoney(t.price_minor, t.price_cur)}, уже оплачено ${fmtMulti(tripPaid(t.id)) || '0'}`);
   }
   box.innerHTML = lines.join('<br>');
+  updatePurpose(op, p);
 }
 function submitOp(op) {
   const p = opParams(op);
@@ -1554,6 +1582,8 @@ function submitOp(op) {
   if (p.losses.some((l) => Number.isNaN(l.amount))) return toast('Потери и комиссия — числа', true);
   if (p.from_wallet && p.to_wallet && p.from_wallet === p.to_wallet) return toast('Кошельки «откуда» и «куда» совпадают', true);
   if (op === 'via_counterparty' && !p.counterparty) return toast('Укажите контрагента', true);
+  const purpose = document.getElementById('purpose-box')?.style.display !== 'none' ? document.getElementById('purpose-text').textContent : '';
+  if (purpose) p.note = ['Назначение: ' + purpose, p.note].filter(Boolean).join(' · ');
   saving(async () => {
     const { data, error } = await sb.rpc('ak_post_movement', { p });
     if (error) throw error;
