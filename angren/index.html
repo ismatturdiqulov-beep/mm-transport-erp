@@ -430,8 +430,6 @@ RENDER.overview = () => {
   if (transit.length) issues.push(['amber', `Передачи наличных «в пути» (не подтверждено получение): ${transit.length}`, 'money']);
   const intlNoOf = active.filter((r) => r.kind === 'international' && !r.oformlenie_minor);
   if (intlNoOf.length) issues.push(['amber', `Международные заявки без оформления: ${intlNoOf.map((r) => r.number || 'черновик ' + fmtDate(r.loading_date)).join(', ')}`, 'requests']);
-  const drafts = active.filter((r) => r.status === 'draft');
-  if (drafts.length) issues.push(['blue', `Заявки-черновики (номер ещё не присвоен): ${drafts.length}`, 'requests']);
   if (!opening.locked) issues.push(['amber', 'Стартовые остатки ещё не зафиксированы', 'opening']);
   fixedDue().forEach((fc) => issues.push(['amber', `Постоянный расход за ${monthLabel()}: ${fc.name} — ${fmtMoney(fc.amount, fc.currency)} не записан`, 'calc']));
   return `<h1>Ангрен Каолин${roBadge()}</h1>
@@ -439,7 +437,7 @@ RENDER.overview = () => {
   ${issues.length ? `<div class="card"><h2>Требует внимания</h2>${issues.map(([c, t, p]) => `<div class="note ${c === 'blue' ? '' : 'amber'}" style="cursor:pointer;margin-bottom:6px;${c === 'red' ? 'background:var(--red-bg);border-color:#f0c0c0;color:var(--red);' : ''}" onclick="go('${p}')">${esc(t)} →</div>`).join('')}</div>` : ''}
   <div class="card"><h2>Кошельки сейчас</h2>${walletCards()}</div>
   <div class="stat-grid">
-    <div class="stat"><div class="sl">Заявок</div><div class="sv">${active.length}</div><div class="ss">${active.filter((r) => r.status === 'issued').length} выпущено</div></div>
+    <div class="stat"><div class="sl">Заявок</div><div class="sv">${active.length}</div><div class="ss">действующих</div></div>
     <div class="stat"><div class="sl">Машин в рейсах</div><div class="sv">${liveTrips.length}</div><div class="ss">${liveTrips.filter((t) => t.status === 'delivered').length} доставлено</div></div>
     <div class="stat"><div class="sl">Курс ЦБ</div><div class="sv">${S.rates.length ? fmtRate(S.rates[S.rates.length - 1].usd_uzs) : '—'}</div><div class="ss">${S.rates.length ? 'на ' + fmtDate(S.rates[S.rates.length - 1].rate_date) : ''}</div></div>
   </div>`;
@@ -893,6 +891,7 @@ function tripColor(t) {
 const COLOR = { red: ['#fdf0f0', 'var(--red)', '🔴'], yellow: ['#fff8e8', 'var(--amber)', '🟡'], green: ['#e8f5ee', 'var(--green)', '🟢'], grey: ['#f0efe9', 'var(--text3)', '⚪'] };
 const tripColorTag = (t) => { const c = tripColor(t); const txt = { red: 'не заполнено: ' + tripMissing(t).join(', '), yellow: 'ждёт оплаты', green: 'оплачено', grey: STATUS_TRIP[t.status][1] }[c];
   return `<span class="tag" style="background:${COLOR[c][0]};color:${COLOR[c][1]};border-color:${COLOR[c][1]}33;">${COLOR[c][2]} ${esc(txt)}</span>`; };
+const reqStatusTag = (r) => r.status === 'cancelled' ? '<span class="tag">отменена</span>' : '';
 const tag = ([c, t]) => `<span class="tag ${c}">${esc(t)}</span>`;
 async function fetchCbuRate(date) {
   const { data, error } = await sb.functions.invoke('ak-fx', { body: { date } });
@@ -933,12 +932,12 @@ RENDER.requests = () => {
       <td class="num">${fmtMoney(total, 'UZS')}${r.kind === 'local' ? `<div class="muted">НДС ${fmtMoney(vatOf(total), 'UZS')}</div>` : ''}</td>
       <td class="num">${r.kind === 'international' ? (r.oformlenie_minor == null ? '<span class="muted">—</span>' : fmtMoney(reqTrucks(r) * r.oformlenie_minor, 'USD')) : ''}</td>
       <td class="num">${profitCell(r)}</td>
-      <td>${reqReadyTag(r)} ${tag(STATUS_REQ[r.status])} ${r.version > 1 ? `<span class="tag">версия ${r.version}</span>` : ''}${warn.join(' ')}</td></tr>`;
+      <td>${reqReadyTag(r)} ${reqStatusTag(r)} ${r.version > 1 ? `<span class="tag">версия ${r.version}</span>` : ''}${warn.join(' ')}</td></tr>`;
   }).join('');
   const sum = rows.filter((r) => r.status !== 'cancelled').reduce((a, r) => a + reqTotal(r), 0);
   const filt = { active: 'действующие', draft: 'черновики', issued: 'выпущенные', cancelled: 'отменённые', all: 'все' };
   return `<h1>Заявки завода${roBadge()}</h1>
-  <div class="lead">Одна заявка — одно направление в один день погрузки (местные — на каждый рейс). Номер присваивается при выпуске, после подтверждения загрузки; номера не переиспользуются. Изменение выпущенной заявки сохраняется новой версией с тем же номером.</div>
+  <div class="lead">Одна заявка — одно направление в один день погрузки (местные — на каждый рейс). Номер присваивается сразу при создании, номер заявки перевозчику — когда в лот поставили машину; номера не переиспользуются. Изменение выпущенной заявки сохраняется новой версией с тем же номером.</div>
   <div class="toolbar">
     <input type="search" placeholder="Поиск: номер, маршрут, дата" value="${esc(S.search.requests)}" oninput="S.search.requests=this.value;rerenderTable('requests')">
     <select style="max-width:170px;" onchange="S.reqFilter=this.value;render()">${Object.entries(filt).map(([k, v]) => `<option value="${k}"${f === k ? ' selected' : ''}>${v}</option>`).join('')}</select>
@@ -954,46 +953,52 @@ function editRequest(id) {
   const r = id ? reqById(id) : null;
   const v = r || { loading_date: todayIso(), trucks_ordered: 1, price_cur: 'USD', payment_days: (S.settings.factory || {}).payment_days || 90 };
   const routes = Object.fromEntries([['', '— выберите —'], ...S.routes.filter((x) => x.active || (r && x.id === r.route_id)).map((x) => [x.id, x.name + (x.kind === 'local' ? ' (местный)' : '')])]);
-  const trips = r ? tripsOf(r.id) : [];
+  const trips = r ? tripsOf(r.id).filter((t) => t.status !== 'cancelled') : [];
   const freeLots = trips.filter((t) => t.status === 'assigned' && !t.tractor_id).length;
   const ed = canEdit() && (!r || r.status !== 'cancelled');
-  const versions = r && r.version > 1 ? `<div class="hint">Версия ${r.version}. Прежние версии сохранены (видно в «Журнале изменений»).</div>` : '';
-  openModal(`<h3>${r ? 'Заявка завода ' + esc(reqLabel(r)) : 'Новая заявка завода'} ${r ? tag(STATUS_REQ[r.status]) : ''}</h3>
-  ${versions}
-  <div class="grid2">
+  const c = r && S.reqCalcBy.get(r.id);
+  openModal(`<h3>${r ? 'Заявка завода № ' + esc(r.number || '—') : 'Новая заявка завода'} ${r ? reqReadyTag(r) + ' ' + reqStatusTag(r) : ''}</h3>
+  ${r ? `<div class="hint" style="margin:-8px 0 10px;">Лотов ${trips.length}${freeLots ? ` · <span style="color:var(--red);">свободных ${freeLots}</span>` : ''}${r.version > 1 ? ` · версия ${r.version}` : ''}</div>` : '<div class="hint" style="margin:-8px 0 10px;">Номер присвоится сразу при сохранении. Цену и оформление можно вписать позже.</div>'}
+  <div class="grid3" style="margin-top:0;grid-template-columns:2fr 1.2fr 1fr;">
     ${field({ k: 'route_id', label: 'Маршрут', type: 'select', opts: routes, val: v.route_id, req: true })}
     ${field({ k: 'loading_date', label: 'Дата погрузки', type: 'date', val: v.loading_date, req: true })}
-    ${field({ k: 'trucks_ordered', label: 'Машин заказано', type: 'number', val: v.trucks_ordered })}
-    <div class="intl-only" style="display:contents;">
-      ${field({ k: 'price_cur', label: 'Валюта цены', type: 'select', opts: { USD: 'доллары ($)', UZS: 'сумы' }, val: v.price_cur })}
-    </div>
-    ${field({ k: 'price', label: 'Цена завода за 1 ТС', type: 'money', val: minorToInput(v.price_minor), hint: 'Можно вписать позже. Местные — сумма с НДС 12%.' })}
-    <div class="intl-only" style="display:contents;">
-      <div class="fr"><label>Курс заявки (сум за $)</label><div style="display:flex;gap:6px;"><input id="f_fx_rate" value="${esc(v.fx_rate ?? '')}" inputmode="decimal"${canEdit() ? '' : ' disabled'}>${canEdit() ? '<button class="btn small" type="button" onclick="reqFetchRate()">ЦБ</button>' : ''}</div><div class="hint">Пусто — возьмётся курс ЦБ на дату погрузки.</div></div>
-      ${field({ k: 'oformlenie', label: 'Оформление, $ за машину', type: 'money', val: minorToInput(v.oformlenie_minor), hint: 'Обычно 100 или 200. 0 — если оформления нет; пусто — ещё не вписали.' })}
-    </div>
-    ${field({ k: 'payment_days', label: 'Срок оплаты заводом, рабочих дней', type: 'number', val: v.payment_days })}
-    ${field({ k: 'notes', label: 'Заметки', type: 'textarea', val: v.notes, full: true })}
-    ${reasonField(!!r)}
+    ${field({ k: 'trucks_ordered', label: 'Машин', type: 'number', val: v.trucks_ordered })}
+    ${field({ k: 'price', label: 'Цена завода за 1 ТС', type: 'money', val: minorToInput(v.price_minor) })}
+    <div class="fr intl-only"><label>Валюта</label><select id="f_price_cur"${canEdit() ? '' : ' disabled'}><option value="USD"${v.price_cur !== 'UZS' ? ' selected' : ''}>доллары ($)</option><option value="UZS"${v.price_cur === 'UZS' ? ' selected' : ''}>сумы</option></select></div>
+    <div class="fr local-only"><label>Валюта</label><div class="cur-static">сумы (с НДС 12%)</div></div>
+    <div class="fr intl-only"><label>Курс (сум за $)</label><div style="display:flex;gap:4px;"><input id="f_fx_rate" value="${esc(v.fx_rate ?? '')}" inputmode="decimal" placeholder="ЦБ"${canEdit() ? '' : ' disabled'}>${canEdit() ? '<button class="btn small" type="button" title="Курс ЦБ на дату погрузки" onclick="reqFetchRate()">ЦБ</button>' : ''}</div></div>
+    <div class="fr local-only"><label>&nbsp;</label><div class="hint">местный рейс: без доллара</div></div>
+    <div class="fr intl-only"><label>Оформление, $ за машину</label><input id="f_oformlenie" value="${esc(minorToInput(v.oformlenie_minor))}" inputmode="decimal" placeholder="пусто — не вписано"${canEdit() ? '' : ' disabled'}></div>
   </div>
   <div class="note" id="req-preview" style="margin-top:12px;"></div>
-  ${r ? reqCalcBlock(r) : ''}
-  ${r ? `<div class="sub-list"><h4>Лоты: ${trips.filter((t) => t.status !== 'cancelled').length}${freeLots ? ` · свободных ${freeLots}` : ''}</h4>
-    ${trips.length ? `<table><thead><tr><th></th><th>Тягач / прицеп</th><th>Перевозчик</th><th class="num">Цена</th><th class="num">Оплачено</th><th></th><th>Статус</th><th>№ заявки</th></tr></thead><tbody>
-    ${trips.filter((t) => t.status !== 'cancelled').map((t) => `<tr class="click" onclick="editTrip('${t.id}')"><td>${COLOR[tripColor(t)][2]}</td><td class="mono">${esc(plates(t)) || '<span class="muted">свободный лот — выбрать машину</span>'}</td><td>${t.carrier_id ? esc((carrierById(t.carrier_id) || {}).name) : '<span class="tag red">нет перевозчика</span>'}</td>
-      <td class="num">${t.price_minor != null ? fmtMoney(t.price_minor, t.price_cur) : ''}</td>${payCell(t)}<td>${tag(STATUS_TRIP[t.status])}</td><td class="mono">${esc(t.number || '')}</td></tr>`).join('')}
-    </tbody></table>` : '<div class="muted" style="font-size:12.5px;">машин пока нет</div>'}
-    ${ed ? `<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;"><button class="btn small" onclick="editTrip(null,'${r.id}')">+ Машина</button>
-      <button class="btn small primary" onclick="issueRequest('${r.id}')">${r.number ? 'Выпустить заявки на новые машины' : 'Выпустить заявку (присвоить номер)'}</button></div>` : ''}
-  </div>` : ''}
-  ${modalActions(ed ? `saveRequest(${r ? `'${r.id}'` : ''})` : 'closeModal()', r && ed ? `<button class="btn left" onclick="cancelRequest('${r.id}')">Отменить заявку</button>` : '')}`);
+  ${c && r.status !== 'cancelled' ? `<div style="font-size:13px;margin-top:8px;">Сумма завода по факту (${c.trucks} маш.): <b>${fmtMoney(c.factory_uzs, 'UZS')}</b> · прибыль: <b>${colored(c.profit_uzs, 'UZS')}</b></div>` : ''}
+  <details class="more">
+    <summary>Подробнее: срок оплаты, заметки, расчёт, корректировки по сверке, лоты${r && ed ? ', отмена заявки' : ''}</summary>
+    <div class="grid2">
+      ${field({ k: 'payment_days', label: 'Срок оплаты заводом, рабочих дней', type: 'number', val: v.payment_days })}
+      <div></div>
+      ${field({ k: 'notes', label: 'Заметки', type: 'textarea', val: v.notes, full: true })}
+      ${reasonField(!!r)}
+    </div>
+    ${r ? reqCalcBlock(r) : ''}
+    ${r ? `<div class="sub-list"><h4>Лоты</h4>
+      ${trips.length ? `<table><thead><tr><th></th><th>Тягач / прицеп</th><th>Перевозчик</th><th class="num">Цена</th><th class="num">Оплачено</th><th></th><th>№ заявки</th></tr></thead><tbody>
+      ${trips.map((t) => `<tr class="click" onclick="editTrip('${t.id}')"><td>${COLOR[tripColor(t)][2]}</td><td class="mono">${esc(plates(t)) || '<span class="muted">свободный лот — выбрать машину</span>'}</td><td>${t.carrier_id ? esc((carrierById(t.carrier_id) || {}).name) : '<span class="muted">—</span>'}</td>
+        <td class="num">${t.price_minor != null ? fmtMoney(t.price_minor, t.price_cur) : ''}</td>${payCell(t)}<td class="mono">${esc(t.number || '')}</td></tr>`).join('')}
+      </tbody></table>` : '<div class="muted" style="font-size:12.5px;">лотов нет</div>'}
+      ${ed ? `<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;"><button class="btn small" onclick="addLot('${r.id}')">+ ещё лот</button>
+        <span class="grow" style="flex:1;"></span><button class="btn small" onclick="cancelRequest('${r.id}')">Отменить заявку</button></div>` : ''}
+    </div>` : ''}
+  </details>
+  ${modalActions(ed ? `saveRequest(${r ? `'${r.id}'` : ''})` : 'closeModal()')}`);
   if (!ed) document.getElementById('save-btn')?.remove();
   onModalInput(reqPreview);
 }
 function reqPreview() {
   const rt = routeById(val('route_id'));
   const local = rt && rt.kind === 'local';
-  document.querySelectorAll('#modal .intl-only').forEach((el) => { el.style.display = local ? 'none' : 'contents'; });
+  document.querySelectorAll('#modal .intl-only').forEach((el) => { el.style.display = local ? 'none' : ''; });
+  document.querySelectorAll('#modal .local-only').forEach((el) => { el.style.display = local ? '' : 'none'; });
   const box = document.getElementById('req-preview');
   if (!box) return;
   const price = parseMoney(val('price'));
@@ -1043,17 +1048,6 @@ function saveRequest(id) {
   // после сохранения карточка закрывается; новая заявка — сразу к её лотам
   saving(() => saveRow('ak_requests', r, upd), r ? null : () => go('trips'),
     r ? 'Заявка сохранена' : `Заявка создана, открыто лотов: ${upd.trucks_ordered}`);
-}
-async function issueRequest(id) {
-  const r = reqById(id);
-  const loaded = tripsOf(id).filter((t) => ['loaded', 'delivered'].includes(t.status) && !t.number);
-  if (!r.number && !loaded.length) return toast('Нет погруженных машин: откройте машину и поставьте статус «погружен»', true);
-  if (!confirm(`${r.number ? 'Выпустить заявки перевозчикам' : 'Присвоить заявке номер и выпустить'}?\nМашин, погруженных без номера: ${loaded.length}.\nНомера не переиспользуются.`)) return;
-  try {
-    const { data, error } = await sb.rpc('ak_issue_request', { p_id: id });
-    if (error) throw error;
-    await reload(); editRequest(id); toast('Заявка № ' + data + ' выпущена');
-  } catch (e) { toast(humanError(e), true); }
 }
 async function cancelRequest(id) {
   const reason = prompt('Почему отменяется заявка? (запишется в журнал; заявка останется в списке со статусом «отменена»)');
