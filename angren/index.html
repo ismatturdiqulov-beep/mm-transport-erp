@@ -158,7 +158,7 @@ details.more[open]{padding-bottom:12px;}
     <div class="nav" id="nav"></div>
     <div class="side-bottom">
       <div class="who" id="who"></div>
-      <button onclick="doLogout()">Выйти</button>
+      <button onclick="changePassword()">Сменить пароль</button> <button onclick="doLogout()">Выйти</button>
     </div>
   </nav>
   <main class="main" id="main"></main>
@@ -256,6 +256,16 @@ async function doLogin() {
   btn.disabled = false;
   if (error) { showLoginError(/Invalid login/i.test(error.message) ? 'Неверный email или пароль.' : humanError(error)); return; }
   enter(data.session);
+}
+async function changePassword() {
+  const p1 = prompt('Новый пароль (не короче 8 знаков):');
+  if (!p1) return;
+  if (p1.length < 8) return toast('Пароль слишком короткий — нужно не меньше 8 знаков', true);
+  const p2 = prompt('Повторите новый пароль:');
+  if (p1 !== p2) return toast('Пароли не совпадают', true);
+  const { error } = await sb.auth.updateUser({ password: p1 });
+  if (error) return toast(humanError(error), true);
+  toast('Пароль изменён');
 }
 async function doLogout() { await sb.auth.signOut(); location.reload(); }
 

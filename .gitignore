@@ -33,3 +33,4 @@ Angren_kaolin/*.doc*
 Angren_kaolin/*.pdf
 Angren_kaolin/*.sql
 Angren_kaolin/*.json
+Angren_kaolin/.*
