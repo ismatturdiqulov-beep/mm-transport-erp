@@ -65,6 +65,9 @@
 
   // ---------- общий макет ----------
   const LINE = '________________';
+  // Печать: круг занимает 61,5% ширины изображения (вместе с росчерком подписи).
+  // Диаметр круга 40 мм (стандарт) → ширина изображения 40 / 0,615 = 65 мм = 184 pt.
+  const STAMP_W = 184;
   function header(date, annexTo) {
     return {
       columns: [
@@ -117,7 +120,7 @@
         ]),
         // печать с подписью — поверх строки подписи, места не занимает
         // размер как в Word-образце (6,16 × 4,98 см); поверх строки подписи, места не занимает
-        ...(withStamp ? [{ image: withStamp, width: 174, margin: (p.requisites || []).length ? [52, -112, 0, -29] : [52, -52, 0, -89] }] : []),
+        ...(withStamp ? [{ image: withStamp, width: STAMP_W, margin: (p.requisites || []).length ? [48, -118, 0, -31] : [48, -54, 0, -95] }] : []),
       ],
     });
     const cols = [col(left, stampSide === 'left' && stamp), { width: 20, text: '' }, col(right, stampSide === 'right' && stamp)];
