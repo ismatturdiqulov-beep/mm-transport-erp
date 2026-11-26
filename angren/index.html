@@ -99,6 +99,13 @@ td.num,th.num{text-align:right;font-family:var(--mono);white-space:nowrap;}
 .modal h3{font-size:16px;font-weight:600;margin-bottom:14px;}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px 14px;}
 .grid2 .full{grid-column:1/-1;}
+.grid3{display:grid;grid-template-columns:2fr 1fr 1.3fr;gap:10px 14px;margin-top:10px;}
+.cur-static{padding:7px 9px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);font-size:13px;}
+details.more{margin-top:14px;border:1px solid var(--border);border-radius:var(--radius);padding:0 12px;}
+details.more>summary{cursor:pointer;padding:9px 0;font-size:12.5px;color:var(--text2);font-weight:500;list-style:none;}
+details.more>summary::before{content:'▸ ';}
+details.more[open]>summary::before{content:'▾ ';}
+details.more[open]{padding-bottom:12px;}
 .fr label{display:block;font-size:11.5px;color:var(--text2);margin-bottom:3px;font-weight:500;}
 .fr.chk label{display:flex;gap:7px;align-items:center;font-size:13px;color:var(--text);font-weight:400;cursor:pointer;}
 .modal .actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px;flex-wrap:wrap;}
@@ -121,7 +128,7 @@ td.num,th.num{text-align:right;font-family:var(--mono);white-space:nowrap;}
   .nav-item{padding:7px 10px;border-left:none;border-bottom:2px solid transparent;}
   .nav-item.active{border-bottom-color:#ffc36a;}
   .page{padding:16px 12px;}
-  .grid2{grid-template-columns:1fr;}
+  .grid2,.grid3{grid-template-columns:1fr;}
 }
 </style>
 </head>
@@ -1120,25 +1127,34 @@ function editTrip(id, requestId) {
     <div class="full hint" id="plate-hint"></div>
     <div class="full" id="owner-warn" style="display:none;"></div>
     ${field({ k: 'carrier_id', label: 'Перевозчик', type: 'select', opts: carrierOpts(), val: v.carrier_id, full: true })}
-    ${local ? '' : field({ k: 'price_cur', label: 'Валюта цены перевозчику', type: 'select', opts: { USD: 'доллары ($)', UZS: 'сумы' }, val: v.price_cur })}
+  </div>
+  <div class="grid3">
     ${field({ k: 'price', label: 'Цена перевозчику', type: 'money', val: minorToInput(v.price_minor) })}
-    ${local ? field({ k: 'vat_included', label: 'Цена с НДС (перевозчик — плательщик НДС)', type: 'check', val: v.vat_included }) : `<div class="fr"><label>Курс (сум за $)</label><input id="f_fx_rate" value="${esc(v.fx_rate ?? r.fx_rate ?? '')}" inputmode="decimal"${ed ? '' : ' disabled'}><div class="hint">По умолчанию — курс заявки завода.</div></div>`}
+    ${local ? '<div class="fr"><label>Валюта</label><div class="cur-static">сумы</div></div>'
+      : field({ k: 'price_cur', label: 'Валюта', type: 'select', opts: { USD: 'доллары ($)', UZS: 'сумы' }, val: v.price_cur })}
+    ${local ? field({ k: 'vat_included', label: 'с НДС (плательщик НДС)', type: 'check', val: v.vat_included })
+      : `<div class="fr"><label>Курс (сум за $)</label><input id="f_fx_rate" value="${esc(v.fx_rate ?? r.fx_rate ?? '')}" inputmode="decimal" title="По умолчанию — курс заявки завода"${ed ? '' : ' disabled'}></div>`}
     ${field({ k: 'pay_timing', label: 'Когда платим', type: 'select', opts: LBL.pay_timing, val: v.pay_timing })}
     ${field({ k: 'pay_method', label: 'Как платим', type: 'select', opts: LBL.pay_method, val: v.pay_method })}
     ${field({ k: 'pay_days', label: 'Срок, рабочих дней', type: 'number', val: v.pay_days })}
+  </div>
+  <div class="note" id="trip-preview" style="margin-top:12px;"></div>
+  <details class="more"${t && (t.status === 'failed' || S.deductions.some((d) => d.trip_id === t.id && !d.cancelled)) ? ' open' : ''}>
+    <summary>Подробнее: статус${t && t.status !== 'assigned' ? ' (' + esc(STATUS_TRIP[t.status][1]) + ')' : ''}, даты, заметки, удержания, оплаты</summary>
+  <div class="grid2">
     ${field({ k: 'status', label: 'Статус', type: 'select', opts: Object.fromEntries(Object.entries(STATUS_TRIP).filter(([k]) => k !== 'cancelled' || v.status === 'cancelled').map(([k, x]) => [k, x[1]])), val: v.status })}
     ${field({ k: 'loaded_on', label: 'Дата погрузки', type: 'date', val: v.loaded_on })}
     ${field({ k: 'delivered_on', label: 'Дата доставки', type: 'date', val: v.delivered_on })}
-    ${field({ k: 'failed_reason', label: 'Причина (если «не состоялся»)', val: v.failed_reason, full: true })}
+    ${field({ k: 'failed_reason', label: 'Причина (если «не состоялся»)', val: v.failed_reason })}
     ${field({ k: 'notes', label: 'Заметки', type: 'textarea', val: v.notes, full: true })}
     ${reasonField(!!t)}
   </div>
-  <div class="note" id="trip-preview" style="margin-top:12px;"></div>
   ${t ? deductionsBlock(t) : ''}
   ${t ? `<div class="sub-list"><h4>Оплаты перевозчику</h4>
     ${pays.length ? pays.map((m) => `<div style="font-size:12.5px;">${fmtDate(m.op_date)} · ${fmtMoney(m.amount_in_minor, m.cur_in)} из «${esc((walletById(m.from_wallet) || {}).name)}» ${S.reversedIds.has(m.id) ? '<span class="tag red">отменена</span>' : ''}</div>`).join('') : '<div class="muted" style="font-size:12.5px;">оплат нет</div>'}
-    ${canEdit() && t.carrier_id ? `<button class="btn small" style="margin-top:8px;" onclick="openOp('carrier_payment',{trip_id:'${t.id}',carrier_id:'${t.carrier_id}'})">+ Оплатить перевозчику</button>` : ''}
+    ${canEdit() && t.carrier_id ? `<button class="btn small" style="margin-top:8px;" onclick="payTrip('${t.id}')">+ Оплатить перевозчику</button>` : ''}
   </div>` : ''}
+  </details>
   ${modalActions(ed ? `saveTrip(${t ? `'${t.id}'` : 'null'},'${r.id}')` : 'closeModal()', `<button class="btn left" onclick="closeModal();editRequest('${r.id}')">← К заявке</button>`)}`);
   if (!ed) document.getElementById('save-btn')?.remove();
   if (ed) {
@@ -1264,7 +1280,7 @@ function saveTrip(id, requestId) {
   if (!local && cur === 'USD' && val('fx_rate') && !rate) return toast('Курс — число', true);
   const carrierId = valOrNull('carrier_id');
   const status = val('status');
-  if (status === 'failed' && !val('failed_reason')) return toast('Укажите причину, почему рейс не состоялся', true);
+  if (status === 'failed' && !val('failed_reason')) { document.querySelector('#modal details.more').open = true; return toast('Укажите причину, почему рейс не состоялся', true); }
   const mm = ownerMismatch();
   const moved = !!document.getElementById('f_owner_moved')?.checked;
   if (mm && !moved && !confirm(`Сохранить рейс с перевозчиком «${mm.chosen.name}»?\nМашина ${mm.veh.plate_norm} в справочнике остаётся за «${mm.owner.name}».`)) return;
