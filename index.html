@@ -22,6 +22,10 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
 .app{display:flex;min-height:100vh;}
 /* SIDEBAR */
 .sidebar{width:230px;background:var(--accent);color:#fff;flex-shrink:0;display:flex;flex-direction:column;position:fixed;top:0;left:0;bottom:0;z-index:100;overflow-y:auto;}
+.block-tabs{gap:4px;padding:10px 10px 0;}
+.block-tabs a{flex:1;text-align:center;font-size:11.5px;font-weight:600;padding:7px 4px;border-radius:6px 6px 0 0;color:#fff;text-decoration:none;opacity:.55;background:rgba(0,0,0,.18);}
+.block-tabs a.on{opacity:1;background:rgba(255,255,255,.16);}
+.block-tabs a:hover{opacity:1;}
 .sidebar-logo{padding:18px 20px 14px;border-bottom:1px solid rgba(255,255,255,.1);}
 .sidebar-logo .co{font-size:15px;font-weight:600;letter-spacing:.02em;}
 .sidebar-logo .sub{font-size:10px;opacity:.45;margin-top:2px;font-family:var(--mono);}
@@ -294,6 +298,7 @@ body{font-family:var(--font);background:var(--bg);color:var(--text);font-size:14
 
 <!-- SIDEBAR -->
 <nav class="sidebar">
+  <div class="block-tabs" id="block-tabs" style="display:none;"></div>
   <div class="sidebar-logo">
     <div class="co">ММ Транспорт</div>
     <div class="sub">v2.0 · 2026</div>
@@ -3110,6 +3115,9 @@ async function enterApp(session) {
     .maybeSingle();
 
   if (error || !profile) {
+    // Участник только блока «Ангрен Каолин» (партнёр) — у него нет доступа к ММ Транспорт,
+    // сразу переводим в блок (сессия общая, повторный вход не нужен).
+    if (await isAngrenMember()) { location.href = 'angren/'; return; }
     showLoginError('Этот аккаунт не подключён к системе. Обратитесь к администратору.');
     await sbClient.auth.signOut();
     return;
@@ -3140,11 +3148,29 @@ async function enterApp(session) {
   if (emailEl) emailEl.textContent = CURRENT_USER.email;
 
   applyAdminUIVisibility();
+  showBlockTabs();
   updateOwnerTasksBadge();
   renderDashboard();
   showPage('dashboard');
   subscribeDriverMessages();
   subscribeOwnerTasks();
+}
+
+// Единственная точка связи с блоком «Ангрен Каолин» (отдельный модуль в angren/,
+// свои таблицы ak_*): проверка допуска и переключатель вкладок. Данные блока
+// отсюда не читаются — только «есть ли у меня доступ к блоку».
+async function isAngrenMember() {
+  try {
+    const { data } = await sbClient.from('ak_members').select('user_id')
+      .eq('user_id', CURRENT_USER.id).eq('active', true).maybeSingle();
+    return !!data;
+  } catch (e) { return false; }
+}
+async function showBlockTabs() {
+  const el = document.getElementById('block-tabs');
+  if (!el || !(await isAngrenMember())) return;
+  el.innerHTML = '<a class="on">ММ Транспорт</a><a href="angren/">Ангрен Каолин</a>';
+  el.style.display = 'flex';
 }
 
 // Разделы, которые видит только владелец платформы (companies.account_type='admin') —

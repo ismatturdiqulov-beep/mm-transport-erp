@@ -24,3 +24,12 @@ mm_transport_export_*.sql
 Путевка - текущий*.html
 ДЛЯ ПРАВКИ*.pdf
 putevka*.html
+
+# Angren Kaolin block — spec, Excel and sample заявки carry contract numbers,
+# prices, bank requisites and partner finances; never publish (repo is public)
+Angren_kaolin/*.md
+Angren_kaolin/*.xls*
+Angren_kaolin/*.doc*
+Angren_kaolin/*.pdf
+Angren_kaolin/*.sql
+Angren_kaolin/*.json
