@@ -173,7 +173,7 @@ const S = {
   user: null, me: null,
   members: [], carriers: [], vehicles: [], owners: [], routes: [], directors: [],
   wallets: [], opening: [], settings: {}, audit: [],
-  rates: [], requests: [], trips: [], reqCalc: [], tripCalc: [], carrierCalc: [], deductions: [], sumAll: {}, partners: {}, calcPeriod: 'quarter',
+  rates: [], requests: [], trips: [], reqCalc: [], tripCalc: [], carrierCalc: [], deductions: [], adjustments: [], sumAll: {}, partners: {}, calcPeriod: 'quarter',
   reqCalcBy: new Map(), tripCalcBy: new Map(), carrierCalcBy: new Map(), movements: [], losses: [], expenses: [], expenseLinks: [], balances: [],
   reversedIds: new Set(),
   page: 'overview', showArchived: false, search: { carriers: '', vehicles: '', requests: '' }, auditTable: '',
@@ -299,7 +299,7 @@ async function loadAll() {
     ['movements', 'ak_movements', 'created_at'], ['losses', 'ak_movement_losses', 'id'], ['expenses', 'ak_expenses', 'exp_date'],
     ['expenseLinks', 'ak_expense_requests', 'expense_id'], ['balances', 'ak_wallet_balances', 'wallet_id'],
     ['reqCalc', 'ak_request_calc', 'request_id'], ['tripCalc', 'ak_trip_calc_uzs', 'trip_id'], ['carrierCalc', 'ak_carrier_calc', 'carrier_id'],
-    ['deductions', 'ak_trip_deductions', 'created_at'],
+    ['deductions', 'ak_trip_deductions', 'created_at'], ['adjustments', 'ak_factory_adjustments', 'created_at'],
   ];
   const res = await Promise.all(T.map(([, t, o]) => fetchAll(t, o)));
   T.forEach(([k], i) => { S[k] = res[i]; });
@@ -809,8 +809,10 @@ const netOfVat = (gross) => gross - vatOf(gross);
 const reqLabel = (r) => r ? (r.number ? '№ ' + r.number : 'черновик') : '—';
 const reqTitle = (r) => r ? `${reqLabel(r)} · ${(routeById(r.route_id) || {}).name || ''} · ${fmtDate(r.loading_date)}` : '—';
 const tripsOf = (reqId) => S.trips.filter((t) => t.request_id === reqId).sort((a, b) => a.created_at < b.created_at ? -1 : 1);
-const reqTrucks = (r) => r.trucks_confirmed ?? r.trucks_ordered ?? 0;
-const reqTotal = (r) => reqTrucks(r) * r.price_uzs_minor;
+// машин в заявке по факту = заполненные лоты (решение владельца: подтверждение завода не используется)
+const reqTrucks = (r) => N((S.reqCalcBy.get(r.id) || {}).trucks);
+const N = (x) => Number(x || 0);
+const reqTotal = (r) => N((S.reqCalcBy.get(r.id) || {}).factory_uzs);
 const plates = (t) => [vehById(t.tractor_id), vehById(t.trailer_id)].filter(Boolean).map((v) => v.plate_norm).join(' / ');
 const liveMv = (m) => !S.reversedIds.has(m.id) && m.kind !== 'reversal';
 // Оплачено по рейсу (по валютам), без отменённых записей.
@@ -912,14 +914,14 @@ RENDER.requests = () => {
     const warn = [];
     if (ts.some((t) => !t.carrier_id)) warn.push('<span class="tag red">рейс без перевозчика</span>');
     if (r.kind === 'international' && !r.oformlenie_minor && r.status !== 'cancelled') warn.push('<span class="tag amber">нет оформления</span>');
-    if (r.status === 'issued' && r.trucks_confirmed == null) warn.push('<span class="tag amber">ждёт подтверждения завода</span>');
-    if (r.trucks_confirmed != null && loaded !== r.trucks_confirmed && r.status !== 'cancelled') warn.push(`<span class="tag amber">погружено ${loaded} из ${r.trucks_confirmed}</span>`);
+    const free = ts.filter((t) => !t.tractor_id && t.status === 'assigned').length;
+    if (free && r.status !== 'cancelled') warn.push(`<span class="tag red">свободных лотов: ${free}</span>`);
     const total = reqTotal(r);
     return `<tr class="click${r.status === 'cancelled' ? ' off' : ''}" style="box-shadow:inset 4px 0 0 ${r.status === 'cancelled' ? 'transparent' : reqMissing(r).length ? '#e0a100' : '#2e9e5b'};" onclick="editRequest('${r.id}')">
       <td class="mono"><b>${esc(r.number || '—')}</b></td>
       <td>${fmtDate(r.loading_date)}</td>
       <td>${esc(rt.name)} ${r.kind === 'local' ? '<span class="tag blue">местная</span>' : ''}</td>
-      <td class="num">${r.trucks_confirmed ?? '?'} <span class="muted">/ ${r.trucks_ordered}</span></td>
+      <td class="num">${reqTrucks(r)} <span class="muted">/ ${r.trucks_ordered}</span></td>
       <td class="num">${r.price_minor == null ? '<span class="muted">—</span>' : r.price_cur === 'USD' ? fmtMoney(r.price_minor, 'USD') + '<div class="muted">' + fmtMoney(r.price_uzs_minor, 'UZS') + '</div>' : fmtMoney(r.price_uzs_minor, 'UZS')}</td>
       <td class="num">${fmtMoney(total, 'UZS')}${r.kind === 'local' ? `<div class="muted">НДС ${fmtMoney(vatOf(total), 'UZS')}</div>` : ''}</td>
       <td class="num">${r.kind === 'international' ? (r.oformlenie_minor == null ? '<span class="muted">—</span>' : fmtMoney(reqTrucks(r) * r.oformlenie_minor, 'USD')) : ''}</td>
@@ -936,7 +938,7 @@ RENDER.requests = () => {
     <span class="grow"></span>
     ${canEdit() ? '<button class="btn primary" onclick="editRequest()">+ Заявка</button>' : ''}
   </div>
-  <div class="tbl-wrap" id="tbl-requests"><table><thead><tr><th>№</th><th>Погрузка</th><th>Маршрут</th><th class="num">Машин подтв. / заказ.</th><th class="num">Цена за 1 ТС</th><th class="num">Сумма заявки</th><th class="num">Оформление</th><th class="num">Прибыль</th><th>Статус</th></tr></thead>
+  <div class="tbl-wrap" id="tbl-requests"><table><thead><tr><th>№</th><th>Погрузка</th><th>Маршрут</th><th class="num">Машин в лотах / заказано</th><th class="num">Цена за 1 ТС</th><th class="num">Сумма заявки</th><th class="num">Оформление</th><th class="num">Прибыль</th><th>Статус</th></tr></thead>
   <tbody>${body || '<tr><td colspan="9" class="empty">Заявок пока нет</td></tr>'}</tbody>
   ${rows.length ? `<tfoot><tr><td colspan="5"><b>Итого (без отменённых)</b></td><td class="num"><b>${fmtMoney(sum, 'UZS')}</b></td><td></td><td class="num"><b>${fmtMoney(rows.filter((r) => r.status !== 'cancelled').reduce((s2, r) => s2 + Number((S.reqCalcBy.get(r.id) || {}).profit_uzs || 0), 0), 'UZS')}</b></td><td></td></tr></tfoot>` : ''}</table></div>`;
 };
@@ -955,9 +957,6 @@ function editRequest(id) {
     ${field({ k: 'route_id', label: 'Маршрут', type: 'select', opts: routes, val: v.route_id, req: true })}
     ${field({ k: 'loading_date', label: 'Дата погрузки', type: 'date', val: v.loading_date, req: true })}
     ${field({ k: 'trucks_ordered', label: 'Машин заказано', type: 'number', val: v.trucks_ordered })}
-    ${field({ k: 'trucks_confirmed', label: 'Машин подтвердил менеджер завода', type: 'number', val: v.trucks_confirmed, hint: 'Менеджер подтверждает после погрузки — можно внести позже. Долг завода считается по подтверждённым.' })}
-    ${field({ k: 'confirmed_on', label: 'Дата подтверждения', type: 'date', val: v.confirmed_on })}
-    ${field({ k: 'confirmed_doc', label: 'Документ подтверждения', val: v.confirmed_doc })}
     <div class="intl-only" style="display:contents;">
       ${field({ k: 'price_cur', label: 'Валюта цены', type: 'select', opts: { USD: 'доллары ($)', UZS: 'сумы' }, val: v.price_cur })}
     </div>
@@ -991,7 +990,7 @@ function reqPreview() {
   const box = document.getElementById('req-preview');
   if (!box) return;
   const price = parseMoney(val('price'));
-  const n = parseInt(val('trucks_confirmed') || val('trucks_ordered') || '0', 10) || 0;
+  const n = parseInt(val('trucks_ordered') || '0', 10) || 0;
   if (!rt) { box.innerHTML = 'Выберите маршрут.'; return; }
   if (!val('price') || Number.isNaN(price)) { box.innerHTML = `🟡 Цена завода не вписана — заявка сохранится «не заполненной», лотов откроется: <b>${parseInt(val('trucks_ordered') || '0', 10) || 0}</b>.${local ? '<br>Местный рейс: доллара и оформления нет.' : ''}`; return; }
   let perUzs, line;
@@ -1025,11 +1024,9 @@ function saveRequest(id) {
   const price = parseMoney(val('price'));
   if (val('price') && !(price > 0)) return toast('Цена — число, например 2150 или 5 100 000', true);
   if (!(parseInt(val('trucks_ordered') || '0', 10) > 0)) return toast('Укажите, сколько машин заказал завод', true);
-  const conf = val('trucks_confirmed');
   const upd = {
     route_id: rt.id, loading_date: val('loading_date'), trucks_ordered: parseInt(val('trucks_ordered') || '0', 10),
-    trucks_confirmed: conf === '' ? null : parseInt(conf, 10), confirmed_on: valOrNull('confirmed_on'),
-    confirmed_doc: valOrNull('confirmed_doc'), price_minor: val('price') ? price : null, price_cur: local ? 'UZS' : val('price_cur'),
+    price_minor: val('price') ? price : null, price_cur: local ? 'UZS' : val('price_cur'),
     fx_rate: local ? null : parseRate(val('fx_rate')), oformlenie_minor: local ? 0 : (val('oformlenie') ? parseMoney(val('oformlenie')) : null),
     payment_days: parseInt(val('payment_days') || '90', 10), notes: valOrNull('notes'),
   };
@@ -1678,7 +1675,6 @@ async function saveManualRate() {
 // ================= ЭТАП 3: РАСЧЁТЫ =================
 // Все цифры — из представлений базы (ak_request_calc, ak_trip_calc_uzs,
 // ak_carrier_calc, ak_summary, ak_partners). Здесь только показ.
-const N = (x) => Number(x || 0);
 const colored = (v, cur) => `<span style="color:${N(v) < 0 ? 'var(--red)' : 'var(--green)'};">${fmtMoney(v, cur)}</span>`;
 function profitCell(r) {
   const c = S.reqCalcBy.get(r.id);
@@ -1694,9 +1690,11 @@ function reqCalcBlock(r) {
   if (!c || r.status === 'cancelled') return '';
   const local = r.kind === 'local';
   const row = (l, v, b) => `<tr><td>${l}</td><td class="num">${b ? '<b>' + v + '</b>' : v}</td></tr>`;
-  return `<div class="sub-list"><h4>Расчёт по заявке ${c.confirmed ? '' : '<span class="tag amber">машин по погрузке — завод ещё не подтвердил</span>'}</h4>
+  const adjs = S.adjustments.filter((x) => x.request_id === r.id);
+  return `<div class="sub-list"><h4>Расчёт по заявке (по факту — машины в лотах)</h4>
   <table style="max-width:520px;"><tbody>
-    ${row(`Завод: ${c.trucks} маш. × ${fmtMoney(r.price_uzs_minor, 'UZS')}`, fmtMoney(c.factory_uzs, 'UZS'))}
+    ${row(`Завод: ${c.trucks} маш. × ${fmtMoney(r.price_uzs_minor, 'UZS')}`, fmtMoney(N(c.factory_uzs) - N(c.adjust_uzs), 'UZS'))}
+    ${N(c.adjust_uzs) ? row(`${N(c.adjust_uzs) > 0 ? '+' : '−'} Корректировка по сверке с заводом`, fmtMoney(Math.abs(N(c.adjust_uzs)), 'UZS')) : ''}
     ${local ? row('− НДС 12% (к уплате в бюджет)', fmtMoney(c.vat_out_uzs, 'UZS')) : ''}
     ${row(`− Перевозчики (${c.trips_live} маш., средняя ${fmtMoney(c.carrier_avg_uzs, 'UZS')})`, fmtMoney(c.carriers_uzs, 'UZS'))}
     ${local && N(c.carriers_vat_uzs) ? row('+ НДС перевозчиков (к зачёту)', fmtMoney(c.carriers_vat_uzs, 'UZS')) : ''}
@@ -1704,7 +1702,37 @@ function reqCalcBlock(r) {
     ${N(c.expenses_uzs) ? row('− Доп. расходы по заявке', fmtMoney(c.expenses_uzs, 'UZS')) : ''}
     ${row('= Прибыль', colored(c.profit_uzs, 'UZS'), true)}
   </tbody></table>
-  ${c.trips_no_carrier ? '<div class="hint" style="color:var(--red);">Есть рейс без перевозчика — прибыль неполная.</div>' : ''}</div>`;
+  ${c.trips_no_carrier ? '<div class="hint" style="color:var(--red);">Есть рейс без перевозчика — прибыль неполная.</div>' : ''}
+  ${adjustmentsList(adjs, r.id)}</div>`;
+}
+
+// ---------- корректировки по сверке с заводом ----------
+function adjustmentsList(list, reqId) {
+  return `<div style="margin-top:10px;"><b style="font-size:12.5px;">Корректировки по сверке с заводом</b>
+    ${list.length ? list.map((x) => `<div style="font-size:12.5px;${x.cancelled ? 'color:var(--text3);text-decoration:line-through;' : ''}">${fmtDate(x.adj_date)} · ${N(x.amount_minor) > 0 ? '+' : '−'}${fmtMoney(Math.abs(N(x.amount_minor)), 'UZS')} · ${esc(x.reason)}
+      ${canEdit() && !x.cancelled ? `<button class="btn small" onclick="cancelAdjustment('${x.id}')">отменить</button>` : ''}</div>`).join('') : '<div class="muted" style="font-size:12.5px;">нет</div>'}
+    ${canEdit() ? `<div class="grid2" style="margin-top:6px;grid-template-columns:160px 2fr auto;align-items:end;">
+      <div class="fr"><label>Сумма, сум (±)</label><input id="adj_amount" placeholder="-1 300 000" inputmode="decimal"></div>
+      <div class="fr"><label>Причина</label><input id="adj_reason" placeholder="например: по акту сверки за ноябрь"></div>
+      <button class="btn small" onclick="addAdjustment(${reqId ? `'${reqId}'` : 'null'})">Добавить</button></div>
+      <div class="hint">Плюс — завод должен больше, минус — меньше. Корректировку не правят — только отменяют.</div>` : ''}</div>`;
+}
+async function addAdjustment(reqId) {
+  const amount = parseMoney(document.getElementById('adj_amount').value);
+  const reason = document.getElementById('adj_reason').value.trim();
+  if (!amount || Number.isNaN(amount)) return toast('Укажите сумму корректировки (со знаком минус, если завод должен меньше)', true);
+  if (!reason) return toast('Укажите причину', true);
+  try {
+    await dbRun(sb.from('ak_factory_adjustments').insert({ request_id: reqId, amount_minor: amount, reason }), reason);
+    await reload(); if (reqId) editRequest(reqId); else render(); toast('Корректировка записана');
+  } catch (e) { toast(humanError(e), true); }
+}
+async function cancelAdjustment(id) {
+  const x = S.adjustments.find((a) => a.id === id);
+  const reason = prompt('Почему отменяете корректировку?');
+  if (!reason) return;
+  try { await dbRun(sb.from('ak_factory_adjustments').update({ cancelled: true, cancel_reason: reason }).eq('id', id), reason); await reload(); if (x.request_id) editRequest(x.request_id); toast('Корректировка отменена'); }
+  catch (e) { toast(humanError(e), true); }
 }
 
 // ---------- удержания у перевозчика ----------
@@ -1823,7 +1851,7 @@ RENDER.calc = () => {
   <div class="lead">Всё считается автоматически из заявок, рейсов, движений и расходов — ручного ввода нет. Налог на прибыль здесь — оценка 15% (резерв); фактическую сумму от бухгалтерии вы впишете при закрытии квартала.</div>
   ${fixed.length ? `<div class="card"><h2>Постоянные расходы за ${monthLabel()} — не записаны</h2>${fixed.map((fc) => `<div class="toolbar" style="margin:4px 0;"><span>${esc(fc.name)}: <b>${fmtMoney(fc.amount, fc.currency)}</b> из «${esc((walletById(fc.wallet) || {}).name)}»</span>${canEdit() ? `<button class="btn small primary" onclick="payFixed('${fc.key}')">Записать оплату</button>` : ''}</div>`).join('')}</div>` : ''}
   <div class="card"><h2>Долги на сегодня</h2><div class="stat-grid" style="margin-bottom:0;">
-    <div class="stat"><div class="sl">Завод должен MM</div><div class="sv">${fmtMoney(all.factory_debt_uzs, 'UZS')}</div><div class="ss">по подтверждённым заявкам${N(all.factory_unconfirmed_uzs) ? ` · ещё ${fmtMoney(all.factory_unconfirmed_uzs, 'UZS')} ждут подтверждения` : ''}</div></div>
+    <div class="stat"><div class="sl">Завод должен MM</div><div class="sv">${fmtMoney(all.factory_debt_uzs, 'UZS')}</div><div class="ss">по факту: все заявки ${fmtMoney(all.factory_invoiced_uzs, 'UZS')} − получено ${fmtMoney(all.factory_received_uzs, 'UZS')}${N(all.factory_adjust_general_uzs) ? ` (в т. ч. общие корректировки ${fmtMoney(all.factory_adjust_general_uzs, 'UZS')})` : ''}</div></div>
     <div class="stat"><div class="sl">MM должна перевозчикам</div><div class="sv">${fmtMoney(all.carriers_debt_uzs, 'UZS')}</div><div class="ss">${N(all.carriers_owe_us_uzs) ? `перевозчики должны MM: ${fmtMoney(all.carriers_owe_us_uzs, 'UZS')}` : '&nbsp;'}</div></div>
     <div class="stat"><div class="sl">Оформление заводу</div><div class="sv">${fmtMoney(all.oformlenie_debt_usd, 'USD')}</div><div class="ss">должны всего</div></div>
     <div class="stat"><div class="sl">НДС к уплате (оценка)</div><div class="sv">${fmtMoney(all.vat_payable_uzs, 'UZS')}</div><div class="ss">НДС от завода ${fmtMoney(all.vat_out_uzs, 'UZS')} − к зачёту ${fmtMoney(all.vat_in_uzs, 'UZS')}</div></div>
@@ -1847,6 +1875,8 @@ RENDER.calc = () => {
     ${row('Доля каждого партнёра (50%)', fmtMoney(Math.round(N(s.net_profit_uzs) / 2), 'UZS'), true)}
   </tbody></table></div>
   ${lossesCard(s)}
+  <div class="card"><h2>Сверка с заводом — общие корректировки</h2><div class="hint" style="margin:-6px 0 6px;">Расхождения по акту сверки, не относящиеся к одной заявке. Корректировка по конкретной заявке — в карточке заявки.</div>
+    ${adjustmentsList(S.adjustments.filter((x) => !x.request_id), null)}</div>
   <div class="card"><h2>Партнёры — на сегодня</h2>
     <div class="hint" style="margin:-6px 0 8px;">Доля считается по реально поступившим деньгам: завод оплатил ${S.partners.received_share != null ? Math.round(N(S.partners.received_share) * 100) + '%' : '—'} выставленного. Минус в балансе — партнёр взял авансом.</div>
     <table><thead><tr><th>Партнёр</th><th class="num">Доля 50%</th><th class="num">Взято в счёт доли</th><th class="num">Баланс</th><th class="num">Проект должен (фин. помощь)</th></tr></thead><tbody>
@@ -1892,7 +1922,7 @@ RENDER.topay = () => {
   let received = N(S.sumAll.factory_received_uzs);
   const reqs = S.requests.filter((r) => r.status === 'issued').sort((a, b) => a.loading_date < b.loading_date ? -1 : 1)
     .map((r) => { const c = S.reqCalcBy.get(r.id) || {}; const total = N(c.factory_uzs); const cover = Math.min(total, received); received -= cover;
-      const start = r.confirmed_on || r.issued_on || r.loading_date;
+      const start = r.issued_on || r.loading_date;
       return { r, c, rest: total - cover, due: addWorkdays(start, r.payment_days || 90) }; }).filter((x) => x.rest > 0);
   const in30 = reqs.filter((x) => x.due <= addWorkdays(today, 22)).reduce((a, x) => a + x.rest, 0);
   const out30 = items.filter((x) => !x.due || x.due <= addWorkdays(today, 22)).reduce((a, x) => a + N(x.rem.uzs), 0);
@@ -1910,7 +1940,7 @@ RENDER.topay = () => {
   <div class="card"><h2>Позже / срок ещё не наступил</h2>${tbl(later)}</div>
   <div class="card"><h2>Ожидаемые поступления от завода</h2>
     ${reqs.length ? `<table><thead><tr><th>Ожидается до</th><th>Заявка</th><th class="num">Осталось получить</th></tr></thead><tbody>
-      ${reqs.map((x) => `<tr class="click" onclick="editRequest('${x.r.id}')"><td>${fmtDate(x.due)}${x.due < today ? ' <span class="tag red">срок прошёл</span>' : ''}</td><td>${esc(reqTitle(x.r))}${x.c.confirmed ? '' : ' <span class="tag amber">не подтверждена</span>'}</td><td class="num">${fmtMoney(x.rest, 'UZS')}</td></tr>`).join('')}
+      ${reqs.map((x) => `<tr class="click" onclick="editRequest('${x.r.id}')"><td>${fmtDate(x.due)}${x.due < today ? ' <span class="tag red">срок прошёл</span>' : ''}</td><td>${esc(reqTitle(x.r))}</td><td class="num">${fmtMoney(x.rest, 'UZS')}</td></tr>`).join('')}
     </tbody></table><div class="hint">Поступившие деньги засчитываются в самые старые заявки.</div>` : '<div class="muted" style="font-size:12.5px;">всё получено</div>'}</div>`;
 };
 
@@ -1966,7 +1996,7 @@ const TABLE_LBL = {
   ak_carriers: 'Перевозчик', ak_vehicles: 'Машина', ak_vehicle_owners: 'Владелец машины', ak_routes: 'Маршрут',
   ak_directors: 'Директор', ak_wallets: 'Кошелёк', ak_opening_balances: 'Стартовый остаток', ak_settings: 'Настройки', ak_members: 'Доступ',
   ak_requests: 'Заявка завода', ak_request_versions: 'Версия заявки', ak_trips: 'Рейс', ak_movements: 'Движение денег',
-  ak_movement_losses: 'Потери по движению', ak_expenses: 'Расход', ak_expense_requests: 'Расход ↔ заявка', ak_fx_rates: 'Курс ЦБ', ak_counters: 'Нумерация',
+  ak_movement_losses: 'Потери по движению', ak_expenses: 'Расход', ak_expense_requests: 'Расход ↔ заявка', ak_fx_rates: 'Курс ЦБ', ak_counters: 'Нумерация', ak_factory_adjustments: 'Корректировка по сверке', ak_trip_deductions: 'Удержание',
 };
 const FIELD_HIDE = new Set(['id', 'created_at', 'created_by', 'updated_at', 'updated_by', 'plate_norm']);
 async function loadAudit() {

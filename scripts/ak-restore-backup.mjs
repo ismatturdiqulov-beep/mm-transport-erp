@@ -66,7 +66,7 @@ if (wantJson) writeFileSync(outPath.replace(/\.sql$/i, '') + '.json', JSON.strin
 // Порядок — родители раньше детей. Таблицы, которых здесь нет (новые этапы), идут в конце
 // по алфавиту; если у новой таблицы есть внешние ключи — допишите её сюда в нужное место.
 const ORDER = ['ak_wallets', 'ak_carriers', 'ak_vehicles', 'ak_vehicle_owners', 'ak_routes', 'ak_directors', 'ak_fx_rates', 'ak_counters',
-  'ak_requests', 'ak_request_versions', 'ak_trips', 'ak_expenses', 'ak_movements', 'ak_movement_losses', 'ak_expense_requests',
+  'ak_requests', 'ak_request_versions', 'ak_trips', 'ak_trip_deductions', 'ak_factory_adjustments', 'ak_expenses', 'ak_movements', 'ak_movement_losses', 'ak_expense_requests',
   'ak_opening_balances', 'ak_settings', 'ak_members', 'ak_audit_log'];
 // Вычисляемые столбцы (generated always) — вставлять нельзя, база посчитает сама.
 const GENERATED = { ak_vehicles: ['plate_norm'] };
