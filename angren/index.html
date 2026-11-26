@@ -168,6 +168,7 @@ details.more[open]{padding-bottom:12px;}
 <div class="toast" id="toast"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="ak-docs.js"></script>
 <script>
 'use strict';
 const SUPABASE_URL = 'https://otzerelogdbinclmalyp.supabase.co';
@@ -958,6 +959,7 @@ function editRequest(id) {
   const ed = canEdit() && (!r || r.status !== 'cancelled');
   const c = r && S.reqCalcBy.get(r.id);
   openModal(`<h3>${r ? 'Заявка завода № ' + esc(r.number || '—') : 'Новая заявка завода'} ${r ? reqReadyTag(r) + ' ' + reqStatusTag(r) : ''}</h3>
+  ${r && r.status !== 'cancelled' ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin:-4px 0 10px;"><button class="btn small" onclick="pdfFactory('${r.id}')">📄 Заявка завода (PDF)</button><button class="btn small" onclick="pdfCarriers('${r.id}')">📄 Заявки перевозчикам (PDF)</button>${pdfStampToggle()}</div>` : ''}
   ${r ? `<div class="hint" style="margin:-8px 0 10px;">Лотов ${trips.length}${freeLots ? ` · <span style="color:var(--red);">свободных ${freeLots}</span>` : ''}${r.version > 1 ? ` · версия ${r.version}` : ''}</div>` : '<div class="hint" style="margin:-8px 0 10px;">Номер присвоится сразу при сохранении. Цену и оформление можно вписать позже.</div>'}
   <div class="grid3" style="margin-top:0;grid-template-columns:2fr 1.2fr 1fr;">
     ${field({ k: 'route_id', label: 'Маршрут', type: 'select', opts: routes, val: v.route_id, req: true })}
@@ -1114,6 +1116,7 @@ function editTrip(id, requestId) {
   const pays = t ? S.movements.filter((m) => m.trip_id === t.id && m.kind === 'carrier_payment') : [];
   openModal(`<h3>${t ? 'Рейс' + (t.number ? ' · заявка перевозчику № ' + esc(t.number) : '') : 'Новая машина в заявку'}</h3>
   <div class="hint" style="margin:-8px 0 12px;">Заявка завода ${esc(reqTitle(r))}${local ? ' · местная' : ''}</div>
+  ${t && t.number ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin:-4px 0 10px;"><button class="btn small" onclick="pdfCarrier('${t.id}')">📄 Заявка перевозчику № ${esc(t.number)} (PDF)</button>${pdfStampToggle()}</div>` : ''}
   <datalist id="dl-tractors">${tractors}</datalist><datalist id="dl-trailers">${trailers}</datalist>
   <div class="grid2">
     <div class="fr"><label>Тягач (госномер)</label><div style="display:flex;gap:6px;"><input id="f_tractor" list="dl-tractors" placeholder="начните вводить номер" value="${esc(t ? (vehById(t.tractor_id) || {}).plate_norm || '' : '')}" onchange="tripPlateChanged()" onblur="tripPlateChanged()"${ed ? '' : ' disabled'}>${ed ? '<button class="btn small" type="button" title="Новая машина" onclick="newVehicleInTrip(\'tractor\')">+</button>' : ''}</div></div>
@@ -1983,6 +1986,91 @@ RENDER.topay = () => {
       ${reqs.map((x) => `<tr class="click" onclick="editRequest('${x.r.id}')"><td>${fmtDate(x.due)}${x.due < today ? ' <span class="tag red">срок прошёл</span>' : ''}</td><td>${esc(reqTitle(x.r))}</td><td class="num">${fmtMoney(x.rest, 'UZS')}</td></tr>`).join('')}
     </tbody></table><div class="hint">Поступившие деньги засчитываются в самые старые заявки.</div>` : '<div class="muted" style="font-size:12.5px;">всё получено</div>'}</div>`;
 };
+
+// ================= PDF-ЗАЯВКИ =================
+// pdfmake (шрифт Roboto с кириллицей) грузится при первом нажатии.
+let pdfLibPromise = null;
+function loadPdfLib() {
+  if (window.pdfMake && window.pdfMake.vfs) return Promise.resolve();
+  if (!pdfLibPromise) {
+    const add = (src) => new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = () => rej(new Error('Не удалось загрузить модуль PDF — проверьте интернет')); document.head.appendChild(s); });
+    pdfLibPromise = add('https://cdn.jsdelivr.net/npm/pdfmake@0.2.10/build/pdfmake.min.js').then(() => add('https://cdn.jsdelivr.net/npm/pdfmake@0.2.10/build/vfs_fonts.js'));
+  }
+  return pdfLibPromise;
+}
+// Печать с подписью MM — только если она загружена в настройки (закрытое хранилище базы).
+const stampData = () => ((S.settings.stamp || {}).data_url) || null;
+function pdfStampToggle() {
+  if (!stampData()) return '';
+  return `<label style="display:flex;gap:5px;align-items:center;font-size:12.5px;"><input type="checkbox" id="pdf-stamp"${localStorage.getItem('ak_pdf_stamp') === '1' ? ' checked' : ''} onchange="localStorage.setItem('ak_pdf_stamp', this.checked ? '1' : '0')"> с печатью и подписью</label>`;
+}
+const useStamp = () => !!(document.getElementById('pdf-stamp') || {}).checked && stampData();
+// Директор стороны на дату документа (выпущенные документы не меняются — ТЗ 3.6).
+function directorOn(party, position, date) {
+  return S.directors.filter((d) => d.party === party && d.position === position && d.valid_from <= date)
+    .sort((a, b) => a.valid_from < b.valid_from ? 1 : -1)[0] || null;
+}
+function docBase(date) {
+  return {
+    mm: S.settings.mm || {}, factory: S.settings.factory || {}, defaults: S.settings.request_defaults || {},
+    dirFactory: { director: directorOn('factory', 'director', date), deputy: directorOn('factory', 'deputy', date) },
+    dirMM: { director: directorOn('mm', 'director', date) },
+    stamp: useStamp(),
+  };
+}
+const fileSafe = (s) => String(s || '').replace(/[\\/:*?"<>|]+/g, '').replace(/\s+/g, '_');
+async function makePdf(def, filename) {
+  try { await loadPdfLib(); window.pdfMake.createPdf(def).download(filename); toast('PDF готов: ' + filename); }
+  catch (e) { toast(humanError(e), true); }
+}
+const liveLots = (reqId) => tripsOf(reqId).filter((t) => t.tractor_id && !['failed', 'cancelled'].includes(t.status));
+function factoryCtx(r) {
+  const rt = routeById(r.route_id) || {};
+  return { ...docBase(r.loading_date), number: r.number, date: r.loading_date, kind: r.kind, route: rt,
+    trucks: liveLots(r.id).map((t) => ({ tractor: (vehById(t.tractor_id) || {}).plate_norm, trailer: (vehById(t.trailer_id) || {}).plate_norm })),
+    price_uzs_minor: r.price_uzs_minor, price_minor: r.price_minor, price_cur: r.price_cur, fx_rate: r.fx_rate, payment_days: r.payment_days };
+}
+function carrierCtx(t) {
+  const r = reqById(t.request_id), rt = routeById(r.route_id) || {};
+  const c = carrierById(t.carrier_id) || {};
+  const mm = S.settings.mm || {};
+  // своя машина (в т. ч. машина партнёра): исполнитель — сама MM (ТЗ 3.2)
+  const carrier = c.is_own ? { name: mm.name, contract_no: null, contract_date: null, director_name: (directorOn('mm', 'director', r.loading_date) || {}).full_name } : c;
+  return { ...docBase(r.loading_date), number: t.number, date: r.loading_date, kind: r.kind, route: rt,
+    truck: { tractor: (vehById(t.tractor_id) || {}).plate_norm, trailer: (vehById(t.trailer_id) || {}).plate_norm },
+    price_uzs_minor: t.price_uzs_minor, pay_days: t.pay_days, pay_method: t.pay_method, carrier };
+}
+function carrierProblems(t) {
+  const p = [];
+  if (!t.number) p.push('нет номера (поставьте машину в лот)');
+  if (!t.carrier_id) p.push('нет перевозчика');
+  if (t.price_minor == null) p.push('нет цены');
+  return p;
+}
+function pdfFactory(reqId) {
+  const r = reqById(reqId);
+  if (r.price_minor == null) return toast('Впишите цену завода — без неё заявку не сформировать', true);
+  if (!liveLots(reqId).length) return toast('Нет машин в лотах', true);
+  const rt = routeById(r.route_id) || {};
+  makePdf(AKDocs.factoryRequest(factoryCtx(r)), `Заявка_${fileSafe(r.number)}_${fileSafe(rt.name)}_${fmtDate(r.loading_date)}.pdf`);
+}
+function pdfCarrier(tripId) {
+  const t = tripById(tripId);
+  const p = carrierProblems(t);
+  if (p.length) return toast('Заявку перевозчику не сформировать: ' + p.join(', '), true);
+  const c = carrierById(t.carrier_id) || {};
+  makePdf(AKDocs.carrierRequest(carrierCtx(t)), `Заявка_перевозчику_${fileSafe(t.number)}_${fileSafe(c.name)}.pdf`);
+}
+function pdfCarriers(reqId) {
+  const r = reqById(reqId);
+  const lots = liveLots(reqId);
+  const bad = lots.filter((t) => carrierProblems(t).length);
+  const ok = lots.filter((t) => !carrierProblems(t).length);
+  if (!ok.length) return toast('Нет лотов, готовых к заявке перевозчику (нужны машина, перевозчик и цена)', true);
+  if (bad.length && !confirm(`Не готовы ${bad.length} лот(а): ${bad.map((t) => plates(t) || 'пустой').join(', ')} — они будут пропущены. Сформировать по остальным ${ok.length}?`)) return;
+  const rt = routeById(r.route_id) || {};
+  makePdf(AKDocs.merge(ok.map((t) => AKDocs.carrierRequest(carrierCtx(t)))), `Заявки_перевозчикам_${fileSafe(r.number)}_${fileSafe(rt.name)}_${fmtDate(r.loading_date)}.pdf`);
+}
 
 // ================= РЕКВИЗИТЫ И ТЕКСТЫ =================
 const SETTING_SECTIONS = [
