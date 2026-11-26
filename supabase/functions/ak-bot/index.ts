@@ -574,7 +574,7 @@ async function cmdReport(chatId: number) {
     `🚚 Мы должны перевозчикам: <b>${money(Number(s.carriers_debt_uzs || 0), 'UZS')}</b>${owe ? `\n↩️ Перевозчики должны нам: ${money(owe, 'UZS')}` : ''}\n` +
     `📑 Должны заводу за оформление: <b>${money(Number(s.oformlenie_debt_usd || 0), 'USD')}</b>` +
     (open ? `\n\n❓ Ждут подтверждения: ${open} — команда /voprosy` : '');
-  await tg('sendMessage', { chat_id: chatId, text, parse_mode: 'HTML' });
+  await tg('sendMessage', { chat_id: chatId, text, parse_mode: 'HTML', reply_markup: MENU });
 }
 
 // ---------- заявки ----------
@@ -606,7 +606,7 @@ async function listRequests(chatId: number, kind: 'f' | 'c', rows?: any[], title
   }
   if (!rows) buttons.push([{ text: '🔍 Поиск', callback_data: `zs:${kind}` }]);
   const head = title || (kind === 'f' ? '🏭 Последние заявки заводу:' : '🚚 Последние заявки перевозчикам:');
-  await tg('sendMessage', { chat_id: chatId, text: buttons.length ? head : 'Ничего не нашёл.', reply_markup: { inline_keyboard: buttons } });
+  await tg('sendMessage', { chat_id: chatId, text: buttons.length ? head : 'Ничего не нашёл.', reply_markup: buttons.length ? { inline_keyboard: buttons } : MENU });
 }
 const SEARCH_MARK = { f: '🔍 Поиск заявки заводу', c: '🔍 Поиск заявки перевозчику' } as Record<string, string>;
 async function askSearch(chatId: number, kind: 'f' | 'c') {
@@ -679,6 +679,7 @@ async function sendPdf(chatId: number, bytes: Uint8Array, filename: string, capt
   fd.append('chat_id', String(chatId));
   fd.append('caption', (await testMode() ? '🧪 ТЕСТ — реальные остатки ещё не введены\n' : '') + caption);
   fd.append('document', new Blob([bytes], { type: 'application/pdf' }), filename);
+  fd.append('reply_markup', JSON.stringify(MENU));   // вернуть меню (после поиска его заменял запрос ответа)
   const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendDocument`, { method: 'POST', body: fd });
   const j = await r.json(); if (!j.ok) throw new Error(j.description);
 }
@@ -749,7 +750,7 @@ async function cmdQuestions(chatId: number) {
   const { data: periods } = await db.from('ak_periods').select('*').eq('status', 'open');
   const pend = (periods || []).filter((p: any) => today() > p.date_to && (!p.confirmed_ismat_at || !p.confirmed_sarvar_at));
   if (pend.length) out.push('', '<b>Отчёты ждут подтверждения</b>', ...pend.map((p: any) => `• ${p.id.startsWith('M') ? 'месяц' : 'квартал'} ${dmy(p.date_from)}–${dmy(p.date_to)} до ${dmy(p.confirm_due)}: ${[!p.confirmed_ismat_at && 'Исмат', !p.confirmed_sarvar_at && 'Сарвар'].filter(Boolean).join(', ')}`));
-  await tg('sendMessage', { chat_id: chatId, parse_mode: 'HTML', text: out.length ? `❓ <b>Открытые вопросы</b>\n\n${out.join('\n')}` : '✅ Открытых вопросов нет.' });
+  await tg('sendMessage', { chat_id: chatId, parse_mode: 'HTML', text: out.length ? `❓ <b>Открытые вопросы</b>\n\n${out.join('\n')}` : '✅ Открытых вопросов нет.', reply_markup: MENU });
 }
 
 async function sendHelp(chatId: number) {
@@ -767,7 +768,7 @@ async function sendHelp(chatId: number) {
 // Ошибку команды — сообщением в группу, а не молча.
 async function runSafe(chatId: number, job: () => Promise<unknown>) {
   try { await job(); }
-  catch (e: any) { console.error(e); await tg('sendMessage', { chat_id: chatId, text: `⚠️ Не получилось: ${e?.message || e}` }); }
+  catch (e: any) { console.error(e); await tg('sendMessage', { chat_id: chatId, text: `⚠️ Не получилось: ${e?.message || e}`, reply_markup: MENU }); }
 }
 // Меню команд (кнопка «/» в Telegram) — только в группе «Расчёты».
 async function ensureCommands(chatId: number) {
