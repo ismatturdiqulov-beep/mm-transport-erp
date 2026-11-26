@@ -247,7 +247,51 @@
     return d;
   }
 
-  const api = { numberWords, sumWords, money, countText, factoryRequest, carrierRequest, merge };
+  // ---------- отчёты (месячный, квартальный подробный и краткий) ----------
+  // def: { title, subtitle, status, generated, blocks: [
+  //   { h: 'Заголовок', kv: [[подпись, значение, { bold, hint, color }]] }
+  //   { h, table: { head: [...], rows: [[...]], widths: [...], align: ['left'|'right'], total: [...] } }
+  //   { h, para: 'текст' } | { h, list: ['пункт', ...] } | { big: [[подпись, значение, цвет]] } ] }
+  // Значения — уже готовые строки (форматирование сумм делает вызывающий).
+  function report(def) {
+    const content = [
+      { text: def.title, bold: true, fontSize: 15, margin: [0, 0, 0, 2] },
+      def.subtitle ? { text: def.subtitle, color: '#555', margin: [0, 0, 0, 2] } : '',
+      def.status ? { text: def.status, color: def.statusColor || '#7a4a00', bold: true, margin: [0, 0, 0, 8] } : { text: '', margin: [0, 0, 0, 6] },
+    ];
+    const tblLayout = { hLineWidth: (i, n) => (i === 0 || i === 1 || i === n.table.body.length ? 0.7 : 0.3), vLineWidth: () => 0,
+      hLineColor: () => '#999', paddingTop: () => 2, paddingBottom: () => 2, paddingLeft: () => 3, paddingRight: () => 3 };
+    for (const b of def.blocks || []) {
+      if (b.h) content.push({ text: b.h, bold: true, fontSize: 11, margin: [0, 8, 0, 4] });
+      if (b.big) {
+        content.push({ columns: b.big.map(([l, v, c]) => ({ stack: [{ text: l, fontSize: 8.5, color: '#666' }, { text: v, fontSize: 15, bold: true, color: c || '#1a1916' }] })), columnGap: 12, margin: [0, 2, 0, 4] });
+      }
+      if (b.kv) {
+        content.push({ table: { widths: ['*', 'auto'], body: b.kv.map(([l, v, o = {}]) => [
+          { text: [l, o.hint ? { text: '\n' + o.hint, fontSize: 7.5, color: '#777' } : ''], bold: !!o.bold },
+          { text: v, alignment: 'right', bold: !!o.bold, color: o.color || '#1a1916', noWrap: true }]) },
+          layout: { hLineWidth: (i, n) => (i === 0 || i === n.table.body.length ? 0 : 0.3), vLineWidth: () => 0, hLineColor: () => '#ccc', paddingTop: () => 2.2, paddingBottom: () => 2.2, paddingLeft: () => 2, paddingRight: () => 2 } });
+      }
+      if (b.table) {
+        const t = b.table, al = t.align || [];
+        const body = [t.head.map((x) => ({ text: x, bold: true, fontSize: 8, color: '#444' })),
+          ...t.rows.map((r) => r.map((x, i) => ({ text: x, alignment: al[i] || 'left', fontSize: 8.5 })))];
+        if (t.total) body.push(t.total.map((x, i) => ({ text: x, alignment: al[i] || 'left', bold: true, fontSize: 8.5 })));
+        content.push({ table: { headerRows: 1, widths: t.widths || t.head.map(() => '*'), body }, layout: tblLayout });
+      }
+      if (b.para) content.push({ text: b.para, margin: [0, 0, 0, 4] });
+      if (b.list) content.push({ ul: b.list, margin: [0, 0, 0, 4] });
+    }
+    return {
+      pageSize: 'A4', pageMargins: [34, 30, 34, 34],
+      defaultStyle: { fontSize: 9.5, lineHeight: 1.1 },
+      content,
+      footer: (page, pages) => ({ columns: [{ text: def.generated || '', fontSize: 7.5, color: '#888' }, { text: `${page} / ${pages}`, alignment: 'right', fontSize: 7.5, color: '#888' }], margin: [34, 8, 34, 0] }),
+      info: { title: def.title },
+    };
+  }
+
+  const api = { numberWords, sumWords, money, countText, factoryRequest, carrierRequest, merge, report };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.AKDocs = api;
 })(typeof window !== 'undefined' ? window : globalThis);

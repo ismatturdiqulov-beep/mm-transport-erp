@@ -168,7 +168,7 @@ details.more[open]{padding-bottom:12px;}
 <div class="toast" id="toast"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<script src="ak-docs.js?v=2026-11-26-3"></script>
+<script src="ak-docs.js?v=2026-11-26-4"></script>
 <script>
 'use strict';
 const SUPABASE_URL = 'https://otzerelogdbinclmalyp.supabase.co';
@@ -181,7 +181,7 @@ const S = {
   user: null, me: null,
   members: [], carriers: [], vehicles: [], owners: [], routes: [], directors: [],
   wallets: [], opening: [], settings: {}, audit: [],
-  rates: [], requests: [], trips: [], reqCalc: [], tripCalc: [], carrierCalc: [], deductions: [], adjustments: [], sumAll: {}, partners: {}, calcPeriod: 'quarter',
+  rates: [], requests: [], trips: [], reqCalc: [], tripCalc: [], carrierCalc: [], deductions: [], adjustments: [], periods: [], sumAll: {}, partners: {}, calcPeriod: 'quarter',
   reqCalcBy: new Map(), tripCalcBy: new Map(), carrierCalcBy: new Map(), movements: [], losses: [], expenses: [], expenseLinks: [], balances: [],
   reversedIds: new Set(),
   page: 'overview', showArchived: false, search: { carriers: '', vehicles: '', requests: '' }, auditTable: '',
@@ -307,7 +307,7 @@ async function loadAll() {
     ['movements', 'ak_movements', 'created_at'], ['losses', 'ak_movement_losses', 'id'], ['expenses', 'ak_expenses', 'exp_date'],
     ['expenseLinks', 'ak_expense_requests', 'expense_id'], ['balances', 'ak_wallet_balances', 'wallet_id'],
     ['reqCalc', 'ak_request_calc', 'request_id'], ['tripCalc', 'ak_trip_calc_uzs', 'trip_id'], ['carrierCalc', 'ak_carrier_calc', 'carrier_id'],
-    ['deductions', 'ak_trip_deductions', 'created_at'], ['adjustments', 'ak_factory_adjustments', 'created_at'],
+    ['deductions', 'ak_trip_deductions', 'created_at'], ['adjustments', 'ak_factory_adjustments', 'created_at'], ['periods', 'ak_periods', 'id'],
   ];
   const res = await Promise.all(T.map(([, t, o]) => fetchAll(t, o)));
   T.forEach(([k], i) => { S[k] = res[i]; });
@@ -329,6 +329,7 @@ const PAGES = [
   { id: 'overview', ico: '◼', name: 'Обзор', grp: 'Главное' },
   { id: 'calc', ico: '📊', name: 'Расчёты и долги', grp: 'Главное' },
   { id: 'topay', ico: '⏰', name: 'К оплате и поступления', grp: 'Главное' },
+  { id: 'reports', ico: '🗓', name: 'Отчёты и закрытие', grp: 'Главное' },
   { id: 'requests', ico: '📑', name: 'Заявки завода', grp: 'Работа' },
   { id: 'trips', ico: '🚚', name: 'Рейсы', grp: 'Работа' },
   { id: 'money', ico: '💰', name: 'Кошельки и движения', grp: 'Деньги' },
@@ -439,6 +440,7 @@ RENDER.overview = () => {
   const intlNoOf = active.filter((r) => r.kind === 'international' && !r.oformlenie_minor);
   if (intlNoOf.length) issues.push(['amber', `Международные заявки без оформления: ${intlNoOf.map((r) => r.number || 'черновик ' + fmtDate(r.loading_date)).join(', ')}`, 'requests']);
   if (!opening.locked) issues.push(['amber', 'Стартовые остатки ещё не зафиксированы', 'opening']);
+  periodReminders().forEach((x) => issues.push(x));
   fixedDue().forEach((fc) => issues.push(['amber', `Постоянный расход за ${monthLabel()}: ${fc.name} — ${fmtMoney(fc.amount, fc.currency)} не записан`, 'calc']));
   return `<h1>Ангрен Каолин${roBadge()}</h1>
   <div class="lead">Учёт перевозок по договору с заводом ANGREN KAOLIN: заявки, рейсы, перевозчики, деньги. Расчёт прибыли и долгов, PDF-заявки и Telegram-бот подключаются следующими этапами.</div>
@@ -2088,6 +2090,262 @@ function pdfCarriers(reqId) {
   makePdf(AKDocs.merge(ok.map((t) => AKDocs.carrierRequest(carrierCtx(t)))), `Заявки_перевозчикам_${fileSafe(r.number)}_${fileSafe(rt.name)}_${fmtDate(r.loading_date)}.pdf`);
 }
 
+// ================= ОТЧЁТЫ И ЗАКРЫТИЕ ПЕРИОДОВ =================
+// Правила владельца: месяц подтверждают оба до 15-го следующего месяца; исправления —
+// до 20-го включительно; с 21-го месяц закрыт (база запрещает правки, цифры — снимок).
+// Квартал закрывается вместе с третьим месяцем; налог — фактический от бухгалтерии.
+const MONTHS = ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь'];
+const MONTHS_GEN = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
+const ROMAN = ['I', 'II', 'III', 'IV'];
+const isoD = (y, m, d) => `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+const lastDay = (y, m) => new Date(Date.UTC(y, m, 0)).getUTCDate();
+// Описание периода (даже если строки в базе ещё нет).
+function periodInfo(id) {
+  const row = (S.periods || []).find((p) => p.id === id) || {};
+  let kind, from, to, title, confirmDue, lockFrom;
+  if (id[0] === 'M') {
+    const y = +id.slice(1, 5), m = +id.slice(6, 8);
+    kind = 'month'; from = isoD(y, m, 1); to = isoD(y, m, lastDay(y, m));
+    const ny = m === 12 ? y + 1 : y, nm = m === 12 ? 1 : m + 1;
+    confirmDue = isoD(ny, nm, 15); lockFrom = isoD(ny, nm, 21);
+    title = `${MONTHS[m - 1][0].toUpperCase() + MONTHS[m - 1].slice(1)} ${y}`;
+  } else {
+    const y = +id.slice(1, 5), q = +id.slice(6, 7);
+    kind = 'quarter'; from = isoD(y, q * 3 - 2, 1); to = isoD(y, q * 3, lastDay(y, q * 3));
+    const ny = q === 4 ? y + 1 : y, nm = q === 4 ? 1 : q * 3 + 1;
+    confirmDue = isoD(ny, nm, 20); lockFrom = isoD(ny, nm, 21);
+    title = `${ROMAN[q - 1]} квартал ${y}`;
+  }
+  const today = todayIso();
+  const closed = row.status === 'closed' || today >= lockFrom;
+  return { id, kind, from, to, title, confirmDue, lockFrom, row, closed, started: today >= from, ended: today > to };
+}
+// Месяцы и кварталы — от первой записи до текущего месяца.
+function periodList() {
+  const dates = [...S.requests.map((r) => r.loading_date), ...S.movements.map((m) => m.op_date), ...S.expenses.map((e) => e.exp_date)].filter(Boolean).sort();
+  const today = todayIso();
+  const first = dates[0] || today;
+  let y = +first.slice(0, 4), m = +first.slice(5, 7);
+  const ey = +today.slice(0, 4), em = +today.slice(5, 7);
+  const out = [];
+  while (y < ey || (y === ey && m <= em)) {
+    out.push(`M${y}-${String(m).padStart(2, '0')}`);
+    if (m % 3 === 0 || (y === ey && m === em)) out.push(`Q${y}-${Math.ceil(m / 3)}`);
+    m++; if (m > 12) { m = 1; y++; }
+  }
+  return [...new Set(out)].reverse();
+}
+const fmtDMY = (iso) => fmtDate(iso);
+function periodStatus(p) {
+  if (p.closed) return `<span class="tag green">закрыт${p.row.closed_at ? ' ' + fmtDate(String(p.row.closed_at).slice(0, 10)) : ''}</span>`;
+  if (!p.ended) return '<span class="tag blue">идёт</span>';
+  const today = todayIso();
+  const late = today > p.confirmDue;
+  return `<span class="tag ${late ? 'red' : 'amber'}">${p.kind === 'month' ? 'подтвердить до ' + fmtDMY(p.confirmDue) : 'налог и проверка до ' + fmtDMY(p.confirmDue)}</span> <span class="tag">закроется ${fmtDMY(p.lockFrom)}</span>`;
+}
+function confirmBadge(p, key) {
+  const at = p.row['confirmed_' + key + '_at'];
+  const name = LBL.partner[key];
+  if (at) return `<span class="tag green">✓ ${name} ${fmtDate(String(at).slice(0, 10))}</span>`;
+  const mine = S.me.partner_key === key;
+  if (mine && p.ended) return `<button class="btn small primary" onclick="confirmPeriod('${p.id}')">Подтвердить (${name})</button>`;
+  return `<span class="tag">${name}: ждём</span>`;
+}
+// Напоминания для «Обзора».
+function periodReminders() {
+  const out = [];
+  const today = todayIso();
+  for (const id of periodList()) {
+    const p = periodInfo(id);
+    if (!p.ended || p.closed) continue;
+    const mine = S.me.partner_key;
+    if (mine && !p.row['confirmed_' + mine + '_at']) out.push(['amber', `${p.title}: подтвердите отчёт до ${fmtDMY(p.confirmDue)} (закроется ${fmtDMY(p.lockFrom)})`, 'reports']);
+    if (p.kind === 'quarter' && p.row.tax_actual_minor == null && canEdit()) out.push(['amber', `${p.title}: впишите фактический налог на прибыль от бухгалтерии до ${fmtDMY(p.confirmDue)}`, 'reports']);
+  }
+  return out;
+}
+
+RENDER.reports = () => {
+  const rows = periodList().map((id) => {
+    const p = periodInfo(id);
+    const isQ = p.kind === 'quarter';
+    const tax = isQ ? (p.row.tax_actual_minor != null
+      ? `<div style="font-size:12.5px;margin-top:4px;">Налог на прибыль: <b>${fmtMoney(p.row.tax_actual_minor, 'UZS')}</b> (факт${p.row.tax_note ? ', ' + esc(p.row.tax_note) : ''})</div>`
+      : `<div style="font-size:12.5px;margin-top:4px;color:var(--amber);">Налог на прибыль: пока оценка 15% — фактическую сумму даст бухгалтер к ${fmtDMY(p.confirmDue)}</div>`) : '';
+    const taxForm = isQ && canEdit() && !p.closed && p.ended ? `<div class="toolbar" style="margin:6px 0 0;"><input id="tax_${id}" data-money="1" inputmode="decimal" placeholder="фактический налог, сум" style="max-width:200px;" value="${p.row.tax_actual_minor != null ? esc(minorToInput(p.row.tax_actual_minor)) : ''}"><input id="taxnote_${id}" placeholder="примечание (необязательно)" style="max-width:240px;" value="${esc(p.row.tax_note || '')}"><button class="btn small" onclick="saveQuarterTax('${id}')">Сохранить налог</button></div>` : '';
+    return `<div class="card" style="${isQ ? 'border-color:#d8c39a;background:#fffdf7;' : ''}">
+      <div class="toolbar" style="margin:0;">
+        <b style="font-size:14px;">${esc(p.title)}</b> ${periodStatus(p)}
+        <span class="grow"></span>
+        ${isQ ? `<button class="btn small" onclick="pdfQuarter('${id}', 'full')">📄 Подробный (PDF)</button><button class="btn small" onclick="pdfQuarter('${id}', 'short')">📄 Краткий для партнёра (PDF)</button>`
+              : `<button class="btn small" onclick="pdfMonth('${id}')">📄 Отчёт за месяц (PDF)</button>`}
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">${p.started ? confirmBadge(p, 'ismat') + confirmBadge(p, 'sarvar') : ''}</div>
+      ${tax}${taxForm}
+    </div>`;
+  }).join('');
+  return `<h1>Отчёты и закрытие</h1>
+  <div class="lead">Месяц: оба партнёра подтверждают отчёт до <b>15-го</b> числа следующего месяца; исправления — до <b>20-го</b> включительно; с <b>21-го</b> месяц закрыт сам: цифры отчёта фиксируются, правки с датами этого месяца запрещены — ошибку исправляют корректировкой или отменой с текущей датой. Квартал закрывается вместе с третьим месяцем; к 20-му числу впишите фактический налог на прибыль от бухгалтерии (иначе остаётся оценка 15%).</div>
+  ${rows || '<div class="card empty">Периодов пока нет</div>'}`;
+};
+async function confirmPeriod(id) {
+  const p = periodInfo(id);
+  if (!confirm(`Подтвердить отчёт «${p.title}»?\nВы подтверждаете, что цифры отчёта проверены.`)) return;
+  try { const { error } = await sb.rpc('ak_confirm_period', { p_id: id }); if (error) throw error; await reload(); toast('Отчёт подтверждён'); }
+  catch (e) { toast(humanError(e), true); }
+}
+async function saveQuarterTax(id) {
+  const raw = document.getElementById('tax_' + id).value;
+  const amount = raw ? parseMoney(raw) : null;
+  if (raw && (Number.isNaN(amount) || amount < 0)) return toast('Налог — число, например 5 000 000', true);
+  try {
+    const { error } = await sb.rpc('ak_set_quarter_tax', { p_id: id, p_amount: amount, p_note: document.getElementById('taxnote_' + id).value });
+    if (error) throw error; await reload(); toast(amount == null ? 'Налог снова считается оценкой 15%' : 'Фактический налог сохранён');
+  } catch (e) { toast(humanError(e), true); }
+}
+
+// ---------- данные для отчётов: снимок закрытого периода или живые цифры ----------
+async function periodData(p) {
+  if (p.row.status === 'closed' && p.row.snapshot) return { summary: p.row.snapshot.summary, partners: p.row.snapshot.partners, frozen: true };
+  const [s, pr] = await Promise.all([sb.rpc('ak_summary', { p_from: p.from, p_to: p.to }), sb.rpc('ak_partners', { p_to: p.to < todayIso() ? p.to : todayIso() })]);
+  if (s.error) throw s.error; if (pr.error) throw pr.error;
+  return { summary: s.data, partners: pr.data, frozen: false };
+}
+const M = (v, c = 'UZS') => fmtMoney(v || 0, c);
+const signColor = (v) => (N(v) < 0 ? '#8b1a1a' : '#1a5c35');
+function plRows(s) {
+  const fx = N(s.losses_fx_uzs);
+  return [
+    [`Заявки завода (${s.requests} заявок, ${s.trucks} машин)`, M(s.factory_uzs)],
+    ...(N(s.adjustments_uzs) ? [['в т. ч. корректировки по сверке с заводом за период', M(s.adjustments_uzs)]] : []),
+    ['− НДС по местным (в бюджет)', M(s.vat_out_uzs)],
+    ['− Перевозчики (без НДС к зачёту)', M(N(s.carriers_uzs) - N(s.vat_in_uzs))],
+    [`− Оформление (${M(s.oformlenie_usd, 'USD')})`, M(s.oformlenie_uzs)],
+    ['− Доп. расходы по заявкам', M(s.expenses_linked_uzs)],
+    ['Прибыль по заявкам', M(s.profit_requests_uzs), { bold: true, color: signColor(s.profit_requests_uzs), hint: `международные ${M(s.profit_intl_uzs)}, местные ${M(s.profit_local_uzs)}` }],
+    ['− Банковские комиссии', M(s.losses_bank_uzs)],
+    [fx < 0 ? '+ Курсовая разница к ЦБ (выгода)' : '− Курсовая разница к ЦБ', M(Math.abs(fx))],
+    ['− Прочие потери (доставка наличных, посредники)', M(s.losses_other_uzs)],
+    ['− Постоянные и прочие расходы', M(s.expenses_fixed_uzs)],
+    ['Прибыль до налога', M(s.profit_pre_tax_uzs), { bold: true, color: signColor(s.profit_pre_tax_uzs) }],
+    ['− Налог на прибыль', M(s.tax_estimate_uzs), { hint: N(s.tax_actual_part_uzs) ? `фактический от бухгалтерии: ${M(s.tax_actual_part_uzs)}${N(s.tax_estimate_part_uzs) ? `, оценка 15%: ${M(s.tax_estimate_part_uzs)}` : ''}` : 'оценка 15% (резерв) — фактический даст бухгалтер' }],
+    ['Чистая прибыль', M(s.net_profit_uzs), { bold: true, color: signColor(s.net_profit_uzs) }],
+    ['Доля каждого партнёра (50%)', M(Math.round(N(s.net_profit_uzs) / 2)), { bold: true }],
+  ];
+}
+function partnersTable(pr) {
+  const P = (pr || {}).partners || {};
+  return { head: ['Партнёр', 'Доля 50%', 'Взято в счёт доли', 'Баланс (+ должны ему, − взял авансом)', 'Фин. помощь — проект должен'],
+    widths: [62, '*', '*', '*', '*'], align: ['left', 'right', 'right', 'right', 'right'],
+    rows: ['ismat', 'sarvar'].map((k) => { const p = P[k] || {}; return [LBL.partner[k], M(N(p.share_uzs) + N(p.opening_uzs)), M(p.taken_uzs), M(p.balance_uzs), fmtMulti(p.help_owed || {}) || '—']; }) };
+}
+function statusLine(p, d) {
+  const conf = ['ismat', 'sarvar'].map((k) => `${LBL.partner[k]}: ${p.row['confirmed_' + k + '_at'] ? 'подтвердил ' + fmtDate(String(p.row['confirmed_' + k + '_at']).slice(0, 10)) : 'не подтвердил'}`).join(' · ');
+  return d.frozen ? `ЗАКРЫТ — цифры зафиксированы ${fmtDate((p.row.snapshot || {}).closed_on || String(p.row.closed_at || '').slice(0, 10))}. ${conf}`
+    : `ПРЕДВАРИТЕЛЬНЫЙ — период открыт, цифры могут меняться до ${fmtDMY(p.lockFrom)}. ${conf}`;
+}
+const generatedLine = () => `Сформировано ${new Date().toLocaleString('ru-RU', { timeZone: 'Asia/Tashkent', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })} · Ангрен Каолин`;
+const reqInRange = (p) => S.requests.filter((r) => r.status !== 'cancelled' && r.loading_date >= p.from && r.loading_date <= p.to).sort((a, b) => a.loading_date < b.loading_date ? -1 : 1);
+function walletRows(p) {
+  return S.wallets.map((w) => {
+    const op = S.opening.filter((o) => !o.archived && o.kind === 'wallet' && o.wallet_id === w.id).reduce((a, o) => a + N(o.amount_minor), 0);
+    const inn = (pred) => S.movements.filter((m) => m.to_wallet === w.id && m.status === 'done' && pred(m.op_date)).reduce((a, m) => a + N(m.amount_in_minor), 0);
+    const out = (pred) => S.movements.filter((m) => m.from_wallet === w.id && pred(m.op_date)).reduce((a, m) => a + N(m.amount_out_minor), 0);
+    const before = (d) => d < p.from, within = (d) => d >= p.from && d <= p.to;
+    const start = op + inn(before) - out(before);
+    const i = inn(within), o = out(within);
+    return [w.name, M(start, w.currency), M(i, w.currency), M(o, w.currency), M(start + i - o, w.currency)];
+  });
+}
+function openIssues() {
+  const out = [];
+  const free = S.trips.filter((t) => t.status === 'assigned' && !t.tractor_id && (reqById(t.request_id) || {}).status !== 'cancelled').length;
+  if (free) out.push(`свободных лотов без машины: ${free}`);
+  const noPrice = S.requests.filter((r) => r.status !== 'cancelled' && reqMissing(r).length).length;
+  if (noPrice) out.push(`заявок без цены или оформления: ${noPrice}`);
+  const transit = S.movements.filter((m) => m.status === 'in_transit' && !S.reversedIds.has(m.id)).length;
+  if (transit) out.push(`передач наличных «в пути»: ${transit}`);
+  const noDocs = S.expenses.filter((e) => !e.cancelled && !e.docs_confirmed).length;
+  if (noDocs) out.push(`расходов без подтверждающих документов: ${noDocs}`);
+  return out.length ? out : ['нерешённых вопросов нет'];
+}
+
+async function pdfMonth(id) {
+  const p = periodInfo(id);
+  try {
+    const d = await periodData(p);
+    const s = d.summary;
+    const blocks = [
+      { big: [['Чистая прибыль', M(s.net_profit_uzs), signColor(s.net_profit_uzs)], ['Доля каждого партнёра', M(Math.round(N(s.net_profit_uzs) / 2))], ['Машин за месяц', String(s.trucks)]] },
+      { h: 'Прибыль за месяц', kv: plRows(s) },
+      { h: 'Расчёт с партнёрами на конец месяца', table: partnersTable(d.partners) },
+      { h: 'Долги на дату отчёта', kv: [['Завод должен MM', M(s.factory_debt_uzs)], ['MM должна перевозчикам', M(s.carriers_debt_uzs)], ['Перевозчики должны MM', M(s.carriers_owe_us_uzs)], ['Оформление заводу', M(s.oformlenie_debt_usd, 'USD')], ['НДС к уплате (оценка)', M(s.vat_payable_uzs)]] },
+    ];
+    makePdf(AKDocs.report({ title: `Отчёт за ${p.title.toLowerCase()}`, subtitle: `Ангрен Каолин · ${fmtDMY(p.from)} — ${fmtDMY(p.to)} · по дате погрузки`,
+      status: statusLine(p, d), statusColor: d.frozen ? '#1a5c35' : '#7a4a00', generated: generatedLine(), blocks }), `Отчёт_${fileSafe(p.title)}.pdf`);
+  } catch (e) { toast(humanError(e), true); }
+}
+async function pdfQuarter(id, mode) {
+  const p = periodInfo(id);
+  try {
+    const d = await periodData(p);
+    const s = d.summary;
+    const P = (d.partners || {}).partners || {};
+    if (mode === 'short') {
+      // одна страница простым языком — для партнёра
+      const k = 'sarvar', me = P[k] || {};
+      const bal = N(me.balance_uzs);
+      const help = fmtMulti(me.help_owed || {});
+      const blocks = [
+        { big: [['Чистая прибыль за квартал', M(s.net_profit_uzs), signColor(s.net_profit_uzs)], ['Ваша доля (50%)', M(Math.round(N(s.net_profit_uzs) / 2))]] },
+        { h: 'Коротко', kv: [
+          ['Заработали на перевозках (после перевозчиков, оформления, НДС и доп. расходов)', M(s.profit_requests_uzs)],
+          ['Ушло на банк, обмены и постоянные расходы', M(N(s.losses_uzs) + N(s.expenses_fixed_uzs))],
+          ['Налог на прибыль', M(s.tax_estimate_uzs), { hint: N(s.tax_actual_part_uzs) ? 'фактический, от бухгалтерии' : 'пока оценка 15%' }],
+          ['Чистая прибыль', M(s.net_profit_uzs), { bold: true, color: signColor(s.net_profit_uzs) }],
+        ] },
+        { h: `Ваш расчёт (${LBL.partner[k]}) на ${fmtDMY(p.to < todayIso() ? p.to : todayIso())}`, kv: [
+          ['Ваша доля с начала работы', M(N(me.share_uzs) + N(me.opening_uzs))],
+          ['Вы уже взяли в счёт доли', M(me.taken_uzs)],
+          ['Проект должен вам за расходы, оплаченные лично (фин. помощь)', help || '—'],
+          [bal >= 0 ? 'ИТОГ: проект должен вам' : 'ИТОГ: вы взяли больше доли на', M(Math.abs(bal)), { bold: true, color: bal >= 0 ? '#1a5c35' : '#8b1a1a' }],
+        ] },
+        { h: 'Что сделать', list: [d.frozen ? 'Квартал закрыт — цифры окончательные.' : `Проверьте цифры и подтвердите отчёт до ${fmtDMY(p.confirmDue)} (кнопка на сайте, позже — в Telegram).`,
+          ...(bal > 0 ? ['Свою долю можно взять — сумму согласуйте с Исматом.'] : bal < 0 ? ['Вы взяли авансом — это зачтётся из следующей прибыли.'] : [])] },
+      ];
+      return makePdf(AKDocs.report({ title: `${p.title}: итог для партнёра`, subtitle: `Ангрен Каолин · ${fmtDMY(p.from)} — ${fmtDMY(p.to)}`,
+        status: statusLine(p, d), statusColor: d.frozen ? '#1a5c35' : '#7a4a00', generated: generatedLine(), blocks }), `Квартал_${fileSafe(p.title)}_кратко.pdf`);
+    }
+    // подробный — для владельца
+    const reqs = reqInRange(p);
+    const reqRows = reqs.map((r) => { const c = S.reqCalcBy.get(r.id) || {}; return [r.number || '—', fmtDate(r.loading_date), (routeById(r.route_id) || {}).name || '', String(c.trucks ?? ''), M(c.factory_uzs), M(c.carriers_uzs), r.kind === 'international' ? M(c.oformlenie_usd, 'USD') : '—', M(c.expenses_uzs), M(c.profit_uzs)]; });
+    const sumCol = (k) => reqs.reduce((a, r) => a + N((S.reqCalcBy.get(r.id) || {})[k]), 0);
+    const carrierIds = [...new Set(S.trips.filter((t) => t.carrier_id && reqs.some((r) => r.id === t.request_id) && !['failed', 'cancelled'].includes(t.status)).map((t) => t.carrier_id))];
+    const carrierRows = carrierIds.map((cid) => {
+      const c = carrierById(cid) || {};
+      const trips = S.trips.filter((t) => t.carrier_id === cid && reqs.some((r) => r.id === t.request_id) && !['failed', 'cancelled'].includes(t.status));
+      const cost = trips.reduce((a, t) => a + N((S.tripCalcBy.get(t.id) || {}).cost_uzs), 0);
+      return [c.name || '', String(trips.length), M(cost), M((S.carrierCalcBy.get(cid) || {}).debt_uzs)];
+    }).sort((a, b) => a[0] < b[0] ? -1 : 1);
+    const ld = s.losses_detail || {};
+    const blocks = [
+      { big: [['Чистая прибыль', M(s.net_profit_uzs), signColor(s.net_profit_uzs)], ['Доля каждого', M(Math.round(N(s.net_profit_uzs) / 2))], ['Заявок / машин', `${s.requests} / ${s.trucks}`]] },
+      { h: 'Прибыль за квартал', kv: plRows(s) },
+      { h: 'Расчёт с партнёрами', table: partnersTable(d.partners) },
+      { h: 'Заявки завода', table: { head: ['№', 'Погрузка', 'Маршрут', 'Маш.', 'Завод', 'Перевозчики', 'Оформл.', 'Доп.', 'Прибыль'],
+        widths: ['auto', 'auto', '*', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto'], align: ['left', 'left', 'left', 'right', 'right', 'right', 'right', 'right', 'right'],
+        rows: reqRows, total: ['Итого', '', '', String(sumCol('trucks')), M(sumCol('factory_uzs')), M(sumCol('carriers_uzs')), M(sumCol('oformlenie_usd'), 'USD'), M(sumCol('expenses_uzs')), M(sumCol('profit_uzs'))] } },
+      { h: 'Перевозчики квартала', table: { head: ['Перевозчик', 'Рейсов', 'Стоимость рейсов', 'Долг MM сейчас (− должны нам)'], widths: ['*', 'auto', 'auto', 'auto'], align: ['left', 'right', 'right', 'right'], rows: carrierRows } },
+      { h: 'Кошельки за квартал', table: { head: ['Кошелёк', 'На начало', 'Пришло', 'Ушло', 'На конец'], widths: ['*', 'auto', 'auto', 'auto', 'auto'], align: ['left', 'right', 'right', 'right', 'right'], rows: walletRows(p) } },
+      { h: 'Потери за квартал', kv: Object.keys(LOSS_KIND).filter((k) => ld[k] != null).map((k) => [LOSS_KIND[k], k === 'fx_diff' && N(ld[k]) < 0 ? 'выгода ' + M(-N(ld[k])) : M(ld[k])]).concat([['Итого потерь', M(s.losses_uzs), { bold: true }]]) },
+      { h: 'Долги на дату отчёта', kv: [['Завод должен MM', M(s.factory_debt_uzs)], ['MM должна перевозчикам', M(s.carriers_debt_uzs)], ['Перевозчики должны MM', M(s.carriers_owe_us_uzs)], ['Оформление заводу', M(s.oformlenie_debt_usd, 'USD')], ['НДС к уплате (оценка)', M(s.vat_payable_uzs)]] },
+      { h: 'Нерешённые вопросы', list: openIssues() },
+    ];
+    makePdf(AKDocs.report({ title: `${p.title}: подробный отчёт`, subtitle: `Ангрен Каолин · ${fmtDMY(p.from)} — ${fmtDMY(p.to)} · по дате погрузки`,
+      status: statusLine(p, d), statusColor: d.frozen ? '#1a5c35' : '#7a4a00', generated: generatedLine(), blocks }), `Квартал_${fileSafe(p.title)}_подробно.pdf`);
+  } catch (e) { toast(humanError(e), true); }
+}
+
 // ================= РЕКВИЗИТЫ И ТЕКСТЫ =================
 const SETTING_SECTIONS = [
   { key: 'factory', title: 'Завод (Заказчик в заявке завода)', fields: [
@@ -2140,7 +2398,7 @@ const TABLE_LBL = {
   ak_carriers: 'Перевозчик', ak_vehicles: 'Машина', ak_vehicle_owners: 'Владелец машины', ak_routes: 'Маршрут',
   ak_directors: 'Директор', ak_wallets: 'Кошелёк', ak_opening_balances: 'Стартовый остаток', ak_settings: 'Настройки', ak_members: 'Доступ',
   ak_requests: 'Заявка завода', ak_request_versions: 'Версия заявки', ak_trips: 'Рейс', ak_movements: 'Движение денег',
-  ak_movement_losses: 'Потери по движению', ak_expenses: 'Расход', ak_expense_requests: 'Расход ↔ заявка', ak_fx_rates: 'Курс ЦБ', ak_counters: 'Нумерация', ak_factory_adjustments: 'Корректировка по сверке', ak_trip_deductions: 'Удержание',
+  ak_movement_losses: 'Потери по движению', ak_expenses: 'Расход', ak_expense_requests: 'Расход ↔ заявка', ak_fx_rates: 'Курс ЦБ', ak_counters: 'Нумерация', ak_factory_adjustments: 'Корректировка по сверке', ak_periods: 'Отчётный период', ak_trip_deductions: 'Удержание',
 };
 const FIELD_HIDE = new Set(['id', 'created_at', 'created_by', 'updated_at', 'updated_by', 'plate_norm']);
 async function loadAudit() {
