@@ -1036,7 +1036,9 @@ function saveRequest(id) {
   if (!upd.loading_date) return toast('Укажите дату погрузки', true);
   if (!local && val('fx_rate') && !upd.fx_rate) return toast('Курс — число, например 11975 или 11987,89', true);
   if (upd.oformlenie_minor != null && (upd.oformlenie_minor < 0 || Number.isNaN(upd.oformlenie_minor))) return toast('Оформление — число', true);
-  saving(() => saveRow('ak_requests', r, upd), (res) => editRequest(r ? r.id : res.id));
+  // после сохранения карточка закрывается; новая заявка — сразу к её лотам
+  saving(() => saveRow('ak_requests', r, upd), r ? null : () => go('trips'),
+    r ? 'Заявка сохранена' : `Заявка создана, открыто лотов: ${upd.trucks_ordered}`);
 }
 async function issueRequest(id) {
   const r = reqById(id);
@@ -1271,7 +1273,7 @@ function saveTrip(id, requestId) {
         `новый прицеп ${trailer.plate_norm} у тягача ${tractor.plate_norm} (рейс ${reqLabel(r)})`);
     }
     return saved;
-  }, () => editRequest(r.id));
+  }, null, 'Лот сохранён');
 }
 
 // ================= ДЕНЬГИ: КОШЕЛЬКИ И ДВИЖЕНИЯ =================
