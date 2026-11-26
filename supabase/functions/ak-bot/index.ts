@@ -48,7 +48,13 @@ async function testMode(): Promise<boolean> {
   testModeCache = { v, at: Date.now() };
   return v;
 }
+// «Сухая» проверка (режим test_cmd): ответы бота собираются сюда, в Telegram ничего не уходит.
+let DRY: any[] | null = null;
 async function tg(method: string, payload: Record<string, unknown>) {
+  if (DRY && ['sendMessage', 'editMessageText', 'setMyCommands'].includes(method)) {
+    DRY.push({ method, text: payload.text, buttons: (payload.reply_markup as any)?.inline_keyboard?.flat().map((b: any) => b.text) });
+    return { ok: true, result: { message_id: 0 } };
+  }
   if ((method === 'sendMessage' || method === 'editMessageText') && typeof payload.text === 'string' && await testMode()) {
     const html = payload.parse_mode === 'HTML';
     payload = { ...payload, parse_mode: 'HTML', text: TEST_BANNER + (html ? payload.text : esc(payload.text)) };
@@ -470,6 +476,227 @@ async function updateMsg(item: any, footer: string, keepButtons = false) {
     reply_markup: keepButtons ? buttons(item) : { inline_keyboard: [] } });
 }
 
+// ================= КОМАНДЫ В ГРУППЕ «РАСЧЁТЫ» =================
+// Решение владельца (2026-11-26): «Отчёт», «Заявки» (заводу / перевозчику → 5 последних +
+// поиск в свободной форме → PDF с печатью в группу), «Открытые вопросы».
+const COMMANDS = [
+  { command: 'otchet', description: 'Отчёт: кошельки, долги завода, перевозчикам, оформление' },
+  { command: 'zayavki', description: 'Заявки: заводу или перевозчику (PDF)' },
+  { command: 'voprosy', description: 'Открытые вопросы' },
+];
+function commandOf(text: string): string | null {
+  const t = text.trim().toLowerCase().replace(/@\w+$/, '').replace(/ё/g, 'е');
+  if (/^\/otchet\b|^отчет$/.test(t)) return 'otchet';
+  if (/^\/zayavki\b|^заявки$/.test(t)) return 'zayavki';
+  if (/^\/voprosy\b|^(открытые )?вопросы$/.test(t)) return 'voprosy';
+  return null;
+}
+
+async function cmdReport(chatId: number) {
+  const [{ data: wallets }, { data: bal }, { data: s, error }] = await Promise.all([
+    db.from('ak_wallets').select('*').eq('active', true).order('sort_order'),
+    db.from('ak_wallet_balances').select('*'),
+    db.rpc('ak_summary_core', { p_from: null, p_to: null }),
+  ]);
+  if (error) throw error;
+  const { count: open } = await db.from('ak_inbox').select('id', { count: 'exact', head: true }).in('status', ['pending', 'needs_wallet', 'error']);
+  const b = (id: string) => (bal || []).find((x: any) => x.wallet_id === id) || {};
+  const lines = (wallets || []).map((w: any) => `• ${esc(w.name)}: <b>${money(Number(b(w.id).balance_minor || 0), w.currency)}</b>${Number(b(w.id).in_transit_minor) ? ` (в пути ${money(Number(b(w.id).in_transit_minor), w.currency)})` : ''}`);
+  const owe = Number(s.carriers_owe_us_uzs || 0);
+  const text = `📊 <b>Отчёт на ${dmy(today())}</b>\n\n<b>Кошельки</b>\n${lines.join('\n')}\n\n` +
+    `🏭 Завод должен нам: <b>${money(Number(s.factory_debt_uzs || 0), 'UZS')}</b>\n` +
+    `🚚 Мы должны перевозчикам: <b>${money(Number(s.carriers_debt_uzs || 0), 'UZS')}</b>${owe ? `\n↩️ Перевозчики должны нам: ${money(owe, 'UZS')}` : ''}\n` +
+    `📑 Должны заводу за оформление: <b>${money(Number(s.oformlenie_debt_usd || 0), 'USD')}</b>` +
+    (open ? `\n\n❓ Ждут подтверждения: ${open} — команда /voprosy` : '');
+  await tg('sendMessage', { chat_id: chatId, text, parse_mode: 'HTML' });
+}
+
+// ---------- заявки ----------
+async function cmdRequests(chatId: number) {
+  await tg('sendMessage', { chat_id: chatId, text: '📄 Какая заявка нужна?', reply_markup: { inline_keyboard: [[
+    { text: '🏭 Заявка заводу', callback_data: 'zl:f' }, { text: '🚚 Заявка перевозчику', callback_data: 'zl:c' }]] } });
+}
+async function routeNames() { return Object.fromEntries(((await db.from('ak_routes').select('id, name')).data || []).map((r: any) => [r.id, r.name])); }
+const reqLabel = (r: any, rn: Record<string, string>) => `№${r.number} · ${rn[r.route_id] || ''} · ${dmy(r.loading_date)}`;
+async function lotLabels(trips: any[]) {
+  const vIds = [...new Set(trips.flatMap((t) => [t.tractor_id]).filter(Boolean))];
+  const cIds = [...new Set(trips.map((t) => t.carrier_id).filter(Boolean))];
+  const { data: vs } = vIds.length ? await db.from('ak_vehicles').select('id, plate_norm').in('id', vIds) : { data: [] };
+  const { data: cs } = cIds.length ? await db.from('ak_carriers').select('id, name').in('id', cIds) : { data: [] };
+  const pv = Object.fromEntries((vs || []).map((v: any) => [v.id, v.plate_norm]));
+  const pc = Object.fromEntries((cs || []).map((c: any) => [c.id, c.name]));
+  return (t: any) => `№${t.number} · ${pv[t.tractor_id] || ''} · ${(pc[t.carrier_id] || '').slice(0, 22)}`;
+}
+async function listRequests(chatId: number, kind: 'f' | 'c', rows?: any[], title?: string) {
+  const rn = await routeNames();
+  let buttons: any[] = [];
+  if (kind === 'f') {
+    const list = rows || (await db.from('ak_requests').select('*').not('number', 'is', null).neq('status', 'cancelled').order('loading_date', { ascending: false }).order('created_at', { ascending: false }).limit(5)).data || [];
+    buttons = list.map((r: any) => [{ text: reqLabel(r, rn), callback_data: `pf:${r.id}` }]);
+  } else {
+    const list = rows || (await db.from('ak_trips').select('*').not('number', 'is', null).not('status', 'in', '(cancelled,failed)').order('created_at', { ascending: false }).limit(5)).data || [];
+    const lbl = await lotLabels(list);
+    buttons = list.map((t: any) => [{ text: lbl(t), callback_data: `pc:${t.id}` }]);
+  }
+  if (!rows) buttons.push([{ text: '🔍 Поиск', callback_data: `zs:${kind}` }]);
+  const head = title || (kind === 'f' ? '🏭 Последние заявки заводу:' : '🚚 Последние заявки перевозчикам:');
+  await tg('sendMessage', { chat_id: chatId, text: buttons.length ? head : 'Ничего не нашёл.', reply_markup: { inline_keyboard: buttons } });
+}
+const SEARCH_MARK = { f: '🔍 Поиск заявки заводу', c: '🔍 Поиск заявки перевозчику' } as Record<string, string>;
+async function askSearch(chatId: number, kind: 'f' | 'c') {
+  await tg('sendMessage', { chat_id: chatId, parse_mode: 'HTML', text: `${SEARCH_MARK[kind]}\nОтветьте на это сообщение: номер машины, дата погрузки, фирма, маршрут или номер заявки — в любой форме.`,
+    reply_markup: { force_reply: true, input_field_placeholder: 'например: 10V266 ноябрь' } });
+}
+// Свободный запрос → фильтры (помогает Claude).
+async function searchFilters(q: string): Promise<any> {
+  const resp: any = await anthropic.messages.create({
+    model: MODEL, max_tokens: 1000, output_config: { effort: 'low' } as any,
+    tools: [{ name: 'filters', description: 'Фильтры поиска заявок', input_schema: { type: 'object', additionalProperties: false, properties: {
+      plate: { type: 'string', description: 'номер машины или его часть, латиницей без пробелов' },
+      date_from: { type: 'string', description: 'YYYY-MM-DD' }, date_to: { type: 'string', description: 'YYYY-MM-DD' },
+      carrier: { type: 'string', description: 'название фирмы-перевозчика или его часть' },
+      route: { type: 'string', description: 'маршрут (город)' }, number: { type: 'string', description: 'номер заявки, например 6-37 или 1-5-2027' } } } }],
+    tool_choice: { type: 'auto' } as any,
+    messages: [{ role: 'user', content: `Сегодня ${today()}. Пользователь ищет заявку: «${q}». Вызови инструмент filters с тем, что можно понять из запроса (одна дата — date_from и date_to одинаковые; месяц — его первый и последний день; год, если не указан, — ближайший к сегодняшнему).` }],
+  } as any, { timeout: 45000, maxRetries: 1 });
+  const call = (resp.content || []).find((b: any) => b.type === 'tool_use');
+  return call?.input || {};
+}
+async function doSearch(chatId: number, kind: 'f' | 'c', q: string) {
+  const f = await searchFilters(q);
+  const rn = await routeNames();
+  const { data: reqs } = await db.from('ak_requests').select('*').not('number', 'is', null).neq('status', 'cancelled').order('loading_date', { ascending: false }).limit(1000);
+  const { data: trips } = await db.from('ak_trips').select('*').not('number', 'is', null).not('status', 'in', '(cancelled,failed)').limit(5000);
+  const { data: vs } = await db.from('ak_vehicles').select('id, plate_norm');
+  const { data: cs } = await db.from('ak_carriers').select('id, name');
+  const plateOf = Object.fromEntries((vs || []).map((v: any) => [v.id, v.plate_norm]));
+  const carrierOf = Object.fromEntries((cs || []).map((c: any) => [c.id, c.name]));
+  const reqOf = Object.fromEntries((reqs || []).map((r: any) => [r.id, r]));
+  const plate = f.plate ? normPlate(f.plate) : null;
+  const okReq = (r: any) => r && (!f.date_from || r.loading_date >= f.date_from) && (!f.date_to || r.loading_date <= f.date_to)
+    && (!f.route || (rn[r.route_id] || '').toLowerCase().includes(String(f.route).toLowerCase().slice(0, 5)))
+    && (!f.number || r.number === f.number || (kind === 'f' && String(r.number).includes(f.number)));
+  const okTrip = (t: any) => (!plate || (plateOf[t.tractor_id] || '').includes(plate)) && (!f.carrier || (carrierOf[t.carrier_id] || '').toLowerCase().includes(String(f.carrier).toLowerCase()));
+  let rows: any[];
+  if (kind === 'f') {
+    rows = (reqs || []).filter((r: any) => okReq(r) && ((!plate && !f.carrier) || (trips || []).some((t: any) => t.request_id === r.id && okTrip(t))));
+  } else {
+    rows = (trips || []).filter((t: any) => okTrip(t) && okReq(reqOf[t.request_id]) && (!f.number || t.number === f.number || okReq(reqOf[t.request_id])))
+      .sort((a: any, b: any) => (reqOf[a.request_id]?.loading_date || '') < (reqOf[b.request_id]?.loading_date || '') ? 1 : -1);
+  }
+  const what = [f.plate && `машина ${plate}`, f.carrier && `фирма «${f.carrier}»`, f.route && `маршрут ${f.route}`, f.number && `№${f.number}`,
+    f.date_from && (f.date_from === f.date_to ? dmy(f.date_from) : `${dmy(f.date_from)}–${dmy(f.date_to)}`)].filter(Boolean).join(', ') || q;
+  await listRequests(chatId, kind, rows.slice(0, 8), `🔍 Найдено по запросу (${what}): ${rows.length}${rows.length > 8 ? ', показаны 8 последних' : ''}`);
+}
+
+// ---------- PDF заявок (тот же модуль, что на сайте: ak-docs.js) ----------
+import './ak-docs.js';
+// @ts-ignore — сборка pdfmake для Node/Deno
+import pdfMake from 'npm:pdfmake@0.2.10/build/pdfmake.js';
+// @ts-ignore
+import pdfFonts from 'npm:pdfmake@0.2.10/build/vfs_fonts.js';
+(pdfMake as any).vfs = (pdfFonts as any).pdfMake ? (pdfFonts as any).pdfMake.vfs : pdfFonts;
+const AKDocs = (globalThis as any).AKDocs;
+const pdfBuffer = (def: any) => new Promise<Uint8Array>((res) => (pdfMake as any).createPdf(def).getBuffer((b: any) => res(new Uint8Array(b))));
+async function docBase(date: string) {
+  const { data: st } = await db.from('ak_settings').select('key, value').in('key', ['mm', 'factory', 'request_defaults', 'stamp']);
+  const S = Object.fromEntries((st || []).map((r: any) => [r.key, r.value]));
+  const { data: dirs } = await db.from('ak_directors').select('*').lte('valid_from', date).order('valid_from', { ascending: false });
+  const dir = (party: string, pos: string) => (dirs || []).find((d: any) => d.party === party && d.position === pos) || null;
+  return { mm: S.mm || {}, factory: S.factory || {}, defaults: S.request_defaults || {},
+    dirFactory: { director: dir('factory', 'director'), deputy: dir('factory', 'deputy') }, dirMM: { director: dir('mm', 'director') },
+    stamp: S.stamp?.data_url || null };
+}
+async function sendPdf(chatId: number, bytes: Uint8Array, filename: string, caption: string) {
+  if (DRY) { DRY.push({ method: 'sendDocument', filename, caption, bytes: bytes.length, pdf: new TextDecoder().decode(bytes.slice(0, 5)) }); return; }
+  const fd = new FormData();
+  fd.append('chat_id', String(chatId));
+  fd.append('caption', (await testMode() ? '🧪 ТЕСТ — реальные остатки ещё не введены\n' : '') + caption);
+  fd.append('document', new Blob([bytes], { type: 'application/pdf' }), filename);
+  const r = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendDocument`, { method: 'POST', body: fd });
+  const j = await r.json(); if (!j.ok) throw new Error(j.description);
+}
+const fileSafe = (s: string) => String(s || '').replace(/[\\/:*?"<>|]+/g, '').replace(/\s+/g, '_');
+async function pdfFactoryReq(chatId: number, reqId: string) {
+  const { data: r } = await db.from('ak_requests').select('*').eq('id', reqId).single();
+  if (r.price_minor == null) throw new Error('у заявки не вписана цена завода');
+  const { data: route } = await db.from('ak_routes').select('*').eq('id', r.route_id).single();
+  const { data: lots } = await db.from('ak_trips').select('*').eq('request_id', r.id).not('tractor_id', 'is', null).not('status', 'in', '(cancelled,failed)').order('created_at');
+  if (!lots?.length) throw new Error('в заявке нет машин');
+  const { data: vs } = await db.from('ak_vehicles').select('id, plate_norm').in('id', lots.flatMap((t: any) => [t.tractor_id, t.trailer_id]).filter(Boolean));
+  const pv = Object.fromEntries((vs || []).map((v: any) => [v.id, v.plate_norm]));
+  const def = AKDocs.factoryRequest({ ...(await docBase(r.loading_date)), number: r.number, date: r.loading_date, kind: r.kind, route,
+    trucks: lots.map((t: any) => ({ tractor: pv[t.tractor_id], trailer: pv[t.trailer_id] })),
+    price_uzs_minor: r.price_uzs_minor, price_minor: r.price_minor, price_cur: r.price_cur, fx_rate: r.fx_rate, payment_days: r.payment_days });
+  await sendPdf(chatId, await pdfBuffer(def), `Заявка_${fileSafe(r.number)}_${fileSafe(route.name)}_${dmy(r.loading_date)}.pdf`, `🏭 Заявка заводу №${r.number} · ${route.name} · ${dmy(r.loading_date)} · ${lots.length} маш.`);
+}
+async function pdfCarrierReq(chatId: number, tripId: string) {
+  const { data: t } = await db.from('ak_trips').select('*').eq('id', tripId).single();
+  if (!t.carrier_id) throw new Error('у лота нет перевозчика');
+  if (t.price_minor == null) throw new Error('у лота нет цены перевозчику');
+  const { data: r } = await db.from('ak_requests').select('*').eq('id', t.request_id).single();
+  const { data: route } = await db.from('ak_routes').select('*').eq('id', r.route_id).single();
+  const { data: c } = await db.from('ak_carriers').select('*').eq('id', t.carrier_id).single();
+  const { data: vs } = await db.from('ak_vehicles').select('id, plate_norm').in('id', [t.tractor_id, t.trailer_id].filter(Boolean));
+  const pv = Object.fromEntries((vs || []).map((v: any) => [v.id, v.plate_norm]));
+  const base = await docBase(r.loading_date);
+  const carrier = c.is_own ? { name: base.mm.name, contract_no: null, contract_date: null, director_name: base.dirMM.director?.full_name } : c;
+  const def = AKDocs.carrierRequest({ ...base, number: t.number, date: r.loading_date, kind: r.kind, route,
+    truck: { tractor: pv[t.tractor_id], trailer: pv[t.trailer_id] }, price_uzs_minor: t.price_uzs_minor, pay_days: t.pay_days, pay_method: t.pay_method, carrier });
+  await sendPdf(chatId, await pdfBuffer(def), `Заявка_перевозчику_${fileSafe(t.number)}_${fileSafe(c.name)}.pdf`, `🚚 Заявка перевозчику №${t.number} · ${c.name} · ${pv[t.tractor_id]} · ${route.name} ${dmy(r.loading_date)}`);
+}
+
+// ---------- открытые вопросы ----------
+async function cmdQuestions(chatId: number) {
+  const out: string[] = [];
+  const { data: inbox } = await db.from('ak_inbox').select('*').in('status', ['pending', 'needs_wallet', 'error']).order('created_at').limit(30);
+  if (inbox?.length) {
+    out.push(`<b>Предложения бота, не подтверждены: ${inbox.length}</b>`);
+    inbox.slice(0, 10).forEach((x: any) => out.push(`• ${esc(x.summary.split('\n')[0])}${x.status === 'needs_wallet' ? ' — нужен кошелёк' : x.status === 'error' ? ' — ошибка: ' + esc(x.error || '') : ''}`));
+    if (inbox.length > 10) out.push(`… и ещё ${inbox.length - 10} — на сайте «Ждут подтверждения»`);
+  }
+  const rn = await routeNames();
+  const { data: reqs } = await db.from('ak_requests').select('*').neq('status', 'cancelled').gte('loading_date', new Date(Date.now() - 120 * 86400000).toISOString().slice(0, 10));
+  const { data: trips } = await db.from('ak_trips').select('id, request_id, tractor_id, carrier_id, price_minor, pay_timing, pay_method, status').in('request_id', (reqs || []).map((r: any) => r.id)).not('status', 'in', '(cancelled,failed)');
+  const lotIssues: string[] = [];
+  for (const r of reqs || []) {
+    const ts = (trips || []).filter((t: any) => t.request_id === r.id);
+    const free = ts.filter((t: any) => !t.tractor_id).length;
+    const noCarrier = ts.filter((t: any) => t.tractor_id && !t.carrier_id).length;
+    const noPrice = ts.filter((t: any) => t.tractor_id && t.price_minor == null).length;
+    const miss: string[] = [];
+    if (r.price_minor == null) miss.push('нет цены завода');
+    if (r.kind === 'international' && r.oformlenie_minor == null) miss.push('нет оформления');
+    if (free) miss.push(`свободных лотов ${free}`);
+    if (noCarrier) miss.push(`без перевозчика ${noCarrier}`);
+    if (noPrice) miss.push(`без цены перевозчику ${noPrice}`);
+    if (miss.length) lotIssues.push(`• №${r.number} ${rn[r.route_id] || ''} ${dmy(r.loading_date)}: ${miss.join(', ')}`);
+  }
+  if (lotIssues.length) out.push('', `<b>Не заполнено по заявкам: ${lotIssues.length}</b>`, ...lotIssues.slice(0, 15));
+  const { data: transit } = await db.from('ak_movements').select('id, amount_in_minor, cur_in, op_date').eq('status', 'in_transit');
+  const { data: revs } = await db.from('ak_movements').select('reverses_id').not('reverses_id', 'is', null);
+  const reversed = new Set((revs || []).map((x: any) => x.reverses_id));
+  const tr = (transit || []).filter((m: any) => !reversed.has(m.id));
+  if (tr.length) out.push('', `<b>Передачи наличных «в пути» (получатель не подтвердил): ${tr.length}</b>`, ...tr.map((m: any) => `• ${dmy(m.op_date)} — ${money(Number(m.amount_in_minor), m.cur_in)}`));
+  const { data: periods } = await db.from('ak_periods').select('*').eq('status', 'open');
+  const pend = (periods || []).filter((p: any) => today() > p.date_to && (!p.confirmed_ismat_at || !p.confirmed_sarvar_at));
+  if (pend.length) out.push('', '<b>Отчёты ждут подтверждения</b>', ...pend.map((p: any) => `• ${p.id.startsWith('M') ? 'месяц' : 'квартал'} ${dmy(p.date_from)}–${dmy(p.date_to)} до ${dmy(p.confirm_due)}: ${[!p.confirmed_ismat_at && 'Исмат', !p.confirmed_sarvar_at && 'Сарвар'].filter(Boolean).join(', ')}`));
+  await tg('sendMessage', { chat_id: chatId, parse_mode: 'HTML', text: out.length ? `❓ <b>Открытые вопросы</b>\n\n${out.join('\n')}` : '✅ Открытых вопросов нет.' });
+}
+
+// Ошибку команды — сообщением в группу, а не молча.
+async function runSafe(chatId: number, job: () => Promise<unknown>) {
+  try { await job(); }
+  catch (e: any) { console.error(e); await tg('sendMessage', { chat_id: chatId, text: `⚠️ Не получилось: ${e?.message || e}` }); }
+}
+// Меню команд (кнопка «/» в Telegram) — только в группе «Расчёты».
+async function ensureCommands(chatId: number) {
+  const { data } = await db.from('ak_settings').select('value').eq('key', 'bot').maybeSingle();
+  if (data?.value?.commands_chat === chatId) return;
+  const r = await tg('setMyCommands', { commands: COMMANDS, scope: { type: 'chat', chat_id: chatId } });
+  if (r.ok) await db.from('ak_settings').update({ value: { ...(data?.value || {}), commands_chat: chatId } }).eq('key', 'bot');
+}
+
 // ================= ВХОДЯЩИЕ ОТ TELEGRAM =================
 async function handleUpdate(u: any) {
   const m = u.message || u.edited_message || u.channel_post;
@@ -502,6 +729,15 @@ async function handleUpdate(u: any) {
   }
   const { data: c } = await db.from('ak_tg_chats').select('role').eq('chat_id', chat.id).single();
   if (!c?.role || !saved || from.is_bot) return;          // группа ещё не назначена на сайте
+  // команды и поиск — только в «Расчётах» (в «Перевозках» бот молчит)
+  if (c.role === 'finance' && text) {
+    EdgeRuntime.waitUntil(ensureCommands(chat.id));
+    const cmd = commandOf(text);
+    if (cmd) { EdgeRuntime.waitUntil(runSafe(chat.id, () => cmd === 'otchet' ? cmdReport(chat.id) : cmd === 'zayavki' ? cmdRequests(chat.id) : cmdQuestions(chat.id))); return; }
+    const rt = m.reply_to_message?.from?.is_bot ? (m.reply_to_message.text || '') : '';
+    const kind = rt.includes(SEARCH_MARK.f) ? 'f' : rt.includes(SEARCH_MARK.c) ? 'c' : null;
+    if (kind) { EdgeRuntime.waitUntil(runSafe(chat.id, () => doSearch(chat.id, kind, text))); return; }
+  }
   // разбираем только то, где есть цифры или файл (болтовню не отправляем в Claude)
   const relevant = /\d/.test(row.text || '') || !!row.file_id;
   if (relevant && !u.edited_message) EdgeRuntime.waitUntil(proposeFromMessage(saved));
@@ -521,6 +757,15 @@ async function handleCallback(q: any) {
   if (op === 'wl') {
     const r = await chooseWallet(id, code, { tg: q.from.id, name, partner });
     return answer(r.ok ? 'Кошелёк выбран' : (r.error || 'ошибка'), !r.ok);
+  }
+  const chatId = q.message?.chat?.id;
+  if (chatId && ['zl', 'zs', 'pf', 'pc'].includes(op)) {
+    await answer(op === 'pf' || op === 'pc' ? 'Готовлю PDF…' : '');
+    const job = op === 'zl' ? () => listRequests(chatId, id as 'f' | 'c')
+      : op === 'zs' ? () => askSearch(chatId, id as 'f' | 'c')
+      : op === 'pf' ? () => pdfFactoryReq(chatId, id) : () => pdfCarrierReq(chatId, id);
+    EdgeRuntime.waitUntil(runSafe(chatId, job));
+    return;
   }
   return answer('');
 }
@@ -588,6 +833,22 @@ Deno.serve(async (req) => {
           out.schema = { ms: Date.now() - t, stop: r.stop_reason, text: (r.content || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('').slice(0, 400) };
         } catch (e: any) { out.schema = { ms: Date.now() - t, error: e?.message || String(e) }; }
         return json(out);
+      }
+      if (mode === 'test_cmd') {
+        // { cmd: 'otchet'|'voprosy'|'list_f'|'list_c'|'search', kind, q, req_id, trip_id }
+        const b = await req.json().catch(() => ({}));
+        DRY = [];
+        try {
+          if (b.cmd === 'otchet') await cmdReport(0);
+          else if (b.cmd === 'voprosy') await cmdQuestions(0);
+          else if (b.cmd === 'zayavki') await cmdRequests(0);
+          else if (b.cmd === 'list') await listRequests(0, b.kind);
+          else if (b.cmd === 'search') await doSearch(0, b.kind, b.q);
+          else if (b.cmd === 'pdf_f') await pdfFactoryReq(0, b.req_id);
+          else if (b.cmd === 'pdf_c') await pdfCarrierReq(0, b.trip_id);
+          return json({ ok: true, out: DRY });
+        } catch (e: any) { return json({ ok: false, error: e?.message || String(e), out: DRY }); }
+        finally { DRY = null; }
       }
       if (mode === 'test_parse') {
         // проверка разбора без записи: { text, role: 'transport'|'finance' }
