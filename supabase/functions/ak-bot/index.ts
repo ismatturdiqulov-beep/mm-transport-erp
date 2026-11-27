@@ -632,10 +632,13 @@ async function cmdReport(chatId: number) {
   const b = (id: string) => (bal || []).find((x: any) => x.wallet_id === id) || {};
   const lines = (wallets || []).map((w: any) => `• ${esc(w.name)}: <b>${money(Number(b(w.id).balance_minor || 0), w.currency)}</b>${Number(b(w.id).in_transit_minor) ? ` (в пути ${money(Number(b(w.id).in_transit_minor), w.currency)})` : ''}`);
   const owe = Number(s.carriers_owe_us_uzs || 0);
+  const p = await cashPlan();
   const text = `📊 <b>Отчёт на ${dmy(today())}</b>\n\n<b>Кошельки</b>\n${lines.join('\n')}\n\n` +
     `🏭 Завод должен нам: <b>${money(Number(s.factory_debt_uzs || 0), 'UZS')}</b>\n` +
     `🚚 Мы должны перевозчикам: <b>${money(Number(s.carriers_debt_uzs || 0), 'UZS')}</b>${owe ? `\n↩️ Перевозчики должны нам: ${money(owe, 'UZS')}` : ''}\n` +
-    `📑 Должны заводу за оформление: <b>${money(Number(s.oformlenie_debt_usd || 0), 'USD')}</b>` +
+    `📑 Должны заводу за оформление: <b>${money(Number(s.oformlenie_debt_usd || 0), 'USD')}</b>\n\n` +
+    `⏰ К оплате сегодня и просрочено: ${p.nowCnt ? `<b>${money(p.now, 'UZS')}</b> (${p.nowCnt} рейс.)` : 'нет'}${p.soon ? ` · на неделе ещё ${money(p.soon, 'UZS')}` : ''}\n` +
+    gapLines(p) +
     (open ? `\n\n❓ Ждут подтверждения: ${open} — команда /voprosy` : '');
   await tg('sendMessage', { chat_id: chatId, text, parse_mode: 'HTML', reply_markup: MENU });
 }
@@ -822,6 +825,57 @@ function addWorkdays(iso: string, n: number) {
   const d = new Date(iso + 'T00:00:00Z'); let left = Number(n || 0);
   while (left > 0) { d.setUTCDate(d.getUTCDate() + 1); const w = d.getUTCDay(); if (w !== 0 && w !== 6) left--; }
   return d.toISOString().slice(0, 10);
+}
+
+// ---------- кассовый разрыв (как на сайте, payPlan в angren/index.html — держать одинаковым) ----------
+// деньги во всех кошельках (USD по курсу ЦБ) + от завода в ближайший месяц (22 раб. дня)
+// − перевозчикам в ближайший месяц (включая рейсы, у которых срок ещё не определён).
+async function cashPlan() {
+  const t = today(), week = addWorkdays(t, 5), month = addWorkdays(t, 22);
+  const [{ data: bal }, { data: fx }, { data: lots }, { data: calc }, { data: reqs }, { data: carriers }, { data: rc }, { data: s }] = await Promise.all([
+    db.from('ak_wallet_balances').select('*'),
+    db.from('ak_fx_rates').select('usd_uzs').lte('rate_date', t).order('rate_date', { ascending: false }).limit(1),
+    db.from('ak_trips').select('id, request_id, carrier_id, status, loaded_on, delivered_on, pay_timing, pay_days').not('carrier_id', 'is', null).neq('status', 'failed'),
+    db.from('ak_trip_calc_uzs').select('trip_id, debt_minor, debt_uzs'),
+    db.from('ak_requests').select('id, status, loading_date, issued_on, payment_days'),
+    db.from('ak_carriers').select('id, pay_timing, pay_days'),
+    db.from('ak_request_calc').select('request_id, factory_uzs'),
+    db.rpc('ak_summary_core', { p_from: null, p_to: null }),
+  ]);
+  const rate = Number(fx?.[0]?.usd_uzs || 0);
+  const cashNow = (bal || []).reduce((a: number, b: any) => a + (b.currency === 'USD' ? Math.round(Number(b.balance_minor || 0) * rate) : Number(b.balance_minor || 0)), 0);
+  const R = Object.fromEntries((reqs || []).map((r: any) => [r.id, r]));
+  const C = Object.fromEntries((carriers || []).map((c: any) => [c.id, c]));
+  const D = Object.fromEntries((calc || []).map((c: any) => [c.trip_id, c]));
+  let now = 0, nowCnt = 0, soon = 0, out30 = 0;
+  for (const l of lots || []) {
+    const r = R[l.request_id] || {};
+    if (r.status === 'cancelled') continue;
+    const d = D[l.id];
+    if (!d || d.debt_minor == null || !(Number(d.debt_minor) > 0)) continue;
+    const timing = l.pay_timing || C[l.carrier_id]?.pay_timing || 'after_loading';
+    const days = l.pay_days ?? C[l.carrier_id]?.pay_days ?? 0;
+    const base = timing === 'advance' ? r.loading_date
+      : timing === 'after_loading' ? (['loaded', 'delivered'].includes(l.status) ? (l.loaded_on || r.loading_date) : null)
+      : (l.status === 'delivered' ? l.delivered_on : null);
+    const due = base ? addWorkdays(base, days) : null;
+    const v = Number(d.debt_uzs || 0);
+    if (due && due <= t) { now += v; nowCnt++; } else if (due && due <= week) soon += v;
+    if (!due || due <= month) out30 += v;
+  }
+  // поступления от завода: полученное засчитывается в самые старые заявки
+  let received = Number(s?.factory_received_uzs || 0), in30 = 0;
+  const FU = Object.fromEntries((rc || []).map((x: any) => [x.request_id, Number(x.factory_uzs || 0)]));
+  for (const r of (reqs || []).filter((r: any) => r.status === 'issued').sort((a: any, b: any) => a.loading_date < b.loading_date ? -1 : 1)) {
+    const total = FU[r.id] || 0, cover = Math.min(total, received); received -= cover;
+    if (total - cover > 0 && addWorkdays(r.issued_on || r.loading_date, r.payment_days || 90) <= month) in30 += total - cover;
+  }
+  return { cashNow, in30, out30, gap: cashNow + in30 - out30, now, nowCnt, soon };
+}
+function gapLines(p: any) {
+  return `💧 <b>Кассовый разрыв за месяц: ${p.gap < 0 ? '🔴 ' : '🟢 '}${money(p.gap, 'UZS')}</b>\n` +
+    `   деньги ${money(p.cashNow, 'UZS')} + от завода ${money(p.in30, 'UZS')} − перевозчикам ${money(p.out30, 'UZS')}` +
+    (p.gap < 0 ? '\n   ⚠️ денег на оплаты перевозчикам в ближайший месяц не хватает' : '');
 }
 
 // ---------- 09:00: вопрос по машинам вчерашней погрузки ----------
@@ -1029,24 +1083,14 @@ async function eveningReport(groupId: number) {
   const dayLines = Object.entries(agg).map(([k, v]) => `• ${KIND[k] || k}: ${Object.entries(v).map(([c, x]) => money(x, c)).join(' + ')}`);
   const b = (id: string) => (bal || []).find((x: any) => x.wallet_id === id) || {};
   const wl = (wallets || []).map((w: any) => `• ${esc(w.name)}: ${money(Number(b(w.id).balance_minor || 0), w.currency)}`);
-  // к оплате перевозчикам сегодня (по условиям рейса, в рабочих днях)
-  const { data: lots } = await db.from('ak_trips').select('id, request_id, number, carrier_id, status, loaded_on, delivered_on, pay_timing, pay_days').not('carrier_id', 'is', null).not('status', 'in', '(cancelled,failed)');
-  const { data: calc } = await db.from('ak_trip_calc_uzs').select('trip_id, debt_uzs');
-  const debt = Object.fromEntries((calc || []).map((c: any) => [c.trip_id, Number(c.debt_uzs || 0)]));
-  const { data: reqs } = await db.from('ak_requests').select('id, loading_date');
-  const ld = Object.fromEntries((reqs || []).map((r: any) => [r.id, r.loading_date]));
-  let payNow = 0, payCnt = 0;
-  for (const l of lots || []) {
-    if (!(debt[l.id] > 0)) continue;
-    const base = l.pay_timing === 'advance' ? ld[l.request_id] : l.pay_timing === 'after_delivery' ? (l.status === 'delivered' ? l.delivered_on : null) : (['loaded', 'delivered'].includes(l.status) ? (l.loaded_on || ld[l.request_id]) : null);
-    if (base && addWorkdays(base, l.pay_days || 0) <= t) { payNow += debt[l.id]; payCnt++; }
-  }
+  const p = await cashPlan();   // к оплате сегодня и кассовый разрыв — как на сайте
   const { count: open } = await db.from('ak_inbox').select('id', { count: 'exact', head: true }).in('status', ['pending', 'needs_wallet', 'error']);
   const { count: botPend } = await db.from('ak_requests').select('id', { count: 'exact', head: true }).eq('bot_pending', true).neq('status', 'cancelled');
   const text = `🌙 <b>Итоги дня ${dmy(t)}</b>\n\n<b>Движение денег сегодня</b>\n${dayLines.join('\n') || '• не было'}\n\n<b>Кошельки</b>\n${wl.join('\n')}\n\n` +
     `🏭 Завод должен нам: ${money(Number(s?.factory_debt_uzs || 0), 'UZS')}\n🚚 Мы должны перевозчикам: ${money(Number(s?.carriers_debt_uzs || 0), 'UZS')}\n` +
     `📑 Оформление заводу: ${money(Number(s?.oformlenie_debt_usd || 0), 'USD')}\n` +
-    `⏰ К оплате перевозчикам сегодня и просрочено: ${payCnt ? `${money(payNow, 'UZS')} (${payCnt} рейс.)` : 'нет'}` +
+    `⏰ К оплате перевозчикам сегодня и просрочено: ${p.nowCnt ? `${money(p.now, 'UZS')} (${p.nowCnt} рейс.)` : 'нет'}${p.soon ? ` · на неделе ещё ${money(p.soon, 'UZS')}` : ''}
+` + gapLines(p) +
     ((open || botPend) ? `\n\n❓ Ждут подтверждения: ${open || 0} в боте${botPend ? `, ${botPend} заявок — одобрение на сайте` : ''}. Подробно — кнопка «❓ Вопросы».` : '');
   for (const tgt of targets) await tg('sendMessage', { chat_id: tgt.chat_id, parse_mode: 'HTML', text, reply_markup: MENU });
   return targets.map((x) => x.chat_id === groupId ? 'группа' : x.partners.join(','));
