@@ -1098,6 +1098,39 @@ async function eveningReport(groupId: number) {
   return targets.map((x) => x.chat_id === groupId ? 'группа' : x.partners.join(','));
 }
 
+// ---------- пробный разбор пересланного сообщения (только показать, не записывать) ----------
+async function dryParseForwarded(chatId: number, m: any, saved: any) {
+  const o = m.forward_origin || {};
+  const origUser = o.sender_user || m.forward_from || null;
+  const origDate = new Date(((o.date || m.forward_date || m.date) as number) * 1000).toISOString();
+  const authorName = origUser ? [origUser.first_name, origUser.last_name].filter(Boolean).join(' ') : (o.sender_user_name || o.sender_chat?.title || m.forward_sender_name || 'автор скрыт');
+  const head = `🔍 <b>Пробный разбор</b> — в учёт НЕ записано\nАвтор: ${esc(authorName)} · ${dmy(origDate.slice(0, 10))} ${origDate.slice(11, 16)} UTC\n\n`;
+  if (!/\d/.test(saved.text || '') && !saved.file_id) {
+    await tg('sendMessage', { chat_id: chatId, parse_mode: 'HTML', text: head + 'В сообщении нет цифр и файла — в группе бот его пропустил бы (не отправляет в ИИ).', reply_markup: MENU });
+    return;
+  }
+  if (!DRY) await tg('sendChatAction', { chat_id: chatId, action: 'typing' });
+  // как будто сообщение пришло в «Расчёты» в исходный день (для «вчера», «завтра» и т. п.)
+  const finance = await chatByRole('finance');
+  const fake = { ...saved, id: 0, chat_id: finance?.chat_id ?? 0, message_id: -1, tg_user_id: origUser?.id ?? null, sent_at: origDate, reply_to_message_id: null };
+  const actions = await parseMessage(fake);
+  if (!actions.length) {
+    await tg('sendMessage', { chat_id: chatId, parse_mode: 'HTML', text: head + 'Записывать нечего — в группе бот промолчал бы.', reply_markup: MENU });
+    return;
+  }
+  const parts: string[] = [];
+  for (const a of actions) {
+    if (a.type === 'loading') a._lines = await enrichLoading(a);
+    const need = walletNeed(a);
+    parts.push(`• ${esc(describe(a))}` +
+      (a._lines?.length ? '\n' + a._lines.map((l: string) => '   ' + esc(l)).join('\n') : '') +
+      (need ? `\n   ❓ спросил бы кнопками, из какого кошелька` : '') +
+      (a.confidence === 'low' ? '\n   ⚠️ не уверен' : '') +
+      (a.quote ? `\n   <i>«${esc(String(a.quote).slice(0, 160))}»</i>` : ''));
+  }
+  await tg('sendMessage', { chat_id: chatId, parse_mode: 'HTML', text: (head + `Понял так (${actions.length}):\n` + parts.join('\n\n')).slice(0, 4000), reply_markup: MENU });
+}
+
 // ---------- вопросы в личке (решение Исмата 2026-11-26) ----------
 // «Сколько перевозок на Ишимбай за ноябрь?» — Claude пишет SELECT, бот выполняет его через
 // ak_bot_query (роль ak_reader: только чтение таблиц ak_*, транзакция read-only; миграция 0076).
@@ -1231,6 +1264,12 @@ async function handleUpdate(u: any) {
     if (text.startsWith('/start') || text.startsWith('/help')) {
       await tg('sendMessage', { chat_id: chat.id, parse_mode: 'HTML', text: `Здравствуйте! Я бот учёта «Ангрен Каолин».\nЯ читаю группы «Перевозки» и «Расчёты» и предлагаю записи в учёт; подтверждает Исмат.\n\nВаш Telegram ID: <code>${from.id}</code>` });
     }
+    return;
+  }
+  // Пересланное в личку (решение Исмата 2026-11-27): пробный разбор — показать, как бот понял
+  // сообщение, БЕЗ записи в учёт и без карточек в группах.
+  if (isPrivate && (m.forward_origin || m.forward_date) && saved) {
+    EdgeRuntime.waitUntil(runSafe(chat.id, () => dryParseForwarded(chat.id, m, saved)));
     return;
   }
   const { data: c } = isPrivate ? { data: { role: 'finance' } } : await db.from('ak_tg_chats').select('role').eq('chat_id', chat.id).single();
