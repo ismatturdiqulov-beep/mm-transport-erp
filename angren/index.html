@@ -1965,6 +1965,7 @@ RENDER.calc = () => {
     ${row('− Перевозчики (без НДС к зачёту)', fmtMoney(N(s.carriers_uzs) - N(s.vat_in_uzs), 'UZS'))}
     ${row(`− Оформление (${fmtMoney(s.oformlenie_usd, 'USD')})`, fmtMoney(s.oformlenie_uzs, 'UZS'))}
     ${row('− Доп. расходы по заявкам', fmtMoney(s.expenses_linked_uzs, 'UZS'))}
+    ${N(s.deductions_uzs) ? row('+ Удержания с перевозчиков', fmtMoney(s.deductions_uzs, 'UZS'), false, 'порча товара, опоздание — по дате удержания; если завод удержал с нас, это корректировка сверки') : ''}
     ${row(`= Прибыль по заявкам <span class="muted">(международные ${fmtMoney(s.profit_intl_uzs, 'UZS')}, местные ${fmtMoney(s.profit_local_uzs, 'UZS')})</span>`, colored(s.profit_requests_uzs, 'UZS'), true)}
     ${row('− Банковские комиссии', fmtMoney(s.losses_bank_uzs, 'UZS'), false, 'платёжные поручения, снятие наличных, комиссии карт')}
     ${row(N(s.losses_fx_uzs) < 0 ? '+ Курсовая разница к ЦБ (выгода)' : '− Курсовая разница к ЦБ', fmtMoney(Math.abs(N(s.losses_fx_uzs)), 'UZS'), false, 'обмен валюты и наличные через контрагента — разница с курсом ЦБ на день операции')}
@@ -2277,6 +2278,7 @@ function plRows(s) {
     ['− Перевозчики (без НДС к зачёту)', M(N(s.carriers_uzs) - N(s.vat_in_uzs))],
     [`− Оформление (${M(s.oformlenie_usd, 'USD')})`, M(s.oformlenie_uzs)],
     ['− Доп. расходы по заявкам', M(s.expenses_linked_uzs)],
+    ...(N(s.deductions_uzs) ? [['+ Удержания с перевозчиков (порча, опоздание)', M(s.deductions_uzs)]] : []),
     ['Прибыль по заявкам', M(s.profit_requests_uzs), { bold: true, color: signColor(s.profit_requests_uzs), hint: `международные ${M(s.profit_intl_uzs)}, местные ${M(s.profit_local_uzs)}` }],
     ['− Банковские комиссии', M(s.losses_bank_uzs)],
     [fx < 0 ? '+ Курсовая разница к ЦБ (выгода)' : '− Курсовая разница к ЦБ', M(Math.abs(fx))],
