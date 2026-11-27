@@ -864,7 +864,9 @@ async function cashPlan() {
     if (!due || due <= month) out30 += v;
   }
   // поступления от завода: полученное засчитывается в самые старые заявки
-  let received = Number(s?.factory_received_uzs || 0), in30 = 0;
+  // сначала поступления гасят стартовый долг завода (как на сайте и в ak_partners_core)
+  const { data: ofd } = await db.from('ak_opening_balances').select('amount_minor').eq('kind', 'factory_debt').eq('archived', false);
+  let received = Math.max(0, Number(s?.factory_received_uzs || 0) - (ofd || []).reduce((a: number, o: any) => a + Number(o.amount_minor || 0), 0)), in30 = 0;
   const FU = Object.fromEntries((rc || []).map((x: any) => [x.request_id, Number(x.factory_uzs || 0)]));
   for (const r of (reqs || []).filter((r: any) => r.status === 'issued').sort((a: any, b: any) => a.loading_date < b.loading_date ? -1 : 1)) {
     const total = FU[r.id] || 0, cover = Math.min(total, received); received -= cover;

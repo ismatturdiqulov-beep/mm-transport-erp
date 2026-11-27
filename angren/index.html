@@ -2017,7 +2017,8 @@ function payPlan() {
   const sumUzs = (arr) => arr.reduce((a, x) => a + N(x.rem.uzs), 0);
 
   // поступления от завода: распределяем полученное по заявкам от старых к новым
-  let received = N(S.sumAll.factory_received_uzs);
+  // поступления сначала гасят стартовый долг завода (как в ak_partners_core, миграция 0077)
+  let received = Math.max(0, N(S.sumAll.factory_received_uzs) - S.opening.filter((o) => !o.archived && o.kind === 'factory_debt').reduce((a, o) => a + N(o.amount_minor), 0));
   const reqs = S.requests.filter((r) => r.status === 'issued').sort((a, b) => a.loading_date < b.loading_date ? -1 : 1)
     .map((r) => { const c = S.reqCalcBy.get(r.id) || {}; const total = N(c.factory_uzs); const cover = Math.min(total, received); received -= cover;
       const start = r.issued_on || r.loading_date;
