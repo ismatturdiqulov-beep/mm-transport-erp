@@ -132,7 +132,7 @@ const SYSTEM = `Ты — помощник учёта перевозок комп
 Международные маршруты: цены обычно в долларах. Местные (керамика): только сумы, с НДС.
 
 Типы действий:
-- loading — машины загружаются/загрузились: route, loading_date, plates (номер тягача; прицеп, если указан через «/»; carrier_price + price_cur, если цена указана у номера). Номера бывают столбиком. Если в сообщении о погрузке есть «накд» / «наличными» (у номера или отдельной строкой) — у этих машин pay_method = "cash".
+- loading — машины загружаются/загрузились: route, loading_date, plates (номер тягача; прицеп, если указан через «/»; carrier_price + price_cur, если цена указана у номера). Номера бывают столбиком. Если в сообщении о погрузке есть «накд» / «наличными» (у номера или отдельной строкой) — у этих машин pay_method = "cash". Машины 475 и 482 — личные машины Сарвара: «482 кетти / кетди / ман кетти» = машина 482 уехала на погрузку (loading, plates [{tractor:"482"}]), это НЕ сумма денег.
 - prices — цены по рейсу (маршрут + дата): factory_price (+factory_price_cur), carrier_price (+carrier_price_cur), oformlenie_usd. Если маршрут/дата не указаны — возьми из ближайшего по смыслу сообщения в контексте (ответ на сообщение, предыдущее сообщение о погрузке). Комиссию логиста давай ОТДЕЛЬНЫМ действием expense с category=logist_fee и теми же route/loading_date.
 - factory_income — поступление от завода на расчётный счёт: amount в сумах.
 - carrier_payment — оплата перевозчику: plate (номер машины) или counterparty (название фирмы), amount, currency, wallet.
@@ -326,6 +326,11 @@ function transportText(item: any, footer = '') {
     `\n\n${footer ? esc(footer) : 'Всё верно? Подтвердить может Исмат или Сарвар.'}`;
 }
 
+// Если дата погрузки не указана — день сообщения (по Ташкенту).
+function defaultDate(a: any, sentAt: string) {
+  if (['loading', 'prices'].includes(a.type) && !a.loading_date)
+    a.loading_date = new Date(Date.parse(sentAt)).toLocaleDateString('sv-SE', { timeZone: 'Asia/Tashkent' });
+}
 async function proposeFromMessage(msg: any) {
   let actions: any[] = [];
   try {
@@ -343,6 +348,7 @@ async function proposeFromMessage(msg: any) {
   for (const a of actions) {
     // список машин из «Перевозок» — подтверждение там же: только номера и фирмы, без денег
     const inTransport = a.type === 'loading' && transport && msg.chat_id === transport.chat_id;
+    defaultDate(a, msg.sent_at);
     if (a.type === 'loading') a._lines = await enrichLoading(a);
     if (inTransport) a._transport = true;
     const status = walletNeed(a) ? 'needs_wallet' : 'pending';
@@ -1120,13 +1126,15 @@ async function dryParseForwarded(chatId: number, m: any, saved: any) {
   }
   const parts: string[] = [];
   for (const a of actions) {
+    defaultDate(a, fake.sent_at);
     if (a.type === 'loading') a._lines = await enrichLoading(a);
     const need = walletNeed(a);
-    parts.push(`• ${esc(describe(a))}` +
+    // у погрузки — только заголовок и сверенный список «номер — фирма», без повторов
+    parts.push(`• ${esc(a.type === 'loading' ? describe(a).split('\n')[0] : describe(a))}` +
       (a._lines?.length ? '\n' + a._lines.map((l: string) => '   ' + esc(l)).join('\n') : '') +
       (need ? `\n   ❓ спросил бы кнопками, из какого кошелька` : '') +
       (a.confidence === 'low' ? '\n   ⚠️ не уверен' : '') +
-      (a.quote ? `\n   <i>«${esc(String(a.quote).slice(0, 160))}»</i>` : ''));
+      (a.quote && a.type !== 'loading' ? `\n   <i>«${esc(String(a.quote).slice(0, 160))}»</i>` : ''));
   }
   await tg('sendMessage', { chat_id: chatId, parse_mode: 'HTML', text: (head + `Понял так (${actions.length}):\n` + parts.join('\n\n')).slice(0, 4000), reply_markup: MENU });
 }
@@ -1441,6 +1449,14 @@ Deno.serve(async (req) => {
           else if (b.cmd === 'search') await doSearch(0, b.kind, b.q);
           else if (b.cmd === 'evening') await eveningReport(0);
           else if (b.cmd === 'ask') await askData(0, b.q);
+          else if (b.cmd === 'fwd') {
+            // повтор пробного разбора пересланных в личку сообщений: { chat_id, since }
+            const { data: rows } = await db.from('ak_tg_messages').select('*').eq('chat_id', b.chat_id).gte('sent_at', b.since).order('message_id');
+            for (const row of rows || []) if (row.raw?.forward_origin || row.raw?.forward_date) {
+              DRY.push({ method: 'src', text: `#${row.message_id}: ${(row.text || '(' + row.file_kind + ')').slice(0, 300)}` });
+              try { await dryParseForwarded(0, row.raw, row); } catch (e: any) { DRY.push({ method: 'err', text: e?.message || String(e) }); }
+            }
+          }
           else if (b.cmd === 'morning_loading') await morningLoading(0, b.date);
           else if (b.cmd === 'morning_periods') await morningPeriods(0);
           else if (b.cmd === 'pdf_f') await pdfFactoryReq(0, b.req_id);
