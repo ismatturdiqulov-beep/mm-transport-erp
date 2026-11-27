@@ -112,7 +112,7 @@ const PLATE = { type: 'object', additionalProperties: false, required: ['tractor
 const ACTION_FIELDS: Record<string, unknown> = {
   type: { type: 'string', enum: ['loading', 'prices', 'factory_income', 'carrier_payment', 'expense', 'cash_withdrawal', 'exchange', 'handover'] },
   route: nul('string'), loading_date: nul('string'), request_number: nul('string'),
-  plates: { type: 'array', items: PLATE },
+  plates: { type: 'array', items: PLATE }, trucks: nul('number'),
   factory_price: nul('number'), factory_price_cur: nul('string'), oformlenie_usd: nul('number'),
   carrier_price: nul('number'), carrier_price_cur: nul('string'),
   amount: nul('number'), currency: nul('string'), amount_to: nul('number'),
@@ -133,6 +133,8 @@ const SYSTEM = `Ты — помощник учёта перевозок комп
 
 Типы действий:
 - loading — машины загружаются/загрузились: route, loading_date, plates (номер тягача; прицеп, если указан через «/»; carrier_price + price_cur, если цена указана у номера). Номера бывают столбиком. Если в сообщении о погрузке есть «накд» / «наличными» (у номера или отдельной строкой) — у этих машин pay_method = "cash". Машины 475 и 482 — личные машины Сарвара: «482 кетти / кетди / ман кетти» = машина 482 уехала на погрузку (loading, plates [{tractor:"482"}]), это НЕ сумма денег.
+  Машины без номеров (решение Исмата 2026-11-27): «Самара 09.11 Мегабридж 2 та мошина» = loading с trucks=2, plates пустой, counterparty = фирма ТОЧНО из списка перевозчиков (если однозначно; «Мегабридж» = MEGATRANSBRIDGE). Номера придут позже отдельным сообщением.
+  Местные рейсы «ангрен каолин - Ангрен керамика - 2 ходка - 1.300.000 с НДС» = ДВА действия: loading (route, loading_date, trucks = число ходок, plates пустой) И prices (factory_price за 1 машину). «ходка» = рейс.
 - prices — цены по рейсу (маршрут + дата): factory_price (+factory_price_cur), carrier_price (+carrier_price_cur), oformlenie_usd. Если маршрут/дата не указаны — возьми из ближайшего по смыслу сообщения в контексте (ответ на сообщение, предыдущее сообщение о погрузке). Комиссию логиста давай ОТДЕЛЬНЫМ действием expense с category=logist_fee и теми же route/loading_date.
 - factory_income — поступление от завода на расчётный счёт: amount в сумах.
 - carrier_payment — оплата перевозчику: plate (номер машины) или counterparty (название фирмы), amount, currency, wallet.
@@ -160,6 +162,7 @@ async function contextFor(msg: any) {
   const lines = [
     `Сегодня: ${today()}.`,
     `Маршруты: ${(routes.data || []).map((r: any) => `${r.name} (${r.kind === 'local' ? 'местный' : 'международный'})`).join('; ')}.`,
+    `Перевозчики: ${(((await db.from('ak_carriers').select('name').eq('active', true)).data) || []).map((c: any) => c.name).join('; ')}.`,
     `Недавние заявки завода: ${(reqs.data || []).map((r: any) => `№${r.number} ${routeName[r.route_id]} ${r.loading_date} машин ${r.trucks_ordered}${r.price_minor != null ? ' цена ' + r.price_minor / 100 + ' ' + r.price_cur : ''}`).join('; ') || 'нет'}.`,
     '', 'Недавние сообщения (старые сверху):',
     ...(recent.data || []).slice().reverse().filter((m: any) => roleOf[m.chat_id] !== 'другая' && (m.message_id !== msg.message_id || m.chat_id !== msg.chat_id))
@@ -218,7 +221,8 @@ function validAction(a: any): boolean {
   for (const k of ['loading_date', 'op_date']) if (a[k] != null && !/^\d{4}-\d{2}-\d{2}$/.test(a[k])) a[k] = null;
   if (a.plates != null && !Array.isArray(a.plates)) a.plates = [];
   a.plates = (a.plates || []).filter((p: any) => p && typeof p.tractor === 'string' && normPlate(p.tractor).length >= 3);
-  if (a.type === 'loading' && !a.plates.length) return false;
+  if (a.trucks != null && !(Number.isInteger(a.trucks) && a.trucks > 0 && a.trucks <= 50)) a.trucks = null;
+  if (a.type === 'loading' && !a.plates.length && !a.trucks) return false;
   if (['factory_income', 'carrier_payment', 'expense', 'cash_withdrawal', 'exchange', 'handover'].includes(a.type) && !(a.amount > 0)) return false;
   if (!['high', 'medium', 'low'].includes(a.confidence)) a.confidence = 'medium';
   if (typeof a.quote !== 'string') a.quote = '';
@@ -230,7 +234,8 @@ const amt = (a: any, k = 'amount', c = 'currency') => a[k] == null ? '?' : money
 function describe(a: any): string {
   const rd = [a.route, a.loading_date ? dmy(a.loading_date) : null, a.request_number ? '№' + a.request_number : null].filter(Boolean).join(' ');
   switch (a.type) {
-    case 'loading': return `🚚 Погрузка ${rd}: ${(a.plates || []).length} маш.\n` + (a.plates || []).map((p: any) => `   • ${normPlate(p.tractor)}${p.trailer ? ' / ' + normPlate(p.trailer) : ''}${p.carrier_price != null ? ' — ' + money(toMinor(p.carrier_price)!, p.price_cur || 'USD') : ''}${p.pay_method === 'cash' ? ' (накд)' : ''}`).join('\n');
+    case 'loading': if (!(a.plates || []).length) return `🚚 Погрузка ${rd}: ${a.trucks} маш.${a.counterparty ? ' — ' + a.counterparty : ''} (номера позже)`;
+      return `🚚 Погрузка ${rd}: ${(a.plates || []).length} маш.\n` + (a.plates || []).map((p: any) => `   • ${normPlate(p.tractor)}${p.trailer ? ' / ' + normPlate(p.trailer) : ''}${p.carrier_price != null ? ' — ' + money(toMinor(p.carrier_price)!, p.price_cur || 'USD') : ''}${p.pay_method === 'cash' ? ' (накд)' : ''}`).join('\n');
     case 'prices': return `💲 Цены ${rd}:` + [a.factory_price != null ? `\n   • завод: ${amt(a, 'factory_price', 'factory_price_cur')} за машину` : '', a.carrier_price != null ? `\n   • перевозчик: ${amt(a, 'carrier_price', 'carrier_price_cur')}` : '', a.oformlenie_usd != null ? `\n   • оформление: ${money(toMinor(a.oformlenie_usd)!, 'USD')} за машину` : ''].join('');
     case 'factory_income': return `🏦 Поступление от завода на Р/С: ${amt(a)}`;
     case 'carrier_payment': return `💸 Оплата перевозчику ${a.plate ? normPlate(a.plate) : esc(a.counterparty || '?')}: ${amt(a)}${a.wallet ? ' из «' + WALLETS[a.wallet] + '»' : ''}`;
@@ -296,7 +301,17 @@ function matchPlate(p: string, all: any[], kind: string): { plate: string; veh: 
   return { plate: n, veh: null, fixedFrom: null };
 }
 // Дополнить предложение погрузки: исправленные номера, свой прицеп, фирма на дату погрузки.
+async function carrierByName(name: string | null) {
+  if (!name) return null;
+  const { data } = await db.from('ak_carriers').select('id, name, pay_timing, pay_method, pay_days').eq('active', true);
+  const n = name.trim().toLowerCase();
+  return (data || []).find((c: any) => c.name.toLowerCase() === n) || null;
+}
 async function enrichLoading(a: any): Promise<string[]> {
+  if (!(a.plates || []).length && a.trucks) {
+    const c = await carrierByName(a.counterparty);
+    return [`${a.trucks} маш. — ${c ? c.name : a.counterparty ? '❓ фирма «' + a.counterparty + '» не найдена в справочнике' : 'фирма не указана'} (номера позже)`];
+  }
   const { data: vs } = await db.from('ak_vehicles').select('id, plate_norm, kind, default_trailer_id').eq('active', true);
   const all = vs || [];
   const byId = Object.fromEntries(all.map((v: any) => [v.id, v]));
@@ -322,7 +337,7 @@ async function enrichLoading(a: any): Promise<string[]> {
 }
 function transportText(item: any, footer = '') {
   const a = item.proposal;
-  return `🚚 <b>${esc(a.route || '?')} ${a.loading_date ? dmy(a.loading_date) : ''} — ${(a.plates || []).length} маш.</b>\n${(a._lines || []).map(esc).join('\n')}` +
+  return `🚚 <b>${esc(a.route || '?')} ${a.loading_date ? dmy(a.loading_date) : ''} — ${(a.plates || []).length || a.trucks || 0} маш.</b>\n${(a._lines || []).map(esc).join('\n')}` +
     `\n\n${footer ? esc(footer) : 'Всё верно? Подтвердить может Исмат или Сарвар.'}`;
 }
 
@@ -409,10 +424,38 @@ async function applyAction(a: any, wallet: string | null, author: string | null,
     case 'loading': {
       const r = await findRequest(a, d, true);
       const notes: string[] = [];
+      // машины без номеров: открыть лоты (на фирму, если названа), не дублируя уже открытые
+      if (!(a.plates || []).length && a.trucks) {
+        const c = await carrierByName(a.counterparty);
+        const live = async () => ((await d.from('ak_trips').select('*').eq('request_id', r.id).not('status', 'in', '(cancelled,failed)')).data || []);
+        let lots = await live();
+        const mine = c ? lots.filter((t: any) => t.carrier_id === c.id).length : lots.length;
+        let need = a.trucks - mine;
+        const freeLots = () => lots.filter((t: any) => !t.tractor_id && !t.carrier_id && t.status === 'assigned');
+        if (need > freeLots().length && c) {
+          await d.from('ak_requests').update({ trucks_ordered: lots.length + need - freeLots().length }).eq('id', r.id);
+          lots = await live();
+        } else if (need > 0 && !c) {
+          await d.from('ak_requests').update({ trucks_ordered: lots.length + need }).eq('id', r.id);
+          lots = await live(); need = 0;
+        }
+        if (c) for (const t of freeLots().slice(0, Math.max(0, need))) {
+          const { error } = await d.from('ak_trips').update({ carrier_id: c.id, pay_timing: c.pay_timing, pay_method: c.pay_method, pay_days: c.pay_days, bot_pending: true }).eq('id', t.id);
+          if (error) throw error;
+        }
+        await d.from('ak_requests').update({ bot_pending: true }).eq('id', r.id);
+        const total = (await live()).length;
+        return `заявка №${r.number}: лотов ${total}${c ? ', на ' + c.name + ' — ' + a.trucks : ''} (номера машин позже) — на сайте ждёт одобрения Исмата` +
+          (a.counterparty && !c ? `\nфирма «${a.counterparty}» не найдена в справочнике — укажите на сайте` : '');
+      }
       for (const p of a.plates || []) {
         const tractor = await vehicleId(p.tractor, 'tractor', d);
         let { data: lots } = await d.from('ak_trips').select('*').eq('request_id', r.id).neq('status', 'cancelled');
-        let lot = (lots || []).find((t: any) => t.tractor_id === tractor.id) || (lots || []).find((t: any) => !t.tractor_id && t.status === 'assigned');
+        // свободный лот: сначала тот, что открыт на фирму этой машины, потом лот без фирмы
+        const owner = await ownerOn(tractor.id, r.loading_date);
+        const free = (lots || []).filter((t: any) => !t.tractor_id && t.status === 'assigned');
+        let lot = (lots || []).find((t: any) => t.tractor_id === tractor.id) || free.find((t: any) => owner && t.carrier_id === owner)
+          || free.find((t: any) => !t.carrier_id) || free[0];
         if (!lot) {
           const active = (lots || []).filter((t: any) => !['cancelled', 'failed'].includes(t.status)).length;
           await d.from('ak_requests').update({ trucks_ordered: active + 1 }).eq('id', r.id);
@@ -1131,7 +1174,7 @@ async function dryParseForwarded(chatId: number, m: any, saved: any) {
     const need = walletNeed(a);
     // у погрузки — только заголовок и сверенный список «номер — фирма», без повторов
     parts.push(`• ${esc(a.type === 'loading' ? describe(a).split('\n')[0] : describe(a))}` +
-      (a._lines?.length ? '\n' + a._lines.map((l: string) => '   ' + esc(l)).join('\n') : '') +
+      (a._lines?.length && (a.plates || []).length ? '\n' + a._lines.map((l: string) => '   ' + esc(l)).join('\n') : '') +
       (need ? `\n   ❓ спросил бы кнопками, из какого кошелька` : '') +
       (a.confidence === 'low' ? '\n   ⚠️ не уверен' : '') +
       (a.quote && a.type !== 'loading' ? `\n   <i>«${esc(String(a.quote).slice(0, 160))}»</i>` : ''));
@@ -1449,6 +1492,7 @@ Deno.serve(async (req) => {
           else if (b.cmd === 'search') await doSearch(0, b.kind, b.q);
           else if (b.cmd === 'evening') await eveningReport(0);
           else if (b.cmd === 'ask') await askData(0, b.q);
+          else if (b.cmd === 'apply') DRY.push({ method: 'apply', text: await applyAction(b.proposal, null, 'ismat', dbAs('Бот: проверка записи')) });
           else if (b.cmd === 'fwd') {
             // повтор пробного разбора пересланных в личку сообщений: { chat_id, since }
             const { data: rows } = await db.from('ak_tg_messages').select('*').eq('chat_id', b.chat_id).gte('sent_at', b.since).order('message_id');
