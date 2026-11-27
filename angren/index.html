@@ -70,6 +70,8 @@ input[type=checkbox]{width:auto;}
 .card h2{font-size:14px;font-weight:600;margin-bottom:10px;}
 .stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:16px;}
 .stat-grid.fill .stat{padding:8px 12px;}
+.stat.click{cursor:pointer;}
+.stat.click:hover{border-color:var(--accent2);}
 .stat-grid.fill .stat .sl{margin-bottom:3px;}
 .stat-grid.fill .stat .sv{font-size:18px;}
 .stat-grid.fill .stat .ss{font-size:10.5px;line-height:1.3;margin-top:2px;}
@@ -466,14 +468,20 @@ RENDER.overview = () => {
   const waiting = (S.inbox || []).filter((x) => ['pending', 'needs_wallet', 'error'].includes(x.status)).length;
   if (waiting) issues.unshift(['red', `Бот предлагает записи — ждут подтверждения: ${waiting}`, 'inbox']);
   fixedDue().forEach((fc) => issues.push(['amber', `Постоянный расход за ${monthLabel()}: ${fc.name} — ${fmtMoney(fc.amount, fc.currency)} не записан`, 'calc']));
+  const all = S.sumAll || {}, pp = payPlan();
   return `<h1>Ангрен Каолин${roBadge()}</h1>
-  <div class="lead">Учёт перевозок по договору с заводом ANGREN KAOLIN: заявки, рейсы, перевозчики, деньги. Расчёт прибыли и долгов, PDF-заявки и Telegram-бот подключаются следующими этапами.</div>
+  <div class="lead">Сводка на сегодня. Нажмите на плитку — откроются подробности.</div>
   ${issues.length ? `<div class="card"><h2>Требует внимания</h2>${issues.map(([c, t, p]) => `<div class="note ${c === 'blue' ? '' : 'amber'}" style="cursor:pointer;margin-bottom:6px;${c === 'red' ? 'background:var(--red-bg);border-color:#f0c0c0;color:var(--red);' : ''}" onclick="go('${p}')">${esc(t)} →</div>`).join('')}</div>` : ''}
   <div class="card"><h2>Кошельки сейчас</h2>${walletCards()}</div>
-  <div class="stat-grid">
-    <div class="stat"><div class="sl">Заявок</div><div class="sv">${active.length}</div><div class="ss">действующих</div></div>
-    <div class="stat"><div class="sl">Машин в рейсах</div><div class="sv">${liveTrips.length}</div><div class="ss">${liveTrips.filter((t) => t.status === 'delivered').length} доставлено</div></div>
-    <div class="stat"><div class="sl">Курс ЦБ</div><div class="sv">${S.rates.length ? fmtRate(S.rates[S.rates.length - 1].usd_uzs) : '—'}</div><div class="ss">${S.rates.length ? 'на ' + fmtDate(S.rates[S.rates.length - 1].rate_date) : ''}</div></div>
+  <div class="card"><h2>Главные цифры</h2><div class="stat-grid fill" style="margin-bottom:0;">
+    <div class="stat click" onclick="go('calc')"><div class="sl">Завод должен MM</div><div class="sv">${fmtMoney(all.factory_debt_uzs, 'UZS')}</div><div class="ss">Расчёты и долги →</div></div>
+    <div class="stat click" onclick="go('calc')"><div class="sl">MM должна перевозчикам</div><div class="sv">${fmtMoney(all.carriers_debt_uzs, 'UZS')}</div><div class="ss">оформление заводу: ${fmtMoney(all.oformlenie_debt_usd, 'USD')}</div></div>
+    <div class="stat click" onclick="go('topay')"><div class="sl">К оплате сегодня и просрочено</div><div class="sv"${pp.now.length ? ' style="color:var(--red);"' : ''}>${fmtMoney(pp.sumUzs(pp.now), 'UZS')}</div><div class="ss">${pp.now.length} рейс(ов) · на неделе ещё ${fmtMoney(pp.sumUzs(pp.soon), 'UZS')}</div></div>
+    <div class="stat click" onclick="go('topay')"><div class="sl">Кассовый разрыв за месяц</div><div class="sv" style="color:${pp.gap < 0 ? 'var(--red)' : 'var(--green)'};">${fmtMoney(pp.gap, 'UZS')}</div><div class="ss">хватит ли денег на перевозчиков →</div></div>
+  </div></div>
+  <div class="stat-grid fill">
+    <div class="stat click" onclick="go('requests')"><div class="sl">Заявок</div><div class="sv">${active.length}</div><div class="ss">действующих</div></div>
+    <div class="stat click" onclick="go('trips')"><div class="sl">Машин в рейсах</div><div class="sv">${liveTrips.length}</div><div class="ss">${liveTrips.filter((t) => t.status === 'delivered').length} доставлено</div></div>
   </div>`;
 };
 function walletCards() {
@@ -1998,7 +2006,8 @@ function tripDue(t) {
   else base = t.status === 'delivered' ? t.delivered_on : null;
   return base ? addWorkdays(base, days) : null;
 }
-RENDER.topay = () => {
+// Оплаты перевозчикам по срокам, ожидаемые поступления от завода, кассовый разрыв (для «К оплате» и «Обзора»).
+function payPlan() {
   const today = todayIso(), week = addWorkdays(today, 5);
   const items = S.trips.filter((t) => t.carrier_id && t.status !== 'failed' && (reqById(t.request_id) || {}).status !== 'cancelled')
     .map((t) => ({ t, rem: tripRemaining(t), due: tripDue(t) })).filter((x) => x.rem && x.rem.amount > 0)
@@ -2006,10 +2015,6 @@ RENDER.topay = () => {
   const now = items.filter((x) => x.due && x.due <= today), soon = items.filter((x) => x.due && x.due > today && x.due <= week),
     later = items.filter((x) => !x.due || x.due > week);
   const sumUzs = (arr) => arr.reduce((a, x) => a + N(x.rem.uzs), 0);
-  const tbl = (arr) => arr.length ? `<table><thead><tr><th>Срок</th><th>Перевозчик</th><th>Рейс</th><th>Как</th><th class="num">Остаток</th><th></th></tr></thead><tbody>
-    ${arr.map(({ t, rem, due }) => { const r = reqById(t.request_id); return `<tr class="click" onclick="editTrip('${t.id}')"><td>${due ? fmtDate(due) : '<span class="muted">после ' + (t.pay_timing === 'after_delivery' ? 'доставки' : 'погрузки') + '</span>'}${due && due < today ? ' <span class="tag red">просрочено</span>' : ''}</td>
-      <td>${esc((carrierById(t.carrier_id) || {}).name)}</td><td>${esc(reqTitle(r))}<div class="muted mono">${esc(plates(t))}</div></td><td>${LBL.pay_method[t.pay_method || 'transfer']}</td>
-      <td class="num">${fmtMoney(rem.amount, rem.cur)}</td><td>${canEdit() ? `<button class="btn small primary" onclick="event.stopPropagation();payTrip('${t.id}')">Оплатить</button>` : ''}</td></tr>`; }).join('')}</tbody></table>` : '<div class="muted" style="font-size:12.5px;">нет</div>';
 
   // поступления от завода: распределяем полученное по заявкам от старых к новым
   let received = N(S.sumAll.factory_received_uzs);
@@ -2021,6 +2026,14 @@ RENDER.topay = () => {
   const out30 = items.filter((x) => !x.due || x.due <= addWorkdays(today, 22)).reduce((a, x) => a + N(x.rem.uzs), 0);
   const rate = N((rateOn(today) || {}).usd_uzs);
   const cashNow = S.balances.reduce((a, b) => a + (b.currency === 'USD' ? Math.round(N(b.balance_minor) * rate) : N(b.balance_minor)), 0);
+  return { today, now, soon, later, sumUzs, reqs, in30, out30, cashNow, gap: cashNow + in30 - out30 };
+}
+RENDER.topay = () => {
+  const { today, now, soon, later, sumUzs, reqs, in30, out30, cashNow } = payPlan();
+  const tbl = (arr) => arr.length ? `<table><thead><tr><th>Срок</th><th>Перевозчик</th><th>Рейс</th><th>Как</th><th class="num">Остаток</th><th></th></tr></thead><tbody>
+    ${arr.map(({ t, rem, due }) => { const r = reqById(t.request_id); return `<tr class="click" onclick="editTrip('${t.id}')"><td>${due ? fmtDate(due) : '<span class="muted">после ' + (t.pay_timing === 'after_delivery' ? 'доставки' : 'погрузки') + '</span>'}${due && due < today ? ' <span class="tag red">просрочено</span>' : ''}</td>
+      <td>${esc((carrierById(t.carrier_id) || {}).name)}</td><td>${esc(reqTitle(r))}<div class="muted mono">${esc(plates(t))}</div></td><td>${LBL.pay_method[t.pay_method || 'transfer']}</td>
+      <td class="num">${fmtMoney(rem.amount, rem.cur)}</td><td>${canEdit() ? `<button class="btn small primary" onclick="event.stopPropagation();payTrip('${t.id}')">Оплатить</button>` : ''}</td></tr>`; }).join('')}</tbody></table>` : '<div class="muted" style="font-size:12.5px;">нет</div>';
   return `<h1>К оплате и поступления${roBadge()}</h1>
   <div class="lead">Сроки оплаты перевозчикам — по условиям рейса (или перевозчика по умолчанию), в рабочих днях. Поступления от завода — 90 рабочих дней с подписи заявки; завод иногда платит раньше. Праздники пока не учитываются.</div>
   <div class="stat-grid fill">
